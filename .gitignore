@@ -170,3 +170,8 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 *.Identifier
+test.py
+commands_example
+val_data.csv
+train_data.csv
+model_output
