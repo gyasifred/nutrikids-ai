@@ -35,7 +35,7 @@ def main():
     args = parser.parse_args()
     
     # Load artifacts
-    model, pipeline, label_encoder = load_artifacts(args.model)
+    model, label_encoder, pipeline = load_artifacts(args.model)
     
     # Process the test data
     print(f"Processing test data from {args.data_file}...")
@@ -43,20 +43,79 @@ def main():
     X_test = pipeline.transform(df[args.text_column])
     y_test = df[args.label_column]
     
-    # Encode labels if we have a label encoder
+    # Handle label transformation correctly
     if label_encoder is not None:
-        y_test = label_encoder.transform(y_test)
+        # First check if the labels match the encoder's expected format
+        unique_labels = y_test.unique()
+        expected_classes = label_encoder.classes_
+        
+        print(f"Test data labels: {unique_labels}")
+        print(f"Label encoder classes: {expected_classes}")
+        
+        # If test data has string values like 'yes'/'no' but encoder expects 0/1,
+        # we need to map them first
+        if set(unique_labels) != set(expected_classes):
+            # Check if we need to convert from yes/no to numeric
+            if ('yes' in unique_labels or 'no' in unique_labels) and (0 in expected_classes or 1 in expected_classes):
+                print("Converting string labels to numeric format...")
+                y_test = y_test.map({'yes': 1, 'no': 0})
+            # Check if we need to handle other label formats
+            elif any(isinstance(label, str) for label in unique_labels) and all(isinstance(cls, (int, float)) for cls in expected_classes):
+                print("WARNING: String labels in test data don't match encoder's numeric classes.")
+                print("Attempting to fit a new label encoder for evaluation purposes...")
+                # Save the original classes mapping for reference
+                original_classes = dict(enumerate(expected_classes))
+                
+                # Create a temporary mapping for evaluation
+                temp_mapping = {label: i for i, label in enumerate(sorted(unique_labels))}
+                y_test = y_test.map(temp_mapping)
+                
+                # Save this mapping to help interpret results later
+                mapping_filename = os.path.join(args.output_dir, f"temp_label_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                with open(mapping_filename, 'w') as f:
+                    import json
+                    json.dump({
+                        "original_encoder_classes": {str(k): str(v) for k, v in original_classes.items()},
+                        "test_data_mapping": {str(k): str(v) for k, v in temp_mapping.items()}
+                    }, f, indent=2)
+                print(f"Label mapping saved to: {mapping_filename}")
+            else:
+                # Try to use the encoder directly if format seems compatible
+                try:
+                    y_test = label_encoder.transform(y_test)
+                except ValueError as e:
+                    print(f"WARNING: Label transformation error: {e}")
+                    print("Creating a new label encoder for evaluation...")
+                    from sklearn.preprocessing import LabelEncoder
+                    new_encoder = LabelEncoder()
+                    y_test = new_encoder.fit_transform(y_test)
+                    
+                    # Save mapping between original and new encoders
+                    mapping_filename = os.path.join(args.output_dir, f"label_encoder_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                    with open(mapping_filename, 'w') as f:
+                        import json
+                        json.dump({
+                            "original_encoder_classes": [str(cls) for cls in expected_classes],
+                            "new_encoder_classes": [str(cls) for cls in new_encoder.classes_]
+                        }, f, indent=2)
+                    print(f"Label encoder mapping saved to: {mapping_filename}")
+        else:
+            # If the label formats match, apply the transformation directly
+            y_test = label_encoder.transform(y_test)
     
     # Convert X_test to DataFrame if it's a sparse matrix
     if hasattr(X_test, 'toarray'):
-        X_test = pd.DataFrame(X_test.toarray())
+        feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out() if 'vectorizer' in pipeline.named_steps else [f"feature_{i}" for i in range(X_test.shape[1])]
+        X_test = pd.DataFrame(X_test.toarray(), columns=feature_names)
+    else:
+        X_test = pd.DataFrame(X_test)
     
     # Evaluate the model
     results = evaluate_model(
         model=model,
         X_test=X_test,
         y_test=y_test,
-        feature_names=None,  # Adjust based on your pipeline
+        feature_names=X_test.columns.tolist(),
         output_dir=args.output_dir,
         model_name=args.model_name,
         label_encoder=label_encoder

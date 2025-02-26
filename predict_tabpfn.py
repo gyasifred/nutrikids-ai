@@ -15,7 +15,7 @@ import seaborn as sns
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-from models.tabpfn import load_model_artifacts, get_feature_importance
+from models.tabpfn import load_artifacts, get_feature_importance
 
 def predict_tabpfn(
     model_dir: str,
@@ -63,10 +63,8 @@ def predict_tabpfn(
     print(f"Loading TabPFN model from {model_dir}...")
     
     # Load model artifacts
-    artifacts = load_model_artifacts(model_dir)
-    model = artifacts['model']
-    pipeline = artifacts['pipeline']
-    
+    model, label_encoder, pipeline = load_artifacts(model_dir)
+
     if pipeline is None:
         raise ValueError(f"Preprocessing pipeline not found in {model_dir}")
     
@@ -123,11 +121,11 @@ def predict_tabpfn(
     y_pred_proba = model.predict_proba(X)
     
     # Handle label encoder if available
-    if artifacts['label_encoder'] is not None:
+    if label_encoder is not None:
         print("Decoding class labels...")
-        y_pred_decoded = artifacts['label_encoder'].inverse_transform(y_pred)
+        y_pred_decoded = label_encoder.inverse_transform(y_pred)
         # Save label encoder information
-        run_info["labels"] = artifacts['label_encoder'].classes_.tolist()
+        run_info["labels"] = label_encoder.classes_.tolist()
     else:
         y_pred_decoded = y_pred
     
@@ -147,9 +145,9 @@ def predict_tabpfn(
     # Add probabilities
     for i in range(y_pred_proba.shape[1]):
         class_name = str(i)
-        if artifacts['label_encoder'] is not None:
+        if label_encoder is not None:
             try:
-                class_name = artifacts['label_encoder'].inverse_transform([i])[0]
+                class_name = label_encoder.inverse_transform([i])[0]
             except:
                 pass
         results[f'prob_{class_name}'] = y_pred_proba[:, i]

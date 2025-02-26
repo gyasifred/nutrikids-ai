@@ -9,6 +9,8 @@ import joblib
 import seaborn as sns
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+import glob
+
 
 from sklearn.metrics import (
     accuracy_score, roc_auc_score, precision_score, recall_score, f1_score,
@@ -20,7 +22,6 @@ def train_tabpfn(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     model_dir: str,
-    n_estimators: int = 10,
     device: str = "cpu",
     model_name: str = "tabpfn_nutrikid_classifier",
     **tabpfn_kwargs
@@ -32,19 +33,17 @@ def train_tabpfn(
         X_train: Training features DataFrame
         y_train: Training labels
         model_dir: Directory to save the model and artifacts
-        n_estimators: Number of estimators for the ensemble
         device: Device to use (cpu or cuda)
         model_name: Name to use for saved model files
         **tabpfn_kwargs: Additional arguments to pass to TabPFNClassifier
     """
-    print(f"Training TabPFN model with {n_estimators} estimators...")
+    print(f"Training TabPFN model...")
     
     # Ensure the model directory exists
     os.makedirs(model_dir, exist_ok=True)
     
     # Initialize and train the TabPFN classifier
     tabpfn_model = TabPFNClassifier(
-        n_estimators=n_estimators,
         device=device,
         **tabpfn_kwargs
     )
@@ -244,33 +243,56 @@ def evaluate_model(
     
     return results
 
+
 def load_artifacts(model_dir: str):
-    """
-    Load all model artifacts (model, pipeline, label encoder) from the given directory.
-    
+    """ 
+    Load all model artifacts (model, feature dict, pipeline) from the given directory.
+
     Args:
         model_dir (str): Path to the directory containing model artifacts.
-    
+
     Returns:
-        model, pipeline, label_encoder
+        model, feature_dict, pipeline
     """
-    model_path = os.path.join(model_dir, "model.joblib")
-    pipeline_path = os.path.join(model_dir, "pipeline.joblib")
-    label_encoder_path = os.path.join(model_dir, "label_encoder.joblib")
-    
+    # Define the file patterns to match the latest .joblib files
+    model_pattern = os.path.join(model_dir, "tabpfn_nutrikid_classifier_model_*.joblib")
+    label_encoder_pattern = os.path.join(model_dir, "tabpfn_nutrikid_classifier_label_encoder_*.joblib")
+    pipeline_pattern = os.path.join(model_dir, "pipeline.joblib")
+
+    # List the files that match the patterns
+    model_files = glob.glob(model_pattern)
+    label_encoder_files = glob.glob(label_encoder_pattern)
+    pipeline_files = glob.glob(pipeline_pattern)
+
+    # Debugging prints to check the found files
+    print(f"Found model files: {model_files}")
+    print(f"Found Label Encoder files: {label_encoder_files}")
+    print(f"Found pipeline files: {pipeline_files}")
+
+    # Ensure that there are files found for each pattern
+    if not model_files:
+        raise ValueError(f"No model files found matching pattern: {model_pattern}")
+    if not label_encoder_files:
+        raise ValueError(f"No feature dictionary files found matching pattern: {label_encoder_files}")
+    if not pipeline_files:
+        raise ValueError(f"No pipeline files found matching pattern: {pipeline_pattern}")
+
+    # Get the latest model file by sorting the files based on the modification time
+    model_path = max(model_files, key=os.path.getmtime)
     print(f"Loading model from {model_path}...")
     model = joblib.load(model_path)
-    
+
+    # Get the latest feature dictionary file
+    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
+    print(f"Loading label Encoder from {label_encoder_path}...")
+    label_encoder = joblib.load(label_encoder_path)
+
+    # Get the latest pipeline file
+    pipeline_path = max(pipeline_files, key=os.path.getmtime)
     print(f"Loading pipeline from {pipeline_path}...")
     pipeline = joblib.load(pipeline_path)
-    
-    label_encoder = None
-    if os.path.exists(label_encoder_path):
-        print(f"Loading label encoder from {label_encoder_path}...")
-        label_encoder = joblib.load(label_encoder_path)
-    
-    return model, pipeline, label_encoder
 
+    return model, label_encoder, pipeline
 
 from sklearn.inspection import permutation_importance
 

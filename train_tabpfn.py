@@ -34,11 +34,10 @@ def main():
     parser.add_argument('--ngram_max', type=int, default=1, help='Maximum n-gram size')
     
     # Model parameters
-    parser.add_argument('--n_estimators', type=int, default=100, help='Number of estimators for TabPFN')
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda'], help='Device to use')
     
     # Output parameters
-    parser.add_argument('--model_dir', type=str, default='model_dir', help='Directory to save all models and artifacts')
+    parser.add_argument('--model_dir', type=str, default='tabpfn_model', help='Directory to save all models and artifacts')
     
     args = parser.parse_args()
     
@@ -49,7 +48,7 @@ def main():
     print(f"Processing CSV data from {args.data_file}...")
     ngram_range = (args.ngram_min, args.ngram_max)
     
-    X_df, complete_df, y, pipeline, feature_dict = process_csv(
+    X_df, complete_df, y, pipeline, feature_dict, label_encoder = process_csv(
         file_path=args.data_file,
         text_column=args.text_column,
         label_column=args.label_column,
@@ -68,21 +67,18 @@ def main():
     joblib.dump(feature_dict, feature_dict_path)
     print(f"Feature dictionary saved to: {feature_dict_path}")
     
-    # Encode labels if categorical
     label_encoder = None
-    if y.dtype == object:
+    if pd.api.types.is_categorical_dtype(y) or pd.api.types.is_object_dtype(y) or len(np.unique(y)) < len(y) * 0.5:
         label_encoder = LabelEncoder()
         y = label_encoder.fit_transform(y)
         label_encoder_path = os.path.join(args.model_dir, f"tabpfn_nutrikid_classifier_label_encoder_{timestamp}.joblib")
         joblib.dump(label_encoder, label_encoder_path)
-        print(f"Label encoder saved to: {label_encoder_path}")
-    
-    # Train model
+        
+        # Train model
     results = train_tabpfn(
         X_train=X_df, 
         y_train=y,
         model_dir=args.model_dir,
-        n_estimators=args.n_estimators,
         device=args.device,
         model_name="tabpfn_nutrikid_classifier"
     )

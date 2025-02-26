@@ -80,7 +80,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             # Convert namespace to command line args
             cmd_args = []
             for key, value in vars(parsed_args).items():
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                cmd_args.append(f"--{key}")
                 cmd_args.append(str(value))
             
             # Execute the tune script
@@ -123,7 +123,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             # Convert namespace to command line args
             cmd_args = []
             for key, value in vars(parsed_args).items():
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                cmd_args.append(f"--{key}")
                 cmd_args.append(str(value))
             
             # Execute the train script
@@ -162,7 +162,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             # Convert namespace to command line args
             cmd_args = []
             for key, value in vars(parsed_args).items():
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                cmd_args.append(f"--{key}")
                 cmd_args.append(str(value))
             
             # Execute the evaluate script
@@ -221,7 +221,7 @@ class NutrikidsAiCommand(cmd.Cmd):
                     continue
                 if isinstance(value, bool) and not value:
                     continue
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                cmd_args.append(f"--{key}")
                 if not isinstance(value, bool):
                     cmd_args.append(str(value))
             
@@ -238,46 +238,44 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Train a TabPFN classifier on text data.
         
-        Usage: traintabpfn --data_file <data_file> [options]
+        Usage: traintabpfn --data-file <data_file> [options]
         
         Options:
-            --data_file           Path to the CSV data file (required)
-            --text_column         Column containing text data (default: Note_Column)
-            --label_column        Column containing labels (default: Malnutrition_Label)
-            --id_column           Column containing IDs (default: Patient_ID)
-            --max_features        Max number of features to extract (default: 8000)
-            --remove_stop_words   Remove stop words (flag)
-            --apply_stemming      Apply stemming (default: True)
-            --vectorization_mode  Vectorization mode: count or tfidf (default: tfidf)
-            --ngram_min           Minimum n-gram size (default: 1)
-            --ngram_max           Maximum n-gram size (default: 1)
-            --n_estimators        Number of estimators for TabPFN (default: 100)
+            --data-file           Path to the CSV data file (required)
+            --text-column         Column containing text data (default: Note_Column)
+            --label-column        Column containing labels (default: Malnutrition_Label)
+            --id-column           Column containing IDs (default: Patient_ID)
+            --max-features        Max number of features to extract (default: 8000)
+            --remove-stop-words   Remove stop words (flag)
+            --apply-stemming      Apply stemming (default: True)
+            --vectorization-mode  Vectorization mode: count or tfidf (default: tfidf)
+            --ngram-min           Minimum n-gram size (default: 1)
+            --ngram-max           Maximum n-gram size (default: 1)
             --device              Device to use: cpu or cuda (default: cpu)
-            --model_dir           Directory to save models and artifacts (default: model_dir)
+            --model-dir           Directory to save models and artifacts (default: model_dir)
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(description='Train a TabPFN classifier on text data')
         
-        # Data parameters
-        parser.add_argument('--data_file', type=str, required=True, help='Path to the CSV data file')
-        parser.add_argument('--text_column', type=str, default="Note_Column", help='Column containing text data')
-        parser.add_argument('--label_column', type=str, default="Malnutrition_Label", help='Column containing labels')
-        parser.add_argument('--id_column', type=str, default="Patient_ID", help='Column containing IDs')
+        # Data parameters - using hyphens consistently in argument names
+        parser.add_argument('--data-file', type=str, required=True, help='Path to the CSV data file')
+        parser.add_argument('--text-column', type=str, default="Note_Column", help='Column containing text data')
+        parser.add_argument('--label-column', type=str, default="Malnutrition_Label", help='Column containing labels')
+        parser.add_argument('--id-column', type=str, default="Patient_ID", help='Column containing IDs')
         
         # Text processing parameters
-        parser.add_argument('--max_features', type=int, default=8000, help='Max number of features to extract')
-        parser.add_argument('--remove_stop_words', action='store_true', help='Remove stop words')
-        parser.add_argument('--apply_stemming', action='store_false', help='Apply stemming')
-        parser.add_argument('--vectorization_mode', type=str, default='tfidf', choices=['count', 'tfidf'], help='Vectorization mode')
-        parser.add_argument('--ngram_min', type=int, default=1, help='Minimum n-gram size')
-        parser.add_argument('--ngram_max', type=int, default=1, help='Maximum n-gram size')
+        parser.add_argument('--max-features', type=int, default=8000, help='Max number of features to extract')
+        parser.add_argument('--remove-stop-words', action='store_true', help='Remove stop words')
+        parser.add_argument('--apply-stemming', action='store_false', help='Apply stemming')
+        parser.add_argument('--vectorization-mode', type=str, default='tfidf', choices=['count', 'tfidf'], help='Vectorization mode')
+        parser.add_argument('--ngram-min', type=int, default=1, help='Minimum n-gram size')
+        parser.add_argument('--ngram-max', type=int, default=1, help='Maximum n-gram size')
         
         # Model parameters
-        parser.add_argument('--n_estimators', type=int, default=100, help='Number of estimators for TabPFN')
         parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda'], help='Device to use')
         
         # Output parameters
-        parser.add_argument('--model_dir', type=str, default='model_dir', help='Directory to save all models and artifacts')
+        parser.add_argument('--model-dir', type=str, default='tabpfn_model', help='Directory to save all models and artifacts')
         
         try:
             parsed_args = parser.parse_args(args)
@@ -286,12 +284,14 @@ class NutrikidsAiCommand(cmd.Cmd):
             cmd_args = []
             for key, value in vars(parsed_args).items():
                 if isinstance(value, bool):
+                    # Handle boolean flags properly 
                     if value and key == 'remove_stop_words':
                         cmd_args.append('--remove-stop-words')
                     elif not value and key == 'apply_stemming':
                         cmd_args.append('--apply-stemming')
                     continue
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                # Use the key directly without replacing underscores
+                cmd_args.append(f"--{key}")
                 cmd_args.append(str(value))
             
             # Execute the train script
@@ -307,16 +307,16 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Evaluate a trained TabPFN model.
         
-        Usage: evaluatetabpfn --model <model_dir> --data_file <data_file> [options]
+        Usage: evaluatetabpfn --model <model_dir> --data-file <data_file> [options]
         
         Options:
             --model               Path to the directory containing model artifacts (required)
-            --data_file           Path to the CSV test data file (required)
-            --text_column         Name of the column containing text data (default: Note_Column)
-            --label_column        Name of the column containing labels (default: Malnutrition_Label)
-            --id_column           Name of the column containing IDs (default: Patient_ID)
-            --output_dir          Directory to save evaluation results (default: model_output/tabpfn)
-            --model_name          Name to use for saved artifacts (default: tabpfn)
+            --data-file           Path to the CSV test data file (required)
+            --text-column         Name of the column containing text data (default: Note_Column)
+            --label-column        Name of the column containing labels (default: Malnutrition_Label)
+            --id-column           Name of the column containing IDs (default: Patient_ID)
+            --output-dir          Directory to save evaluation results (default: model_output/tabpfn)
+            --model-name          Name to use for saved artifacts (default: tabpfn)
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(description='Evaluate a trained TabPFN model')
@@ -325,14 +325,14 @@ class NutrikidsAiCommand(cmd.Cmd):
         parser.add_argument('--model', type=str, required=True, help='Path to the directory containing model artifacts')
         
         # Data parameters
-        parser.add_argument('--data_file', type=str, required=True, help='Path to the CSV test data file')
-        parser.add_argument('--text_column', type=str, default="Note_Column", help='Name of the column containing text data')
-        parser.add_argument('--label_column', type=str, default="Malnutrition_Label", help='Name of the column containing labels')
-        parser.add_argument('--id_column', type=str, default="Patient_ID", help='Name of the column containing IDs')
+        parser.add_argument('--data-file', type=str, required=True, help='Path to the CSV test data file')
+        parser.add_argument('--text-column', type=str, default="Note_Column", help='Name of the column containing text data')
+        parser.add_argument('--label-column', type=str, default="Malnutrition_Label", help='Name of the column containing labels')
+        parser.add_argument('--id-column', type=str, default="Patient_ID", help='Name of the column containing IDs')
         
         # Optional parameters
-        parser.add_argument('--output_dir', type=str, default='model_output/tabpfn', help='Directory to save evaluation results')
-        parser.add_argument('--model_name', type=str, default='tabpfn', help='Name to use for saved artifacts')
+        parser.add_argument('--output-dir', type=str, default='model_output/tabpfn', help='Directory to save evaluation results')
+        parser.add_argument('--model-name', type=str, default='tabpfn', help='Name to use for saved artifacts')
         
         try:
             parsed_args = parser.parse_args(args)
@@ -340,7 +340,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             # Convert namespace to command line args
             cmd_args = []
             for key, value in vars(parsed_args).items():
-                cmd_args.append(f"--{key.replace('_', '-')}")
+                cmd_args.append(f"--{key}")
                 cmd_args.append(str(value))
             
             # Execute the evaluate script
@@ -356,19 +356,19 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Make predictions using a trained TabPFN model.
         
-        Usage: predicttabpfn --model <model_dir> (--data_file <data_file> | --text <text>) [options]
+        Usage: predicttabpfn --model <model_dir> (--data-file <data_file> | --text <text>) [options]
         
         Options:
             --model                 Path to the directory containing model artifacts (required)
-            --data_file             Path to the CSV file with data to predict on (mutually exclusive with --text)
-            --text                  Single text input to predict on (mutually exclusive with --data_file)
-            --text_column           Name of the column containing text data (for CSV input)
-            --id_column             Name of the column containing IDs (for CSV input)
-            --output_dir            Directory to save all prediction artifacts
-            --run_name              Name for this prediction run (default: timestamp-based)
-            --include_features      Include features in output (flag)
-            --calculate_importance  Calculate feature importance (flag)
-            --top_features          Number of top features to display in importance analysis (default: 20)
+            --data-file             Path to the CSV file with data to predict on (mutually exclusive with --text)
+            --text                  Single text input to predict on (mutually exclusive with --data-file)
+            --text-column           Name of the column containing text data (for CSV input)
+            --id-column             Name of the column containing IDs (for CSV input)
+            --output-dir            Directory to save all prediction artifacts
+            --run-name              Name for this prediction run (default: timestamp-based)
+            --include-features      Include features in output (flag)
+            --calculate-importance  Calculate feature importance (flag)
+            --top-features          Number of top features to display in importance analysis (default: 20)
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(description='Make predictions using a trained TabPFN model')
@@ -378,21 +378,21 @@ class NutrikidsAiCommand(cmd.Cmd):
         
         # Input options (one of these is required)
         input_group = parser.add_mutually_exclusive_group(required=True)
-        input_group.add_argument('--data_file', type=str, help='Path to the CSV file with data to predict on')
+        input_group.add_argument('--data-file', type=str, help='Path to the CSV file with data to predict on')
         input_group.add_argument('--text', type=str, help='Single text input to predict on')
         
         # Optional parameters for CSV input
-        parser.add_argument('--text_column', type=str, default="Note_Column", help='Name of the column containing text data')
-        parser.add_argument('--id_column', type=str, default="Patient_ID", help='Name of the column containing IDs')
+        parser.add_argument('--text-column', type=str, default="Note_Column", help='Name of the column containing text data')
+        parser.add_argument('--id-column', type=str, default="Patient_ID", help='Name of the column containing IDs')
         
         # Output parameters
-        parser.add_argument('--output_dir', type=str, default='predictions', help='Directory to save all prediction artifacts')
-        parser.add_argument('--run_name', type=str, help='Name for this prediction run (default: timestamp-based)')
-        parser.add_argument('--include_features', action='store_true', help='Include features in output')
+        parser.add_argument('--output-dir', type=str, default='predictions', help='Directory to save all prediction artifacts')
+        parser.add_argument('--run-name', type=str, help='Name for this prediction run (default: timestamp-based)')
+        parser.add_argument('--include-features', action='store_true', help='Include features in output')
         
         # Feature importance parameters
-        parser.add_argument('--calculate_importance', action='store_true', help='Calculate feature importance')
-        parser.add_argument('--top_features', type=int, default=20, help='Number of top features to display in importance analysis')
+        parser.add_argument('--calculate-importance', action='store_true', help='Calculate feature importance')
+        parser.add_argument('--top-features', type=int, default=20, help='Number of top features to display in importance analysis')
         
         try:
             parsed_args = parser.parse_args(args)
@@ -406,7 +406,7 @@ class NutrikidsAiCommand(cmd.Cmd):
                 if isinstance(value, bool) and not value:
                     continue
                 if value is not None:
-                    cmd_args.append(f"--{key.replace('_', '-')}")
+                    cmd_args.append(f"--{key}")
                     if not isinstance(value, bool):
                         cmd_args.append(str(value))
             

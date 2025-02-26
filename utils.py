@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from datetime import datetime
 import re
 import os
 from typing import List
@@ -153,9 +154,18 @@ def process_csv(
             preprocessing_steps.append(('stemmer', TextStemmer()))
         
         # Process labels (convert 'yes'/'no' to 1/0 if needed)
-        y = df[label_column]
-        if y.dtype == 'object':
-            y = y.map({'yes': 1, 'no': 0})
+        # First, save the original labels
+        y_original = df[label_column]
+        
+        # Create and fit a label encoder
+        label_encoder = LabelEncoder()
+        y = label_encoder.fit_transform(y_original)
+        
+        # Save the label encoder
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        encoder_filename = os.path.join(save_path, f'tabpfn_nutrikid_classifier_label_encoder_{timestamp}.joblib')
+        joblib.dump(label_encoder, encoder_filename)
+        print(f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
         
         # Ensure the save_path directory exists
         os.makedirs(save_path, exist_ok=True)
@@ -163,10 +173,10 @@ def process_csv(
         # Configure the appropriate vectorizer based on mode
         if vectorization_mode == 'count':
             vectorizer = CountVectorizer(max_features=max_features, ngram_range=ngram_range)
-            pipeline_filename = os.path.join(save_path, f'count_vectorizer_ngram_{ngram_range[0]}_{ngram_range[1]}_pipeline.joblib')
+            pipeline_filename = os.path.join(save_path, f'pipeline.joblib')
         elif vectorization_mode == 'tfidf':
             vectorizer = TfidfVectorizer(max_features=max_features, ngram_range=ngram_range)
-            pipeline_filename = os.path.join(save_path, f'tfidf_vectorizer_ngram_{ngram_range[0]}_{ngram_range[1]}_pipeline.joblib')
+            pipeline_filename = os.path.join(save_path, f'pipeline.joblib')
         else:
             raise ValueError("Invalid vectorization_mode. Choose from 'count' or 'tfidf'.")
         
@@ -189,12 +199,11 @@ def process_csv(
         # Create feature dictionary
         feature_dict = {name: idx for idx, name in enumerate(feature_names)}
         
-        return X_df, complete_df, y, pipeline, feature_dict
+        return X_df, complete_df, y, pipeline, feature_dict, label_encoder
 
     except Exception as e:
         print(f"Error processing CSV file: {str(e)}")
         raise
-
 
 # =========================
 # Label Encoding Function
