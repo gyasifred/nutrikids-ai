@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 from datetime import datetime
+import glob
 import re
 import os
 from typing import List
+from matplotlib import pyplot as plt
+import seaborn as sns
 import numpy as np
 import pandas as pd
 import nltk
@@ -14,7 +17,11 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer, T
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 import joblib
-import pickle
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_curve, auc, confusion_matrix, classification_report
+)
+import shap
 
 
 # Download NLTK stopwords (if not already downloaded)
@@ -106,12 +113,13 @@ def process_csv(
     text_column: str,
     label_column: str,
     id_column: str,
+    model_name:str,
     max_features: int = 8000,
     remove_stop_words: bool = True,
     apply_stemming: bool = False,
     vectorization_mode: str = 'tfidf', 
     ngram_range: tuple = (1, 1), 
-    save_path: str = '.'  
+    save_path: str = '.',
 ):
     """
     Process the CSV file containing clinical notes into features with n-gram support.
@@ -163,7 +171,7 @@ def process_csv(
         
         # Save the label encoder
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        encoder_filename = os.path.join(save_path, f'tabpfn_nutrikid_classifier_label_encoder_{timestamp}.joblib')
+        encoder_filename = os.path.join(save_path, f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib')
         joblib.dump(label_encoder, encoder_filename)
         print(f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
         
@@ -173,10 +181,10 @@ def process_csv(
         # Configure the appropriate vectorizer based on mode
         if vectorization_mode == 'count':
             vectorizer = CountVectorizer(max_features=max_features, ngram_range=ngram_range)
-            pipeline_filename = os.path.join(save_path, f'pipeline.joblib')
+            pipeline_filename = os.path.join(save_path, f'{model_name}_nutrikidai_pipeline.joblib')
         elif vectorization_mode == 'tfidf':
             vectorizer = TfidfVectorizer(max_features=max_features, ngram_range=ngram_range)
-            pipeline_filename = os.path.join(save_path, f'pipeline.joblib')
+            pipeline_filename = os.path.join(save_path, f'{model_name}_nutrikidai_pipeline.joblib')
         else:
             raise ValueError("Invalid vectorization_mode. Choose from 'count' or 'tfidf'.")
         
@@ -230,3 +238,143 @@ def encode_labels(labels: List[str]) -> np.ndarray:
     
     return encoded_labels, label_encoder
 
+
+def load_artifacts(model_dir: str, model_name:str):
+    """ 
+    Load all model artifacts (model, feature dict, pipeline) from the given directory.
+
+    Args:
+        model_dir (str): Path to the directory containing model artifacts.
+
+    Returns:
+        model, feature_dict, pipeline
+    """
+    # Define the file patterns to match the latest .joblib files
+    model_pattern = os.path.join(model_dir,f"{model_name}_nutrikidai_model.joblib")
+    label_encoder_pattern = os.path.join(model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
+    pipeline_pattern = os.path.join(model_dir,  f"{model_name}_nutrikidai_pipeline.joblib")
+
+    # List the files that match the patterns
+    model_files = glob.glob(model_pattern)
+    label_encoder_files = glob.glob(label_encoder_pattern)
+    pipeline_files = glob.glob(pipeline_pattern)
+
+    # Debugging prints to check the found files
+    print(f"Found model files: {model_files}")
+    print(f"Found Label Encoder files: {label_encoder_files}")
+    print(f"Found pipeline files: {pipeline_files}")
+
+    # Ensure that there are files found for each pattern
+    if not model_files:
+        raise ValueError(f"No model files found matching pattern: {model_pattern}")
+    if not label_encoder_files:
+        raise ValueError(f"No feature dictionary files found matching pattern: {label_encoder_files}")
+    if not pipeline_files:
+        raise ValueError(f"No pipeline files found matching pattern: {pipeline_pattern}")
+
+    # Get the latest model file by sorting the files based on the modification time
+    model_path = max(model_files, key=os.path.getmtime)
+    print(f"Loading model from {model_path}...")
+    model = joblib.load(model_path)
+
+    # Get the latest feature dictionary file
+    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
+    print(f"Loading label Encoder from {label_encoder_path}...")
+    label_encoder = joblib.load(label_encoder_path)
+
+    # Get the latest pipeline file
+    pipeline_path = max(pipeline_files, key=os.path.getmtime)
+    print(f"Loading pipeline from {pipeline_path}...")
+    pipeline = joblib.load(pipeline_path)
+
+    return model, label_encoder, pipeline
+
+
+def plot_confusion_matrix(y_true, y_pred, output_path):
+    """Plot and save confusion matrix."""
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False)
+    plt.title('Confusion Matrix')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_roc_curve(y_true, y_pred_proba, output_path):
+    """Plot and save ROC curve."""
+    fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
+    roc_auc = auc(fpr, tpr)
+    
+    plt.figure(figsize=(10, 8))
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC) Curve')
+    plt.legend(loc="lower right")
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_feature_importance(model, feature_names, output_path, top_n=20):
+    """Plot and save feature importance."""
+    # Get feature importance
+    importance = model.get_booster().get_score(importance_type='gain')
+    tuples = [(k, importance[k]) for k in importance]
+    tuples = sorted(tuples, key=lambda x: x[1], reverse=True)
+    
+    # Get top N features
+    if top_n > 0 and top_n < len(tuples):
+        tuples = tuples[:top_n]
+    
+    # Extract feature names and values
+    feature_indices = [int(t[0][1:]) for t in tuples]  # Remove 'f' prefix and convert to int
+    feature_names_top = [feature_names[i] for i in feature_indices]
+    importance_values = [t[1] for t in tuples]
+    
+    # Create plot
+    plt.figure(figsize=(12, 8))
+    y_pos = np.arange(len(feature_names_top))
+    plt.barh(y_pos, importance_values, align='center')
+    plt.yticks(y_pos, feature_names_top)
+    plt.xlabel('Importance (Gain)')
+    plt.title('Feature Importance (Top Features)')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):
+    """Create and save SHAP summary and dependency plots."""
+    # Limit to a subset for computational efficiency if X is large
+    if X.shape[0] > num_samples:
+        X_sample = X.sample(num_samples, random_state=42)
+    else:
+        X_sample = X
+    
+    # Create explainer
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_sample)
+    
+    # Summary plot
+    plt.figure(figsize=(12, 8))
+    shap.summary_plot(shap_values, X_sample, feature_names=feature_names, show=False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'shap_summary.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Dependency plots for top features
+    shap_sum = np.abs(shap_values).mean(axis=0)
+    top_indices = np.argsort(-shap_sum)[:5]  # Get top 5 features
+    
+    for i in top_indices:
+        plt.figure(figsize=(12, 8))
+        shap.dependence_plot(i, shap_values, X_sample, feature_names=feature_names, show=False)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'shap_dependence_{feature_names[i]}.png'), 
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    return shap_values, explainer

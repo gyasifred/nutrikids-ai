@@ -42,6 +42,54 @@ class NutrikidsAiCommand(cmd.Cmd):
             print(cwd)
         except Exception as e:
             print(f"Error: {e}")
+    
+    def do_cd(self, arg):
+        """
+        Change the current working directory.
+        
+        Usage: cd <directory_path>
+        
+        If no directory is specified, it will change to the user's home directory.
+        """
+        try:
+            # If no argument is provided, change to home directory
+            if not arg:
+                home_dir = os.path.expanduser("~")
+                os.chdir(home_dir)
+                print(f"Changed directory to: {home_dir}")
+            else:
+                # Change to the specified directory
+                os.chdir(arg)
+                print(f"Changed directory to: {os.getcwd()}")
+        except Exception as e:
+            print(f"Error: {e}")
+
+
+    def do_cat(self, arg):
+        """
+        Display the contents of a file.
+        
+        Usage: cat <file_path>
+        
+        Displays the entire contents of the specified file.
+        """
+        try:
+            if not arg:
+                print("Error: File path not specified. Usage: cat <file_path>")
+                return
+                
+            # Check if file exists
+            if not os.path.isfile(arg):
+                print(f"Error: File '{arg}' not found.")
+                return
+                
+            # Read and display file contents
+            with open(arg, 'r') as file:
+                content = file.read()
+                print(content)
+        except Exception as e:
+            print(f"Error: {e}")
+
 
     def emptyline(self):
         """Overrides default emptyline behavior (does nothing)."""
@@ -419,6 +467,107 @@ class NutrikidsAiCommand(cmd.Cmd):
             # argparse will exit if --help is called or arguments are invalid
             pass
     
+    def do_tunexgb(self, arg):
+        """
+        Tune XGBoost hyperparameters for text classification.
+        
+        Usage: tunexgb --train_data_file <train_file> --valid_data_file <valid_file> [options]
+        
+        Options:
+            --train_data_file      Path to training data CSV file (required)
+            --valid_data_file      Path to validation data CSV file (required)
+            --text_column          Name of the text column in CSV (default: Note_Column)
+            --label_column         Name of the label column in CSV (default: Malnutrition_Label)
+            --id_column            Name of the ID column in CSV (default: Patient_ID)
+            --max_features         Maximum number of features for vectorization (default: 10000)
+            --remove_stop_words    Remove stop words during preprocessing (flag)
+            --apply_stemming       Apply stemming during preprocessing (flag)
+            --vectorization_mode   Vectorization mode: tfidf, count, binary (default: tfidf)
+            --ngram_min            Minimum n-gram size (default: 1)
+            --ngram_max            Maximum n-gram size (default: 1)
+            --model_name           Name of the model (default: xgb)
+            --model_dir            Directory to save the model (default: ./xgbtune_params)
+        """
+        args = shlex.split(arg)
+        
+        try:
+            # Execute the XGBoost tuning script
+            from xgbraytune import parse_arguments, main as xgb_tune_main
+            sys.argv = ['xgbraytune.py'] + args
+            args = parse_arguments()
+            xgb_tune_main(args)
+            
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+        except Exception as e:
+            print(f"Error running XGBoost tuning: {e}")
+
+    def do_predictxgb(self, arg):
+        """
+        Make predictions using a trained XGBoost model.
+        
+        Usage: predictxgb (--data_file <data_file> | --text <text>) --model_name <model_name> [options]
+        
+        Options:
+            --data_file        Path to the CSV test data file (mutually exclusive with --text)
+            --text             Raw text input for prediction (mutually exclusive with --data_file)
+            --model_name       Name of the model (default: xgb)
+            --text_column      Name of the column containing text data (default: Note_Column)
+            --id_column        Name of the column containing IDs (default: Patient_ID)
+            --model_dir        Directory containing model artifacts (default: ./xgb_models)
+            --output_dir       Directory to save prediction results (default: ./xgb_predictions)
+            --explain          Generate explanations for predictions (flag)
+            --top_n_features   Number of top features to include in explanation (default: 5)
+            --debug            Enable extra debug logging (flag)
+        """
+        args = shlex.split(arg)
+        
+        try:
+            # Execute the XGBoost prediction script
+            from xgbpredict import main as xgb_predict_main
+            sys.argv = ['xgbpredict.py'] + args
+            xgb_predict_main()
+            
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+        except Exception as e:
+            print(f"Error running XGBoost prediction: {e}")
+
+    def do_evaluatexgb(self, arg):
+        """
+        Evaluate a trained XGBoost model.
+        
+        Usage: evaluatexgb --data_file <data_file> --model_name <model_name> [options]
+        
+        Options:
+            --model_name          Name of the model (default: xgb)
+            --data_file           Path to the CSV test data file (required)
+            --text_column         Name of the column containing text data (default: Note_Column)
+            --label_column        Name of the column containing labels (default: Malnutrition_Label)
+            --id_column           Name of the column containing IDs (default: Patient_ID)
+            --model_dir           Directory containing model artifacts (default: ./xgb_models)
+            --output_dir          Directory to save evaluation results (default: ./xgb_evaluation)
+            --num_shap_samples    Number of samples for SHAP explanation (default: 100)
+            --top_n_features      Number of top features to plot (default: 20)
+            --debug               Enable extra debug logging (flag)
+        """
+        args = shlex.split(arg)
+        
+        try:
+            # Execute the XGBoost evaluation script
+            from evaluate_xgb import main as xgb_evaluate_main
+            sys.argv = ['evaluate_xgb.py'] + args
+            xgb_evaluate_main()
+            
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+        except Exception as e:
+            print(f"Error running XGBoost evaluation: {e}")
+            
+    
     def print_help_formatted(self, command_list, header=None):
         """Print formatted help for a list of commands with descriptions."""
         if header:
@@ -459,12 +608,17 @@ class NutrikidsAiCommand(cmd.Cmd):
                 ("cnnpredict", "Make predictions with TextCNN model"),
                 ("traintabpfn", "Train a TabPFN classifier on text data"),
                 ("evaluatetabpfn", "Evaluate a trained TabPFN model"),
-                ("predicttabpfn", "Make predictions using a trained TabPFN model")
+                ("predicttabpfn", "Make predictions using a trained TabPFN model"),
+                ("tunexgb", "Tune XGBoost hyperparameters for text classification"),
+                ("predictxgb", "Make predictions using a trained XGBoost model"),
+                ("evaluatexgb", "Evaluate a trained XGBoost model")
             ]
             
             file_commands = [
                 ("ls", "List the contents of the current directory"),
-                ("pwd", "Print the current working directory")
+                ("pwd", "Print the current working directory"),
+                ("cd", "Change the current working directory"),
+                ("cat", "Display the contents of a file")
             ]
             
             system_commands = [

@@ -27,15 +27,16 @@ def main():
     
     # Text processing parameters
     parser.add_argument('--max_features', type=int, default=8000, help='Max number of features to extract')
-    parser.add_argument('--remove_stop_words', action='store_true', help='Remove stop words')
-    parser.add_argument('--apply_stemming', action='store_false', help='Apply stemming')
+    parser.add_argument('--remove_stop_words', action='store_true',default = False, help='Remove stop words')
+    parser.add_argument('--apply_stemming', action='store_true',default = False, help='Apply stemming')
     parser.add_argument('--vectorization_mode', type=str, default='tfidf', choices=['count', 'tfidf'], help='Vectorization mode')
     parser.add_argument('--ngram_min', type=int, default=1, help='Minimum n-gram size')
     parser.add_argument('--ngram_max', type=int, default=1, help='Maximum n-gram size')
     
     # Model parameters
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda'], help='Device to use')
-    
+    parser.add_argument('--model_name', type=str, default="tabpfn", help='Name of the type of Model being trained')
+        
     # Output parameters
     parser.add_argument('--model_dir', type=str, default='tabpfn_model', help='Directory to save all models and artifacts')
     
@@ -52,6 +53,7 @@ def main():
         file_path=args.data_file,
         text_column=args.text_column,
         label_column=args.label_column,
+        model_name=args.model_name,
         id_column=args.id_column,
         max_features=args.max_features,
         remove_stop_words=args.remove_stop_words,
@@ -63,7 +65,7 @@ def main():
     
     # Save feature dictionary
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    feature_dict_path = os.path.join(args.model_dir, f"tabpfn_nutrikid_classifier_feature_dict_{timestamp}.joblib")
+    feature_dict_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_classifier_feature_dict_{timestamp}.joblib")
     joblib.dump(feature_dict, feature_dict_path)
     print(f"Feature dictionary saved to: {feature_dict_path}")
     
@@ -71,7 +73,7 @@ def main():
     if pd.api.types.is_categorical_dtype(y) or pd.api.types.is_object_dtype(y) or len(np.unique(y)) < len(y) * 0.5:
         label_encoder = LabelEncoder()
         y = label_encoder.fit_transform(y)
-        label_encoder_path = os.path.join(args.model_dir, f"tabpfn_nutrikid_classifier_label_encoder_{timestamp}.joblib")
+        label_encoder_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib")
         joblib.dump(label_encoder, label_encoder_path)
         
         # Train model
@@ -80,7 +82,7 @@ def main():
         y_train=y,
         model_dir=args.model_dir,
         device=args.device,
-        model_name="tabpfn_nutrikid_classifier"
+        model_name=f"{args.model_name}_nutrikidai_model"
     )
     
     print("\nTraining completed successfully!")

@@ -15,10 +15,12 @@ import seaborn as sns
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-from models.tabpfn import load_artifacts, get_feature_importance
+from models.tabpfn import get_feature_importance
+from utils import load_artifacts
 
 def predict_tabpfn(
     model_dir: str,
+    model_name: str,
     input_source: Optional[str] = None,
     text_column: Optional[str] = None,
     id_column: Optional[str] = None,
@@ -63,7 +65,7 @@ def predict_tabpfn(
     print(f"Loading TabPFN model from {model_dir}...")
     
     # Load model artifacts
-    model, label_encoder, pipeline = load_artifacts(model_dir)
+    model, label_encoder, pipeline = load_artifacts(model_dir, model_name)
 
     if pipeline is None:
         raise ValueError(f"Preprocessing pipeline not found in {model_dir}")
@@ -275,6 +277,7 @@ def main():
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument('--data_file', type=str, help='Path to the CSV file with data to predict on')
     input_group.add_argument('--text', type=str, help='Single text input to predict on')
+    parser.add_argument('--model_name', type=str, default="tabpfn", help='Name of the type of Model being trained')
     
     # Optional parameters for CSV input
     parser.add_argument('--text_column', type=str, help='Name of the column containing text data')
@@ -298,6 +301,7 @@ def main():
     # Call prediction function
     predict_tabpfn(
         model_dir=args.model,
+        model_name=args.model_name,
         input_source=args.data_file,
         text_column=args.text_column,
         id_column=args.id_column,

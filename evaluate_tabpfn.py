@@ -14,14 +14,15 @@ import seaborn as sns
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from utils import process_csv
-from models.tabpfn import load_artifacts, evaluate_model
+from models.tabpfn import evaluate_model 
+from utils import load_artifacts
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate a trained TabPFN model')
     
     # Required parameter
     parser.add_argument('--model', type=str, required=True, help='Path to the directory containing model artifacts')
-    
+    parser.add_argument('--model_name', type=str, default="tabpfn", help='Name of the type of Model being trained')
     # Data parameters
     parser.add_argument('--data_file', type=str, required=True, help='Path to the CSV test data file')
     parser.add_argument('--text_column', type=str, default="Note_Column", help='Name of the column containing text data')
@@ -35,7 +36,7 @@ def main():
     args = parser.parse_args()
     
     # Load artifacts
-    model, label_encoder, pipeline = load_artifacts(args.model)
+    model, label_encoder, pipeline = load_artifacts(args.model, args.model_name)
     
     # Process the test data
     print(f"Processing test data from {args.data_file}...")

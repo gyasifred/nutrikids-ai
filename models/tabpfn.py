@@ -22,8 +22,8 @@ def train_tabpfn(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     model_dir: str,
+      model_name: str,
     device: str = "cpu",
-    model_name: str = "tabpfn_nutrikid_classifier",
     **tabpfn_kwargs
 ):
     """
@@ -50,8 +50,8 @@ def train_tabpfn(
     tabpfn_model.fit(X_train, y_train)
     
     # Save the model with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = os.path.join(model_dir, f"{model_name}_model_{timestamp}.joblib")
+    #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_path = os.path.join(model_dir, f"{model_name}.joblib")
     joblib.dump(tabpfn_model, model_path)
     print(f"Model saved to: {model_path}")
     
@@ -242,57 +242,6 @@ def evaluate_model(
     print(f"F1 Score: {f1:.4f}")
     
     return results
-
-
-def load_artifacts(model_dir: str):
-    """ 
-    Load all model artifacts (model, feature dict, pipeline) from the given directory.
-
-    Args:
-        model_dir (str): Path to the directory containing model artifacts.
-
-    Returns:
-        model, feature_dict, pipeline
-    """
-    # Define the file patterns to match the latest .joblib files
-    model_pattern = os.path.join(model_dir, "tabpfn_nutrikid_classifier_model_*.joblib")
-    label_encoder_pattern = os.path.join(model_dir, "tabpfn_nutrikid_classifier_label_encoder_*.joblib")
-    pipeline_pattern = os.path.join(model_dir, "pipeline.joblib")
-
-    # List the files that match the patterns
-    model_files = glob.glob(model_pattern)
-    label_encoder_files = glob.glob(label_encoder_pattern)
-    pipeline_files = glob.glob(pipeline_pattern)
-
-    # Debugging prints to check the found files
-    print(f"Found model files: {model_files}")
-    print(f"Found Label Encoder files: {label_encoder_files}")
-    print(f"Found pipeline files: {pipeline_files}")
-
-    # Ensure that there are files found for each pattern
-    if not model_files:
-        raise ValueError(f"No model files found matching pattern: {model_pattern}")
-    if not label_encoder_files:
-        raise ValueError(f"No feature dictionary files found matching pattern: {label_encoder_files}")
-    if not pipeline_files:
-        raise ValueError(f"No pipeline files found matching pattern: {pipeline_pattern}")
-
-    # Get the latest model file by sorting the files based on the modification time
-    model_path = max(model_files, key=os.path.getmtime)
-    print(f"Loading model from {model_path}...")
-    model = joblib.load(model_path)
-
-    # Get the latest feature dictionary file
-    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
-    print(f"Loading label Encoder from {label_encoder_path}...")
-    label_encoder = joblib.load(label_encoder_path)
-
-    # Get the latest pipeline file
-    pipeline_path = max(pipeline_files, key=os.path.getmtime)
-    print(f"Loading pipeline from {pipeline_path}...")
-    pipeline = joblib.load(pipeline_path)
-
-    return model, label_encoder, pipeline
 
 from sklearn.inspection import permutation_importance
 
