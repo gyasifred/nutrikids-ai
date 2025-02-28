@@ -19,7 +19,7 @@ def parse_arguments():
     parser.add_argument('--text_column', type=str, default="Note_Column", help='Name of the text column in the CSV')
     parser.add_argument('--label_column', type=str, default="Malnutrition_Label", help='Name of the label column in the CSV')
     parser.add_argument('--id_column', type=str, default="Patient_ID", help='Name of the ID column in the CSV')
-    parser.add_argument("--config_dir", default="xgbtune_params", type=str, help='Path to best hyperparameter directory')
+    parser.add_argument("--config_dir", default="xgb_models", type=str, help='Path to best hyperparameter directory')
     parser.add_argument('--max_features', type=int, default=10000, help='Maximum number of features for vectorization')
     parser.add_argument('--remove_stop_words', action='store_true',default= False, help='Remove stop words during preprocessing')
     parser.add_argument('--apply_stemming', action='store_true',default= False, help='Apply stemming during preprocessing')
@@ -43,6 +43,7 @@ def parse_arguments():
 
 def main():
     try:
+        ray.init(ignore_reinit_error=True)
         args = parse_arguments()
         ngram_range = (args.ngram_min, args.ngram_max)
         

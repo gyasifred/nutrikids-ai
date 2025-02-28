@@ -672,11 +672,11 @@ class NutrikidsAiCommand(cmd.Cmd):
         Usage: tunexgb --data-file <data_file> [options]
 
         Options:
-            --data-file          Path to training data CSV file (required)
+            --train-data-file   Path to training data CSV file (required)
+            --valid-data_file   Path to Validation data CSV file (required)
             --text-column        Name of the text column in CSV (default: Note_Column)
             --label-column       Name of the label column in CSV (default: Malnutrition_Label)
             --id-column          Name of the ID column in CSV (default: Patient_ID)
-            --config-dir         Path to save best hyperparameter directory (default: xgbtune_params)
             --max-features       Maximum number of features for vectorization (default: 10000)
             --remove-stop-words  Remove stop words during preprocessing (flag)
             --apply-stemming     Apply stemming during preprocessing (flag)
@@ -689,46 +689,61 @@ class NutrikidsAiCommand(cmd.Cmd):
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Tune XGBoost hyperparameters for text classification')
-        parser.add_argument('--data_file', type=str, required=True,
+        parser.add_argument('--train-data-file', '--train_data_file', type=str, required=True,
                             help='Path to training data CSV file')
-        parser.add_argument('--text_column', type=str, default="Note_Column",
+        parser.add_argument('--valid-data-file', '--valid_data_file', type=str, required=True,
+                            help='Path to validation data CSV file')
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the text column in the CSV')
-        parser.add_argument('--label_column', type=str, default="Malnutrition_Label",
+        parser.add_argument('--label-column', '--label_column', type=str, default="Malnutrition_Label",
                             help='Name of the label column in the CSV')
-        parser.add_argument('--id_column', type=str, default="Patient_ID",
+        parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the ID column in the CSV')
-        parser.add_argument('--config_dir', type=str, default="xgbtune_params",
-                            help='Path to save best hyperparameter directory')
-        parser.add_argument('--max_features', type=int, default=10000,
+        parser.add_argument('--max-features', '--max_features', type=int, default=10000,
                             help='Maximum number of features for vectorization')
-        parser.add_argument('--remove_stop_words', action='store_true',
+        parser.add_argument('--remove-stop-words', '--remove_stop_words', action='store_true', default=False,
                             help='Remove stop words during preprocessing')
-        parser.add_argument('--apply_stemming', action='store_true',
+        parser.add_argument('--apply-stemming', '--apply_stemming', action='store_true', default=False,
                             help='Apply stemming during preprocessing')
-        parser.add_argument('--vectorization_mode', type=str, default='tfidf',
+        parser.add_argument('--vectorization-mode', '--vectorization_mode', type=str, default='tfidf',
                             choices=['tfidf', 'count', 'binary'], help='Vectorization mode')
-        parser.add_argument('--ngram_min', type=int,
+        parser.add_argument('--ngram-min', '--ngram_min', type=int,
                             default=1, help='Minimum n-gram size')
-        parser.add_argument('--ngram_max', type=int,
+        parser.add_argument('--ngram-max', '--ngram_max', type=int,
                             default=1, help='Maximum n-gram size')
-        parser.add_argument('--model_dir', type=str,
+        parser.add_argument('--model-dir', '--model_dir', type=str,
                             default='./xgb_models', help='Directory to save the model')
-        parser.add_argument('--model_name', type=str,
+        parser.add_argument('--model-name', '--model_name', type=str,
                             default="xgb", help='Name of the model')
 
         try:
+            parsed_args = parser.parse_args(args)
+            
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool) and value:
+                        cmd_args.append(f"--{key}")
+                    elif not isinstance(value, bool):
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+            
             # Execute the XGBoost tuning script
-            from tune_xgb import parse_arguments, main as xgb_tune_main
-            sys.argv = ['xgbraytune.py'] + args
-            args = parse_arguments()
-            xgb_tune_main(args)
+            try:
+                from tune_xgb import main as tune_main
+                sys.argv = ['tune_xgb.py'] + cmd_args
+                tune_main()
+            except ImportError:
+                print("Error: Module 'tune_xgb' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error running XGBoost tuning: {e}")
 
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
-        except Exception as e:
-            print(f"Error running XGBoost tuning: {e}")
-    
+
     def do_trainxgb(self, arg):
         """
         Train an XGBoost model for text classification.
@@ -740,7 +755,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             --text-column         Name of the text column in CSV (default: Note_Column)
             --label-column        Name of the label column in CSV (default: Malnutrition_Label)
             --id-column           Name of the ID column in CSV (default: Patient_ID)
-            --config-dir          Path to best hyperparameter directory (default: xgbtune_params)
+            --config-dir          Path to best hyperparameter directory (default: xgb_models)
             --max-features        Maximum number of features for vectorization (default: 10000)
             --remove-stop-words   Remove stop words during preprocessing (flag)
             --apply-stemming      Apply stemming during preprocessing (flag)
@@ -762,64 +777,78 @@ class NutrikidsAiCommand(cmd.Cmd):
             description='Train an XGBoost model')
         
         # Required parameters
-        parser.add_argument('--data_file', type=str, required=True,
+        parser.add_argument('--data-file', '--data_file', type=str, required=True,
                             help='Path to training data CSV file')
         
         # Data parameters
-        parser.add_argument('--text_column', type=str, default="Note_Column",
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the text column in the CSV')
-        parser.add_argument('--label_column', type=str, default="Malnutrition_Label",
+        parser.add_argument('--label-column', '--label_column', type=str, default="Malnutrition_Label",
                             help='Name of the label column in the CSV')
-        parser.add_argument('--id_column', type=str, default="Patient_ID",
+        parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the ID column in the CSV')
         
         # Preprocessing parameters
-        parser.add_argument('--config_dir', type=str, default="xgbtune_params",
+        parser.add_argument('--config-dir', '--config_dir', type=str, default="xgb_models",
                             help='Path to best hyperparameter directory')
-        parser.add_argument('--max_features', type=int, default=10000,
+        parser.add_argument('--max-features', '--max_features', type=int, default=10000,
                             help='Maximum number of features for vectorization')
-        parser.add_argument('--remove_stop_words', action='store_true',
+        parser.add_argument('--remove-stop-words', '--remove_stop_words', action='store_true',
                             help='Remove stop words during preprocessing')
-        parser.add_argument('--apply_stemming', action='store_true',
+        parser.add_argument('--apply-stemming', '--apply_stemming', action='store_true',
                             help='Apply stemming during preprocessing')
-        parser.add_argument('--vectorization_mode', type=str, default='tfidf',
+        parser.add_argument('--vectorization-mode', '--vectorization_mode', type=str, default='tfidf',
                             choices=['tfidf', 'count', 'binary'], help='Vectorization mode')
-        parser.add_argument('--ngram_min', type=int, default=1,
+        parser.add_argument('--ngram-min', '--ngram_min', type=int, default=1,
                             help='Minimum n-gram size')
-        parser.add_argument('--ngram_max', type=int, default=1,
+        parser.add_argument('--ngram-max', '--ngram_max', type=int, default=1,
                             help='Maximum n-gram size')
         
         # Model parameters
-        parser.add_argument('--model_dir', type=str, default='./xgb_models',
+        parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory to save the model')
-        parser.add_argument('--model_name', type=str, default="xgb",
+        parser.add_argument('--model-name', '--model_name', type=str, default="xgb",
                             help='Name of the model')
         
         # XGBoost parameters
         parser.add_argument('--eta', type=float, default=0.1,
                             help='Learning rate')
-        parser.add_argument('--max_depth', type=int, default=6,
+        parser.add_argument('--max-depth', '--max_depth', type=int, default=6,
                             help='Maximum depth of trees')
-        parser.add_argument('--min_child_weight', type=float, default=1,
+        parser.add_argument('--min-child-weight', '--min_child_weight', type=float, default=1,
                             help='Minimum sum of instance weight needed in a child')
         parser.add_argument('--subsample', type=float, default=0.8,
                             help='Subsample ratio of the training instances')
-        parser.add_argument('--colsample_bytree', type=float, default=0.8,
+        parser.add_argument('--colsample-bytree', '--colsample_bytree', type=float, default=0.8,
                             help='Subsample ratio of columns when constructing each tree')
         
         try:
-            # Execute the XGBoost training script
-            from train_xgb import parse_arguments, main as xgb_train_main
-            sys.argv = ['train_xgb.py'] + args
-            args = parse_arguments()
-            xgb_train_main(args)
+            parsed_args = parser.parse_args(args)
             
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool) and value:
+                        cmd_args.append(f"--{key}")
+                    elif not isinstance(value, bool):
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+            
+            # Execute the XGBoost training script
+            try:
+                from train_xgb import main as train_main
+                sys.argv = ['train_xgb.py'] + cmd_args
+                train_main()
+            except ImportError:
+                print("Error: Module 'train_xgb' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error running XGBoost training: {e}")
+        
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
-        except Exception as e:
-            print(f"Error running XGBoost training: {e}")
-            
 
     def do_predictxgb(self, arg):
         """
@@ -844,46 +873,140 @@ class NutrikidsAiCommand(cmd.Cmd):
             description='Make predictions using a trained XGBoost model')
 
         # Required parameters - model name is optional with default
-        parser.add_argument('--model_name', type=str, default="xgb",
+        parser.add_argument('--model-name', '--model_name', type=str, default="xgb",
                             help='Name of the model')
         
         # Data input options (either file or text)
         data_group = parser.add_mutually_exclusive_group(required=True)
-        data_group.add_argument('--data_file', type=str,
+        data_group.add_argument('--data-file', '--data_file', type=str,
                                 help='Path to the CSV test data file')
         data_group.add_argument('--text', type=str,
                                 help='Raw text input for prediction')
         
         # CSV-specific parameters
-        parser.add_argument('--text_column', type=str, default="Note_Column",
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the column containing text data')
-        parser.add_argument('--id_column', type=str, default="Patient_ID",
+        parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the column containing IDs')
         
         # Optional parameters
-        parser.add_argument('--model_dir', type=str, default='./xgb_models',
+        parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory containing model artifacts')
-        parser.add_argument('--output_dir', type=str, default='./xgb_predictions',
+        parser.add_argument('--output-dir', '--output_dir', type=str, default='./xgb_predictions',
                             help='Directory to save prediction results')
         parser.add_argument('--explain', action='store_true',
                             help='Generate explanations for predictions')
-        parser.add_argument('--top_n_features', type=int, default=5,
+        parser.add_argument('--top-n-features', '--top_n_features', type=int, default=5,
                             help='Number of top features to include in explanation')
         parser.add_argument('--debug', action='store_true',
                             help='Enable extra debug logging')
         
         try:
-            # Execute the XGBoost prediction script
-            from xgb_predict import parse_arguments, main as xgb_predict_main
-            sys.argv = ['xgbpredict.py'] + args
-            args = parse_arguments()
-            xgb_predict_main(args)
+            parsed_args = parser.parse_args(args)
             
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool) and value:
+                        cmd_args.append(f"--{key}")
+                    elif not isinstance(value, bool):
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+            
+            # Execute the XGBoost prediction script
+            try:
+                from xgb_predict import main as predict_main
+                sys.argv = ['xgb_predict.py'] + cmd_args
+                predict_main()
+            except ImportError:
+                print("Error: Module 'xgb_predict' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error running XGBoost prediction: {e}")
+        
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
-        except Exception as e:
-            print(f"Error running XGBoost prediction: {e}")
+
+    def do_predicttabpfn(self, arg):
+        """
+        Make predictions using a trained TabPFN model.
+
+        Usage: predicttabpfn --model <model_dir> (--data-file <data_file> | --text <text>) [options]
+
+        Options:
+            --model                 Path to the directory containing model artifacts (required)
+            --data-file             Path to the CSV file with data to predict on
+            --text                  Single text input to predict on
+            --text-column           Name of the column containing text data (default: Note_Column)
+            --id-column             Name of the column containing IDs (default: Patient_ID)
+            --output-dir            Directory to save prediction results (default: tabpfn_predictions)
+            --run-name              Name for this prediction run (default: timestamp-based)
+            --include-features      Include features in output (flag)
+            --calculate-importance  Calculate feature importance (flag)
+            --top-features          Number of top features to display (default: 20)
+        """
+        args = shlex.split(arg)
+        parser = argparse.ArgumentParser(
+            description='Make predictions using a trained TabPFN model')
+
+        # Required parameter
+        parser.add_argument('--model', type=str, required=True,
+                            help='Path to the directory containing model artifacts')
+
+        # Input options (one of these is required)
+        input_group = parser.add_mutually_exclusive_group(required=True)
+        input_group.add_argument('--data-file', '--data_file', type=str, 
+                            help='Path to the CSV file with data to predict on')
+        input_group.add_argument('--text', type=str, 
+                            help='Single text input to predict on')
+
+        # Optional parameters
+        parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
+                            help='Name of the column containing text data (default: Note_Column)')
+        parser.add_argument('--id-column', '--id_column', type=str, default='Patient_ID',
+                            help='Name of the column containing IDs (default: Patient_ID)')
+        parser.add_argument('--output-dir', '--output_dir', type=str, default='tabpfn_predictions',
+                            help='Directory to save prediction results (default: tabpfn_predictions)')
+        parser.add_argument('--run-name', '--run_name', type=str,
+                            help='Name for this prediction run (default: timestamp-based)')
+        parser.add_argument('--include-features', '--include_features', action='store_true',
+                            help='Include features in output')
+        parser.add_argument('--calculate-importance', '--calculate_importance', action='store_true',
+                            help='Calculate feature importance')
+        parser.add_argument('--top-features', '--top_features', type=int, default=20,
+                            help='Number of top features to display (default: 20)')
+        parser.add_argument('--model-name', '--model_name', type=str, default="tabpfn",
+                            help='Name of the model type (default: tabpfn)')
+
+        try:
+            parsed_args = parser.parse_args(args)
+
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool) and value:
+                        cmd_args.append(f"--{key}")
+                    elif not isinstance(value, bool):
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+
+            # Execute the predict script
+            try:
+                from predict_tabpfn import main as predict_main
+                sys.argv = ['predict_tabpfn.py'] + cmd_args
+                predict_main()
+            except ImportError:
+                print("Error: Module 'predict_tabpfn' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error running TabPFN prediction: {e}")
+
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
 
     def do_evaluatexgb(self, arg):
         """
@@ -908,41 +1031,56 @@ class NutrikidsAiCommand(cmd.Cmd):
             description='Evaluate a trained XGBoost model')
 
         # Required parameters
-        parser.add_argument('--model_name', type=str, default="xgb",
+        parser.add_argument('--model-name', '--model_name', type=str, default="xgb",
                             help='Name of the model')
-        parser.add_argument('--data_file', type=str, required=True,
+        parser.add_argument('--data-file', '--data_file', type=str, required=True,
                             help='Path to the CSV test data file')
-        parser.add_argument('--text_column', type=str, default="Note_Column",
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the column containing text data')
-        parser.add_argument('--label_column', type=str, default="Malnutrition_Label",
+        parser.add_argument('--label-column', '--label_column', type=str, default="Malnutrition_Label",
                             help='Name of the column containing labels')
-        parser.add_argument('--id_column', type=str, default="Patient_ID",
+        parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the column containing IDs')
         
         # Optional parameters
-        parser.add_argument('--model_dir', type=str, default='./xgb_models',
+        parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory containing model artifacts')
-        parser.add_argument('--output_dir', type=str, default='./xgb_evaluation',
+        parser.add_argument('--output-dir', '--output_dir', type=str, default='./xgb_evaluation',
                             help='Directory to save evaluation results')
-        parser.add_argument('--num_shap_samples', type=int, default=100,
+        parser.add_argument('--num-shap-samples', '--num_shap_samples', type=int, default=100,
                             help='Number of samples for SHAP explanation')
-        parser.add_argument('--top_n_features', type=int, default=20,
+        parser.add_argument('--top-n-features', '--top_n_features', type=int, default=20,
                             help='Number of top features to plot')
         parser.add_argument('--debug', action='store_true',
                             help='Enable extra debug logging')
         
         try:
-            # Execute the XGBoost evaluation script
-            from evaluate_xgb import parse_arguments, main as xgb_evaluate_main
-            sys.argv = ['evaluate_xgb.py'] + args
-            args = parse_arguments()
-            xgb_evaluate_main(args)
+            parsed_args = parser.parse_args(args)
             
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool) and value:
+                        cmd_args.append(f"--{key}")
+                    elif not isinstance(value, bool):
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+            
+            # Execute the XGBoost evaluation script
+            try:
+                from evaluate_xgb import main as evaluate_main
+                sys.argv = ['evaluate_xgb.py'] + cmd_args
+                evaluate_main()
+            except ImportError:
+                print("Error: Module 'evaluate_xgb' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error running XGBoost evaluation: {e}")
+        
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
-        except Exception as e:
-            print(f"Error running XGBoost evaluation: {e}")
 
     # --------------------- Help System Improvements -----------------
 
