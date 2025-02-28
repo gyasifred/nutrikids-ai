@@ -22,7 +22,6 @@ def main():
     
     # Required parameter
     parser.add_argument('--model', type=str, required=True, help='Path to the directory containing model artifacts')
-    parser.add_argument('--model_name', type=str, default="tabpfn", help='Name of the type of Model being trained')
     # Data parameters
     parser.add_argument('--data_file', type=str, required=True, help='Path to the CSV test data file')
     parser.add_argument('--text_column', type=str, default="Note_Column", help='Name of the column containing text data')

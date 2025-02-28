@@ -414,12 +414,12 @@ def main():
             'f1': float(f1),
             'auc': float(auc),
             'avg_precision': float(avg_precision),
-            'confusion_matrix': cm.tolist(),  # Convert to list for JSON serialization
+            'confusion_matrix': cm.tolist(),  
             'classification_report': cls_report,
-            'fpr': fpr.tolist() if len(fpr) > 0 else [],  # Convert to list for JSON serialization
-            'tpr': tpr.tolist() if len(tpr) > 0 else [],  # Convert to list for JSON serialization
-            'precision_curve': precision_curve.tolist() if len(precision_curve) > 0 else [],  # Convert to list for JSON serialization
-            'recall_curve': recall_curve.tolist() if len(recall_curve) > 0 else []  # Convert to list for JSON serialization
+            'fpr': fpr.tolist() if len(fpr) > 0 else [],  
+            'tpr': tpr.tolist() if len(tpr) > 0 else [], 
+            'precision_curve': precision_curve.tolist() if len(precision_curve) > 0 else [],  
+            'recall_curve': recall_curve.tolist() if len(recall_curve) > 0 else [] 
         }
         
         # Save as JSON for better readability

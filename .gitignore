@@ -183,3 +183,6 @@ predictions/
 xgb_evaluation/
 xgb_predictions/
 xgb_predictions/
+textcnn_evaluation_output/
+text_cnn_predictions/
+textcnn_model/
