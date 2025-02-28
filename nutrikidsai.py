@@ -960,7 +960,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             print("\n\033[1mCommand Categories:\033[0m")
             categories = {
                 "File Operations": ['ls', 'pwd', 'cd', 'cat'],
-                "Model Training": ['tunetextcnn', 'traintextcnn', 'traintabpfn','tunexgb','trainxg'],
+                "Model Training": ['tunetextcnn', 'traintextcnn', 'traintabpfn','tunexgb','trainxgb'],
                 "Model Evaluation": ['evaluatetextcnn', 'evaluatetabpfn','evaluatexgb'],
                 "Model Inference": ['textcnnpredict','predicttabpfn','predictxgb'],
                 "System": ['clear', 'quit', 'help']
