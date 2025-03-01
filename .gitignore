@@ -186,3 +186,7 @@ xgb_predictions/
 textcnn_evaluation_output/
 text_cnn_predictions/
 textcnn_model/
+unsloth_compiled_cache/
+llm_train_output/
+llm_inference_results/
+llm_models/
