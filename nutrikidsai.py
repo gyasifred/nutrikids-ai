@@ -718,7 +718,7 @@ class NutrikidsAiCommand(cmd.Cmd):
 
         try:
             parsed_args = parser.parse_args(args)
-            
+
             # Normalize arguments to use underscores for module imports
             cmd_args = []
             for key, value in vars(parsed_args).items():
@@ -729,14 +729,15 @@ class NutrikidsAiCommand(cmd.Cmd):
                     elif not isinstance(value, bool):
                         cmd_args.append(f"--{key}")
                         cmd_args.append(str(value))
-            
+
             # Execute the XGBoost tuning script
             try:
                 from tune_xgb import main as tune_main
                 sys.argv = ['tune_xgb.py'] + cmd_args
                 tune_main()
             except ImportError:
-                print("Error: Module 'tune_xgb' not found. Make sure it's in your PYTHONPATH.")
+                print(
+                    "Error: Module 'tune_xgb' not found. Make sure it's in your PYTHONPATH.")
             except Exception as e:
                 print(f"Error running XGBoost tuning: {e}")
 
@@ -764,7 +765,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             --ngram-max           Maximum n-gram size (default: 1)
             --model-dir           Directory to save the model (default: ./xgb_models)
             --model-name          Name of the model (default: xgb)
-            
+
             # XGBoost parameters
             --eta                 Learning rate (default: 0.1)
             --max-depth           Maximum depth of trees (default: 6)
@@ -775,11 +776,11 @@ class NutrikidsAiCommand(cmd.Cmd):
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Train an XGBoost model')
-        
+
         # Required parameters
         parser.add_argument('--data-file', '--data_file', type=str, required=True,
                             help='Path to training data CSV file')
-        
+
         # Data parameters
         parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the text column in the CSV')
@@ -787,7 +788,7 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Name of the label column in the CSV')
         parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the ID column in the CSV')
-        
+
         # Preprocessing parameters
         parser.add_argument('--config-dir', '--config_dir', type=str, default="xgb_models",
                             help='Path to best hyperparameter directory')
@@ -803,13 +804,13 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Minimum n-gram size')
         parser.add_argument('--ngram-max', '--ngram_max', type=int, default=1,
                             help='Maximum n-gram size')
-        
+
         # Model parameters
         parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory to save the model')
         parser.add_argument('--model-name', '--model_name', type=str, default="xgb",
                             help='Name of the model')
-        
+
         # XGBoost parameters
         parser.add_argument('--eta', type=float, default=0.1,
                             help='Learning rate')
@@ -821,10 +822,10 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Subsample ratio of the training instances')
         parser.add_argument('--colsample-bytree', '--colsample_bytree', type=float, default=0.8,
                             help='Subsample ratio of columns when constructing each tree')
-        
+
         try:
             parsed_args = parser.parse_args(args)
-            
+
             # Normalize arguments to use underscores for module imports
             cmd_args = []
             for key, value in vars(parsed_args).items():
@@ -835,17 +836,18 @@ class NutrikidsAiCommand(cmd.Cmd):
                     elif not isinstance(value, bool):
                         cmd_args.append(f"--{key}")
                         cmd_args.append(str(value))
-            
+
             # Execute the XGBoost training script
             try:
                 from train_xgb import main as train_main
                 sys.argv = ['train_xgb.py'] + cmd_args
                 train_main()
             except ImportError:
-                print("Error: Module 'train_xgb' not found. Make sure it's in your PYTHONPATH.")
+                print(
+                    "Error: Module 'train_xgb' not found. Make sure it's in your PYTHONPATH.")
             except Exception as e:
                 print(f"Error running XGBoost training: {e}")
-        
+
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
@@ -875,20 +877,20 @@ class NutrikidsAiCommand(cmd.Cmd):
         # Required parameters - model name is optional with default
         parser.add_argument('--model-name', '--model_name', type=str, default="xgb",
                             help='Name of the model')
-        
+
         # Data input options (either file or text)
         data_group = parser.add_mutually_exclusive_group(required=True)
         data_group.add_argument('--data-file', '--data_file', type=str,
                                 help='Path to the CSV test data file')
         data_group.add_argument('--text', type=str,
                                 help='Raw text input for prediction')
-        
+
         # CSV-specific parameters
         parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
                             help='Name of the column containing text data')
         parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the column containing IDs')
-        
+
         # Optional parameters
         parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory containing model artifacts')
@@ -900,10 +902,10 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Number of top features to include in explanation')
         parser.add_argument('--debug', action='store_true',
                             help='Enable extra debug logging')
-        
+
         try:
             parsed_args = parser.parse_args(args)
-            
+
             # Normalize arguments to use underscores for module imports
             cmd_args = []
             for key, value in vars(parsed_args).items():
@@ -914,17 +916,18 @@ class NutrikidsAiCommand(cmd.Cmd):
                     elif not isinstance(value, bool):
                         cmd_args.append(f"--{key}")
                         cmd_args.append(str(value))
-            
+
             # Execute the XGBoost prediction script
             try:
                 from xgb_predict import main as predict_main
                 sys.argv = ['xgb_predict.py'] + cmd_args
                 predict_main()
             except ImportError:
-                print("Error: Module 'xgb_predict' not found. Make sure it's in your PYTHONPATH.")
+                print(
+                    "Error: Module 'xgb_predict' not found. Make sure it's in your PYTHONPATH.")
             except Exception as e:
                 print(f"Error running XGBoost prediction: {e}")
-        
+
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
@@ -957,10 +960,10 @@ class NutrikidsAiCommand(cmd.Cmd):
 
         # Input options (one of these is required)
         input_group = parser.add_mutually_exclusive_group(required=True)
-        input_group.add_argument('--data-file', '--data_file', type=str, 
-                            help='Path to the CSV file with data to predict on')
-        input_group.add_argument('--text', type=str, 
-                            help='Single text input to predict on')
+        input_group.add_argument('--data-file', '--data_file', type=str,
+                                 help='Path to the CSV file with data to predict on')
+        input_group.add_argument('--text', type=str,
+                                 help='Single text input to predict on')
 
         # Optional parameters
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
@@ -1000,7 +1003,8 @@ class NutrikidsAiCommand(cmd.Cmd):
                 sys.argv = ['predict_tabpfn.py'] + cmd_args
                 predict_main()
             except ImportError:
-                print("Error: Module 'predict_tabpfn' not found. Make sure it's in your PYTHONPATH.")
+                print(
+                    "Error: Module 'predict_tabpfn' not found. Make sure it's in your PYTHONPATH.")
             except Exception as e:
                 print(f"Error running TabPFN prediction: {e}")
 
@@ -1011,9 +1015,9 @@ class NutrikidsAiCommand(cmd.Cmd):
     def do_evaluatexgb(self, arg):
         """
         Evaluate a trained XGBoost model.
-        
+
         Usage: evaluatexgb --data-file <data_file> --model-name <model_name> [options]
-        
+
         Options:
             --model-name          Name of the model (default: xgb)
             --data-file           Path to the CSV test data file (required)
@@ -1041,7 +1045,7 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Name of the column containing labels')
         parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
                             help='Name of the column containing IDs')
-        
+
         # Optional parameters
         parser.add_argument('--model-dir', '--model_dir', type=str, default='./xgb_models',
                             help='Directory containing model artifacts')
@@ -1053,10 +1057,10 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Number of top features to plot')
         parser.add_argument('--debug', action='store_true',
                             help='Enable extra debug logging')
-        
+
         try:
             parsed_args = parser.parse_args(args)
-            
+
             # Normalize arguments to use underscores for module imports
             cmd_args = []
             for key, value in vars(parsed_args).items():
@@ -1067,17 +1071,374 @@ class NutrikidsAiCommand(cmd.Cmd):
                     elif not isinstance(value, bool):
                         cmd_args.append(f"--{key}")
                         cmd_args.append(str(value))
-            
+
             # Execute the XGBoost evaluation script
             try:
                 from evaluate_xgb import main as evaluate_main
                 sys.argv = ['evaluate_xgb.py'] + cmd_args
                 evaluate_main()
             except ImportError:
-                print("Error: Module 'evaluate_xgb' not found. Make sure it's in your PYTHONPATH.")
+                print(
+                    "Error: Module 'evaluate_xgb' not found. Make sure it's in your PYTHONPATH.")
             except Exception as e:
                 print(f"Error running XGBoost evaluation: {e}")
-        
+
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+
+    def do_llminference(self, arg):
+        """
+        Run inference with a malnutrition detection model (base or fine-tuned).
+
+        Usage: llminference --input-csv <csv_file> | --input-text <text> [options]
+
+        Input Options (one required):
+            --input-csv      Path to CSV file with patient notes
+            --input-text     Single patient note as text string
+
+        Model Options:
+            --model-path     Path to fine-tuned model adapter weights (optional)
+            --base-model     Base model name (default: unsloth/Phi-3-mini-4k-instruct)
+
+        CSV Column Options:
+            --text-column    Column name containing patient notes (default: Note_Column)
+            --id-column      Column name containing sample IDs (default: Patient_ID)
+            --label-column   Column name containing true labels (default: Malnutrition_Label)
+
+        Few-shot Options:
+            --examples-data     Path to few-shot examples CSV data (optional)
+            --few-shot-count    Number of few-shot examples to use (default: 0)
+            --balanced-examples Whether to balance positive/negative examples
+
+        Output Options:
+            --output-dir     Directory to save results (default: ./llm_inference_results)
+            --output-csv     Name of output CSV file (default: malnutrition_predictions.csv)
+            --print-report   Print evaluation report if labels available
+
+        Inference Options:
+            --use-flash-attention Use Flash Attention 2 if available
+            --max-new-tokens     Maximum new tokens to generate (default: 256)
+            --temperature        Temperature for sampling (default: 0.1)
+            --min-p              Min-P sampling parameter (default: 0.0)
+            --stream-output      Stream model output to console
+            --seed               Random seed for reproducibility (default: 42)
+
+        Example:
+            llminference --input-csv data/test.csv --print-report --stream-output
+            llminference --input-text "Patient presents with weight loss of 10kg in 3 months"
+        """
+        args = shlex.split(arg)
+        parser = argparse.ArgumentParser(
+            description="Run inference with a malnutrition detection model")
+
+        # Input arguments
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument('--input-csv', '--input_csv', type=str,
+                           help="Path to CSV file with patient notes")
+        group.add_argument('--input-text', '--input_text', type=str,
+                           help="Single patient note as text string")
+
+        # Model arguments
+        parser.add_argument('--model-path', '--model_path', type=str, default=None,
+                            help="Path to fine-tuned model adapter weights (optional)")
+        parser.add_argument('--base-model', '--base_model', type=str,
+                            default="unsloth/Phi-3-mini-4k-instruct",
+                            help="Base model that was fine-tuned or to be used for inference")
+
+        # CSV column options
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
+                            help="Column name in CSV containing patient notes")
+        parser.add_argument('--id-column', '--id_column', type=str, default="Patient_ID",
+                            help="Column name in CSV containing sample IDs")
+        parser.add_argument('--label-column', '--label_column', type=str, default='Malnutrition_Label',
+                            help="Column name in CSV containing true labels (optional)")
+
+        # Few-shot settings
+        parser.add_argument('--examples-data', '--examples_data', type=str, default=None,
+                            help="Path to few-shot examples CSV data (optional)")
+        parser.add_argument('--few-shot-count', '--few_shot_count', type=int, default=0,
+                            help="Number of few-shot examples to use (default: 0 for zero-shot)")
+        parser.add_argument('--balanced-examples', '--balanced_examples', action="store_true",
+                            help="Whether to balance positive/negative few-shot examples")
+
+        # Output arguments
+        parser.add_argument('--output-dir', '--output_dir', type=str, default="./llm_inference_results",
+                            help="Directory to save inference results")
+        parser.add_argument('--output-csv', '--output_csv', type=str, default="malnutrition_predictions.csv",
+                            help="Name of output CSV file")
+        parser.add_argument('--print-report', '--print_report', action="store_true",
+                            help="Print evaluation report to terminal (if labels available)")
+
+        # Model inference settings
+        parser.add_argument('--use-flash-attention', '--use_flash_attention', action="store_true",
+                            help="Use Flash Attention 2 if available")
+        parser.add_argument('--seed', type=int, default=42,
+                            help="Random seed for reproducibility")
+        parser.add_argument('--max-new-tokens', '--max_new_tokens', type=int, default=256,
+                            help="Maximum number of new tokens to generate")
+        parser.add_argument('--temperature', type=float, default=0.1,
+                            help="Temperature for sampling")
+        parser.add_argument('--min-p', '--min_p', type=float, default=0.0,
+                            help="Min-P sampling parameter (optional)")
+        parser.add_argument('--stream-output', '--stream_output', action="store_true",
+                            help="Stream model output to console during generation")
+
+        try:
+            parsed_args = parser.parse_args(args)
+
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool):
+                        if value:
+                            cmd_args.append(f"--{key}")
+                    else:
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+
+            # Execute the LLM inference script
+            try:
+                from llm_inference import main as llm_inference_main
+                sys.argv = ['llm_inference.py'] + cmd_args
+                llm_inference_main()
+            except ImportError:
+                print(
+                    "Error: Module 'models.llm_models' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error: Failed to execute LLM inference: {e}")
+
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+
+    def do_llmtrain(self, arg):
+        """
+        Train a malnutrition detection model with fine-tuning.
+
+        Usage: llmtrain --train-data <train_csv> [options]
+
+        Required Arguments:
+            --train-data      Path to training CSV data
+
+        Model Options:
+            --model-name      Base model to use for fine-tuning (default: unsloth/Phi-3-mini-4k-instruct)
+            --val-data        Path to validation CSV data (optional)
+            --examples-data   Path to few-shot examples CSV data (optional)
+
+        Data Options:
+            --text-column     Name of the text column in CSV (default: Note_Column)
+            --label-column    Name of the label column in CSV (default: Malnutrition_Label)
+
+        Output Options:
+            --output-dir      Directory for saving training outputs (default: ./llm_train_output)
+            --model-output    Path to save the final model (default: ./llm_models)
+
+        Training Parameters:
+            --batch-size           Per-device training batch size (default: 32)
+            --gradient-accumulation Number of gradient accumulation steps (default: 4)
+            --learning-rate        Learning rate for training (default: 2e-4)
+            --max-steps            Maximum number of training steps (default: 60)
+            --max-seq-length       Maximum sequence length for tokenization (default: 1024)
+
+        LoRA Parameters:
+            --lora-r          LoRA r parameter/rank (default: 8)
+            --lora-alpha      LoRA alpha parameter/scaling (default: 32)
+
+        Miscellaneous Options:
+            --seed            Random seed for reproducibility (default: 42)
+            --use-flash-attention  Use Flash Attention 2 if available
+            --report-to       Where to report metrics: none, tensorboard, wandb (default: none)
+
+        Example:
+            llmtrain --train-data data/train.csv --val-data data/val.csv --max-steps 100
+        """
+        args = shlex.split(arg)
+        parser = argparse.ArgumentParser(
+            description="Train a malnutrition detection model")
+
+        # Model and data arguments
+        parser.add_argument('--model-name', '--model_name', type=str, default="unsloth/Phi-3-mini-4k-instruct",
+                            help="Base model to use for fine-tuning")
+        parser.add_argument('--train-data', '--train_data', type=str, required=True,
+                            help="Path to training CSV data")
+        parser.add_argument('--val-data', '--val_data', type=str, default=None,
+                            help="Path to validation CSV data (optional)")
+        parser.add_argument('--examples-data', '--examples_data', type=str, default=None,
+                            help="Path to few-shot examples CSV data (optional)")
+        parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",
+                            help="Name of the text column in the CSV")
+        parser.add_argument('--label-column', '--label_column', type=str, default="Malnutrition_Label",
+                            help="Name of the label column in the CSV")
+
+        # Output arguments
+        parser.add_argument('--output-dir', '--output_dir', type=str, default="./llm_train_output",
+                            help="Directory for saving training outputs")
+        parser.add_argument('--model-output', '--model_output', type=str, default="./llm_models",
+                            help="Path to save the final model")
+
+        # Training arguments
+        parser.add_argument('--batch-size', '--batch_size', type=int, default=32,
+                            help="Per-device training batch size")
+        parser.add_argument('--gradient-accumulation', '--gradient_accumulation', type=int, default=4,
+                            help="Number of gradient accumulation steps")
+        parser.add_argument('--learning-rate', '--learning_rate', type=float, default=2e-4,
+                            help="Learning rate for training")
+        parser.add_argument('--max-steps', '--max_steps', type=int, default=60,
+                            help="Maximum number of training steps")
+        parser.add_argument('--max-seq-length', '--max_seq_length', type=int, default=1024,
+                            help="Maximum sequence length for tokenization")
+
+        # LoRA parameters
+        parser.add_argument('--lora-r', '--lora_r', type=int, default=8,
+                            help="LoRA r parameter (rank)")
+        parser.add_argument('--lora-alpha', '--lora_alpha', type=int, default=32,
+                            help="LoRA alpha parameter (scaling)")
+
+        # Miscellaneous
+        parser.add_argument('--seed', type=int, default=42,
+                            help="Random seed for reproducibility")
+        parser.add_argument('--use-flash-attention', '--use_flash_attention', action="store_true",
+                            help="Use Flash Attention 2 if available")
+        parser.add_argument('--report-to', '--report_to', type=str, default="none",
+                            choices=["none", "tensorboard", "wandb"],
+                            help="Where to report training metrics")
+
+        try:
+            parsed_args = parser.parse_args(args)
+
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                if value is not None:
+                    key = key.replace('-', '_')
+                    if isinstance(value, bool):
+                        if value:
+                            cmd_args.append(f"--{key}")
+                    else:
+                        cmd_args.append(f"--{key}")
+                        cmd_args.append(str(value))
+
+            # Execute the LLM training script
+            try:
+                from finetune_llm import main as train_main
+                sys.argv = ['llm_train.py'] + cmd_args
+                train_main()
+            except ImportError:
+                print(
+                    "Error: Module 'models.llm_models' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error: Failed to execute LLM training: {e}")
+
+        except SystemExit:
+            # argparse will exit if --help is called or arguments are invalid
+            pass
+
+    def do_ollamaserve(self, arg):
+        """
+        Serve a fine-tuned model with Ollama.
+
+        Usage: ollama_serve --model-path <model_path> [options]
+
+        Required Arguments:
+            --model-path          Path to the fine-tuned model adapter weights
+
+        Model Options:
+            --base-model          Base model that was fine-tuned (default: microsoft/Phi-3-mini-4k-instruct)
+            --model-name          Name to assign to the Ollama model (default: custom_model)
+            --system-prompt       System prompt for the Ollama model (default: "You are a helpful assistant.")
+
+        GGUF Conversion Options:
+            --quantization        Quantization method: q4_k_m, q5_k_m, q8_0, f16 (default: q8_0)
+            --output-dir          Directory to save GGUF converted model (default: ./ollama_model)
+            --use-safetensors     Save intermediate model in safetensors format
+
+        Ollama Settings:
+            --ollama-port         Port number for Ollama server (default: 11434)
+            --test-prompt         Test prompt to verify model functionality
+            --stream-output       Stream model output during testing (flag)
+
+        Device Options:
+            --cpu                 Use CPU for model loading and conversion (default: use GPU)
+            --max-memory          Max memory allocation for model, e.g. '12GiB'
+            --batch-size          Batch size for conversion process (default: 1)
+
+        Examples:
+            ollama_serve --model-path ./lora/adapter_model --model-name nutrition_assistant
+            ollama_serve --model-path ./trained_model --base-model meta-llama/Llama-2-7b-chat --quantization q4_k_m --cpu
+        """
+
+        args = shlex.split(arg)
+        parser = argparse.ArgumentParser(
+            description='Convert and serve fine-tuned models with Ollama')
+
+        # Required arguments
+        parser.add_argument('--model-path', '--model_path', type=str, required=True,
+                            help='Path to the fine-tuned model adapter weights')
+
+        # Model options
+        parser.add_argument('--base-model', '--base_model', type=str, default="microsoft/Phi-3-mini-4k-instruct",
+                            help='Base model that was fine-tuned (default: microsoft/Phi-3-mini-4k-instruct)')
+        parser.add_argument('--model-name', '--model_name', type=str, default="custom_model",
+                            help='Name to assign to the Ollama model (default: custom_model)')
+        parser.add_argument('--system-prompt', '--system_prompt', type=str,
+                            default="You are a helpful assistant.",
+                            help='System prompt for the Ollama model (default: "You are a helpful assistant.")')
+
+        # GGUF conversion options
+        parser.add_argument('--quantization', type=str, default="q8_0",
+                            choices=["q4_k_m", "q5_k_m", "q8_0", "f16"],
+                            help='Quantization method for GGUF conversion (default: q8_0)')
+        parser.add_argument('--output-dir', '--output_dir', type=str, default="./ollama_model",
+                            help='Directory to save GGUF converted model (default: ./ollama_model)')
+        parser.add_argument('--use-safetensors', '--use_safetensors', action='store_true',
+                            help='Save intermediate model in safetensors format')
+
+        # Ollama settings
+        parser.add_argument('--ollama-port', '--ollama_port', type=int, default=11434,
+                            help='Port number for Ollama server (default: 11434)')
+        parser.add_argument('--test-prompt', '--test_prompt', type=str,
+                            default="Hello! How can you help me today?",
+                            help='Test prompt to verify model functionality')
+        parser.add_argument('--stream-output', '--stream_output', action='store_true', default=True,
+                            help='Stream model output during testing (default: True)')
+
+        # Device options
+        parser.add_argument('--cpu', action='store_true', default=False,
+                            help='Use CPU for model loading and conversion (default: use GPU)')
+        parser.add_argument('--max-memory', '--max_memory', type=str, default=None,
+                            help='Max memory allocation for model, e.g. "12GiB"')
+        parser.add_argument('--batch-size', '--batch_size', type=int, default=1,
+                            help='Batch size for conversion process (default: 1)')
+
+        try:
+            parsed_args = parser.parse_args(args)
+
+            # Normalize arguments to use underscores for module imports
+            cmd_args = []
+            for key, value in vars(parsed_args).items():
+                key = key.replace('-', '_')
+                if isinstance(value, bool):
+                    if value:
+                        cmd_args.append(f"--{key}")
+                    continue
+                cmd_args.append(f"--{key}")
+                if not isinstance(value, bool):
+                    cmd_args.append(str(value))
+
+            # Execute the ollama serve script
+            try:
+                from serve_model_with_ollama import main as ollama_serve_main
+                sys.argv = ['ollama_serve.py'] + cmd_args
+                ollama_serve_main()
+            except ImportError:
+                print(
+                    "Error: Module 'ollama_serve' not found. Make sure it's in your PYTHONPATH.")
+            except Exception as e:
+                print(f"Error: Failed to execute Ollama serve: {e}")
+
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
@@ -1098,9 +1459,9 @@ class NutrikidsAiCommand(cmd.Cmd):
             print("\n\033[1mCommand Categories:\033[0m")
             categories = {
                 "File Operations": ['ls', 'pwd', 'cd', 'cat'],
-                "Model Training": ['tunetextcnn', 'traintextcnn', 'traintabpfn','tunexgb','trainxgb'],
-                "Model Evaluation": ['evaluatetextcnn', 'evaluatetabpfn','evaluatexgb'],
-                "Model Inference": ['textcnnpredict','predicttabpfn','predictxgb'],
+                "Model Training": ['tunetextcnn', 'traintextcnn', 'traintabpfn', 'tunexgb', 'trainxgb', 'llmtrain'],
+                "Model Evaluation": ['evaluatetextcnn', 'evaluatetabpfn', 'evaluatexgb'],
+                "Model Inference": ['textcnnpredict', 'predicttabpfn', 'predictxgb', 'llminference', 'ollamaserve'],
                 "System": ['clear', 'quit', 'help']
             }
             for category, cmds in categories.items():
