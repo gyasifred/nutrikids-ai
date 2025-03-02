@@ -8,7 +8,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import re
-from transformers import BitsAndBytesConfig
+from transformers import BitsAndBytesConfig, TextStreamer
 from unsloth import FastLanguageModel
 from tqdm import tqdm
 import csv
@@ -75,6 +75,10 @@ def parse_arguments():
                         help="Maximum number of new tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
+    parser.add_argument("--min_p", type=float, default=0.0,
+                        help="Min-P sampling parameter (optional)")
+    parser.add_argument("--stream_output", action="store_true",
+                        help="Stream model output to console during generation")
     
     return parser.parse_args()
 
@@ -122,7 +126,7 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
                 use_flash_attention_2=use_flash_attention,
                 use_cache=True  # Enable caching for inference
             )
-            FastLanguageModel.for_inference(model)
+            FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
             print("Model and adapter weights loaded successfully")
         else:
             # Load base model only
@@ -135,7 +139,7 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
                 use_flash_attention_2=use_flash_attention,
                 use_cache=True  # Enable caching for inference
             )
-            FastLanguageModel.for_inference(model)
+            FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
             print("Base model loaded successfully")
 
         return model, tokenizer
@@ -196,32 +200,59 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
         balanced=args.balanced_examples
     )
     
-    # Fix: Ensure inputs is a proper tensor dictionary with input_ids
-    inputs = tokenizer(prompt, return_tensors="pt")
+    # Prepare chat format messages
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
     
-    # Move all tensor inputs to the model's device
-    for k, v in inputs.items():
-        if hasattr(v, 'to'):
-            inputs[k] = v.to(model.device)
+    # Apply chat template
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,  # Must add for generation
+        return_tensors="pt"
+    ).to(model.device)
+    
+    # Set up text streamer if requested
+    if args.stream_output:
+        text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+        streamer = text_streamer
+        print("\n--- Streaming model output ---")
+        print("PROMPT:", prompt[:100], "...\n")
+        print("RESPONSE:")
+    else:
+        streamer = None
     
     # Generate with properly formatted inputs
     with torch.no_grad():
         output = model.generate(
-            **inputs,
+            input_ids=inputs,
+            streamer=streamer,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            min_p=args.min_p if args.min_p > 0 else None,
             do_sample=args.temperature > 0,
+            use_cache=True,
             pad_token_id=tokenizer.eos_token_id
         )
     
-    # Decode the output - make sure to get only the generated part
-    input_length = inputs["input_ids"].shape[1]
-    response_tokens = output[0][input_length:]
-    response = tokenizer.decode(response_tokens, skip_special_tokens=True)
+    # If streaming was used, we need to get the full response as a string
+    if args.stream_output:
+        # Decode the output - make sure to get only the generated part
+        input_length = inputs.shape[1]
+        response_tokens = output[0][input_length:]
+        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
+        print("\n--- End of streaming output ---\n")
+    else:
+        # Decode the output - make sure to get only the generated part
+        input_length = inputs.shape[1]
+        response_tokens = output[0][input_length:]
+        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
     
     decision, explanation = extract_malnutrition_decision(response)
     
     return decision, explanation
+
 
 def process_csv_input(args, model, tokenizer, prompt_builder):
     """Process CSV input file and save results.
@@ -342,6 +373,42 @@ def main():
         print(f"Result saved to {output_path}")
     
     print("Inference complete!")
+
+
+# Simple usage example
+def example_usage():
+    """Example of directly using the model for streaming inference."""
+    model_name = "unsloth/Phi-3-mini-4k-instruct"
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        load_in_4bit=True,
+        dtype=torch.float16,
+        device_map="auto",
+        use_cache=True
+    )
+    FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
+    
+    messages = [
+        {"role": "user", "content": "Continue the fibonacci sequence: 1, 1, 2, 3, 5, 8,"},
+    ]
+    
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,  # Must add for generation
+        return_tensors="pt"
+    ).to("cuda")
+    
+    text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+    
+    _ = model.generate(
+        input_ids=inputs,
+        streamer=text_streamer,
+        max_new_tokens=1024,
+        use_cache=True,
+        temperature=1.5,
+        min_p=0.1
+    )
 
 
 if __name__ == "__main__":

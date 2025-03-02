@@ -4,10 +4,11 @@ import argparse
 import subprocess
 import time
 import torch
-from transformers import BitsAndBytesConfig
-from unsloth import FastLanguageModel
 import json
 import requests
+import gc
+from transformers import BitsAndBytesConfig, TextStreamer, AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
 
 
 def parse_arguments():
@@ -19,11 +20,11 @@ def parse_arguments():
     # Model arguments
     parser.add_argument("--model_path", type=str, required=True,
                         help="Path to the fine-tuned model adapter weights")
-    parser.add_argument("--base_model", type=str, default="unsloth/Phi-3-mini-4k-instruct",
+    parser.add_argument("--base_model", type=str, default="microsoft/Phi-3-mini-4k-instruct",
                         help="Base model that was fine-tuned")
 
     # GGUF conversion settings
-    parser.add_argument("--model_name", type=str, default="unsloth_model",
+    parser.add_argument("--model_name", type=str, default="nutrikidai_model",
                         help="Name to assign to the Ollama model")
     parser.add_argument("--quantization", type=str, default="q8_0",
                         choices=["q4_k_m", "q5_k_m", "q8_0", "f16"],
@@ -37,104 +38,225 @@ def parse_arguments():
     parser.add_argument("--test_prompt", type=str,
                         default="Analyze this patient note and determine if there are signs of malnutrition.",
                         help="Test prompt to verify model functionality")
+    parser.add_argument("--stream_output", action="store_true", default=True,
+                        help="Stream model output during testing")
 
     # Output directory
     parser.add_argument("--output_dir", type=str, default="./ollama_model",
                         help="Directory to save GGUF converted model")
 
-    # HuggingFace integration (optional)
-    parser.add_argument("--push_to_hub", action="store_true",
-                        help="Push the converted model to HuggingFace Hub")
-    parser.add_argument("--hf_username", type=str, default=None,
-                        help="HuggingFace username if pushing to Hub")
-    parser.add_argument("--hf_token", type=str, default=None,
-                        help="HuggingFace token if pushing to Hub")
+    # Device options
+    parser.add_argument("--cpu", action="store_true", default=False,
+                        help="Use CPU for model loading and conversion (default: use GPU)")
+    parser.add_argument("--use_safetensors", action="store_true",
+                        help="Save intermediate model in safetensors format to avoid memory issues")
+
+    # Memory management
+    parser.add_argument("--max_memory", type=str, default=None,
+                        help="Max memory allocation for model, e.g. '12GiB'")
+    parser.add_argument("--batch_size", type=int, default=1,
+                        help="Batch size for conversion process")
 
     return parser.parse_args()
 
 
-def get_quantization_config():
-    """Define quantization configuration for loading the model."""
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        llm_int8_enable_fp32_cpu_offload=True,
-        llm_int8_threshold=6.0,
-        llm_int8_has_fp16_weight=True
-    )
+def get_quantization_config(args):
+    """Define quantization configuration based on device."""
+    if not args.cpu and torch.cuda.is_available():
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+    return None
 
 
-def load_model_and_tokenizer(base_model, model_path, quantization_config):
-    """Load base model with fine-tuned adapter weights and tokenizer.
-
-    Args:
-        base_model (str): Base model name.
-        model_path (str): Path to fine-tuned model adapter weights.
-        quantization_config: Quantization configuration.
-
-    Returns:
-        Tuple: (model, tokenizer)
-    """
+def load_model_and_tokenizer(base_model, model_path, args):
+    """Load model and tokenizer with appropriate method based on GPU usage."""
     print(
         f"Loading base model '{base_model}' with adapter weights from '{model_path}'...")
+
     try:
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=base_model,
-            adapter_name=model_path,
-            load_in_4bit=True,
-            dtype=torch.float16,
-            quantization_config=quantization_config,
-            device_map="auto"
-        )
-        print("Model and tokenizer loaded successfully")
-        FastLanguageModel.for_inference(model)
-        return model, tokenizer
+        if not args.cpu and torch.cuda.is_available():
+            return load_gpu_model(base_model, model_path, args)
+        else:
+            return load_cpu_model(base_model, model_path, args)
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
 
 
+def load_gpu_model(base_model, model_path, args):
+    """Load model using Unsloth's optimizations for GPU."""
+    from unsloth import FastLanguageModel
+
+    print("Using Unsloth optimizations on GPU")
+
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=base_model,
+        adapter_name=model_path,
+        load_in_4bit=True,
+        dtype=torch.float16,
+        quantization_config=quantization_config,
+        device_map="auto",
+        max_memory=parse_max_memory(
+            args.max_memory) if args.max_memory else None,
+    )
+    FastLanguageModel.for_inference(model)
+    return model, tokenizer
+
+
+def load_cpu_model(base_model, model_path, args):
+    """Load model using standard Transformers/PEFT for CPU."""
+    print("Using standard Transformers/PEFT loading on CPU")
+
+    # Load base model
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        device_map="cpu",
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+
+    # Load adapter weights if provided
+    if model_path and os.path.exists(model_path):
+        print(f"Loading adapter weights from {model_path}")
+        model = PeftModel.from_pretrained(model, model_path)
+        model = model.merge_and_unload()
+
+    return model, tokenizer
+
+
+def parse_max_memory(max_memory_str):
+    """Parse max memory string into device allocation dictionary."""
+    return {0: max_memory_str, "cpu": "16GiB"}
+
+
+def test_model_with_streaming(model, tokenizer, test_prompt, args):
+    """Test the model with streaming before converting to GGUF."""
+    print(f"\nTesting model with prompt: '{test_prompt}'")
+
+    messages = [{"role": "user", "content": test_prompt}]
+    input_ids = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        return_tensors="pt"
+    ).to(model.device)
+
+    print(f"Using device: {model.device}")
+
+    streamer = TextStreamer(tokenizer, skip_prompt=True)
+
+    try:
+        print("\n--- Model Response ---")
+        _ = model.generate(
+            input_ids,
+            streamer=streamer,
+            max_new_tokens=512,
+            temperature=0.1,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        print("\n---------------------\n")
+    except Exception as e:
+        print(f"Generation error: {e}")
+        if not args.cpu:
+            print("Attempting CPU fallback for generation test...")
+            model = model.cpu()
+            input_ids = input_ids.cpu()
+            _ = model.generate(
+                input_ids,
+                streamer=streamer,
+                max_new_tokens=512,
+                temperature=0.1,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id
+            )
+
+
 def convert_to_gguf(model, tokenizer, args):
-    """Convert model to GGUF format for Ollama.
-
-    Args:
-        model: The loaded fine-tuned model.
-        tokenizer: The model tokenizer.
-        args: Command line arguments.
-
-    Returns:
-        str: Path to the GGUF model directory
-    """
+    """Convert model to GGUF format with safety checks."""
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Converting model to GGUF with {args.quantization} quantization...")
     try:
+        # Save merged model first for CPU conversions
+        if args.cpu or args.use_safetensors:
+            interim_dir = os.path.join(output_dir, "merged_model")
+            os.makedirs(interim_dir, exist_ok=True)
+
+            print("Saving merged model for conversion...")
+            model.save_pretrained(interim_dir, safe_serialization=True)
+            tokenizer.save_pretrained(interim_dir)
+
+            del model
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            model = AutoModelForCausalLM.from_pretrained(
+                interim_dir,
+                device_map="cpu",
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+            )
+
+        # Actual conversion logic
+        print(f"Converting to GGUF with {args.quantization} quantization...")
+        # Use only the supported parameters for save_pretrained_gguf
         model.save_pretrained_gguf(
-            output_dir,
+            args.output_dir,
             tokenizer,
             quantization_method=args.quantization
         )
-        print(f"Model converted and saved to {output_dir}")
-
-        if args.push_to_hub and args.hf_username and args.hf_token:
-            repo_id = f"{args.hf_username}/{args.model_name}"
-            print(
-                f"Pushing converted model to HuggingFace Hub at {repo_id}...")
-            model.push_to_hub_gguf(
-                repo_id,
-                tokenizer,
-                quantization_method=args.quantization,
-                token=args.hf_token
-            )
-            print("Model successfully pushed to HuggingFace Hub")
-
         return output_dir
+
     except Exception as e:
-        print(f"Error converting model to GGUF: {e}")
-        raise
+        print(f"GGUF conversion failed: {e}")
+        print("Attempting fallback conversion...")
+        return fallback_conversion(args)
+
+
+def fallback_conversion(args):
+    """Fallback conversion using llama.cpp."""
+    print("Using llama.cpp for fallback conversion...")
+
+    interim_dir = os.path.join(args.output_dir, "merged_model")
+    os.makedirs(interim_dir, exist_ok=True)
+
+    # Load and save model using CPU-only method
+    model, tokenizer = load_cpu_model(args.base_model, args.model_path, args)
+    model.save_pretrained(interim_dir, safe_serialization=True)
+    tokenizer.save_pretrained(interim_dir)
+
+    # Clone and build llama.cpp if needed
+    llama_cpp_dir = os.path.expanduser("~/llama.cpp")
+    if not os.path.exists(llama_cpp_dir):
+        subprocess.run(
+            ["git", "clone", "https://github.com/ggerganov/llama.cpp.git", llama_cpp_dir], check=True)
+        subprocess.run(["make", "-C", llama_cpp_dir], check=True)
+
+    # Convert to GGUF
+    gguf_file = os.path.join(args.output_dir, f"{args.model_name}.gguf")
+    convert_cmd = [
+        "python3",
+        os.path.join(llama_cpp_dir, "convert.py"),
+        interim_dir,
+        "--outfile", gguf_file,
+        "--outtype", args.quantization
+    ]
+
+    subprocess.run(convert_cmd, check=True)
+    return args.output_dir
 
 
 def create_custom_modelfile(model_dir, model_name, system_prompt):
@@ -187,7 +309,7 @@ def start_ollama_server(port):
         print(
             f"Ollama already running on port {port}, version: {response.json().get('version')}")
         return None
-    except:
+    except Exception as e:
         print(f"Starting Ollama server on port {port}...")
         # Set environment variable for custom port
         env = os.environ.copy()
@@ -202,14 +324,18 @@ def start_ollama_server(port):
         )
 
         # Wait for server to start
-        for _ in range(10):
-            time.sleep(1)
+        max_attempts = 30
+        for attempt in range(max_attempts):
+            time.sleep(2)  # Wait longer between attempts
             try:
                 response = requests.get(f"http://localhost:{port}/api/version")
                 if response.status_code == 200:
                     print(f"Ollama server started on port {port}")
                     return process
-            except:
+            except Exception as e:
+                if attempt == max_attempts - 1:
+                    print(
+                        f"Failed to connect to Ollama after {max_attempts} attempts: {e}")
                 continue
 
         print("Warning: Ollama server may not have started properly")
@@ -261,13 +387,14 @@ def create_ollama_model(model_name, modelfile_path, port):
         return False
 
 
-def test_ollama_model(model_name, test_prompt, port):
+def test_ollama_model(model_name, test_prompt, port, stream_output=True):
     """Test the Ollama model with a sample prompt.
 
     Args:
         model_name (str): Name of the Ollama model.
         test_prompt (str): Test prompt to use.
         port (int): Port number for Ollama server.
+        stream_output (bool): Whether to stream the output.
 
     Returns:
         dict: Response from the Ollama API
@@ -297,53 +424,43 @@ def test_ollama_model(model_name, test_prompt, port):
 
 
 def main():
-    """Main function to run the model serving pipeline."""
     args = parse_arguments()
 
-    # Load model and tokenizer
-    quantization_config = get_quantization_config()
-    model, tokenizer = load_model_and_tokenizer(
-        args.base_model, args.model_path, quantization_config
-    )
+    # Device configuration
+    if args.cpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        torch.set_default_device("cpu")
+        print("Using CPU for all operations")
+    else:
+        print(
+            f"Using GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No GPU available'}")
 
-    # Convert model to GGUF format
-    model_dir = convert_to_gguf(model, tokenizer, args)
+    try:
+        # Load model with appropriate method
+        model, tokenizer = load_model_and_tokenizer(
+            args.base_model, args.model_path, args)
 
-    # Create custom Modelfile
-    modelfile_path = create_custom_modelfile(
-        model_dir, args.model_name, args.system_prompt
-    )
+        # Test model functionality
+        test_model_with_streaming(model, tokenizer, args.test_prompt, args)
 
-    # Start Ollama server if not already running
-    server_process = start_ollama_server(args.ollama_port)
+        # Convert to GGUF format
+        model_dir = convert_to_gguf(model, tokenizer, args)
 
-    # Create Ollama model
-    success = create_ollama_model(
-        args.model_name, modelfile_path, args.ollama_port)
+        # Create Ollama Modelfile
+        modelfile_path = create_custom_modelfile(
+            model_dir, args.model_name, args.system_prompt)
 
-    if success:
-        # Test the model
-        test_ollama_model(args.model_name, args.test_prompt, args.ollama_port)
+        # Start Ollama server
+        server_process = start_ollama_server(args.ollama_port)
 
-        print(f"""
-Model serving setup complete!
+        # Create and test Ollama model
+        if create_ollama_model(args.model_name, modelfile_path, args.ollama_port):
+            test_ollama_model(args.model_name, args.test_prompt,
+                              args.ollama_port, args.stream_output)
 
-Your model is now available for inference through Ollama with the following details:
-- Model name: {args.model_name}
-- Quantization: {args.quantization}
-- Ollama port: {args.ollama_port}
-
-You can use it with the Ollama API:
-curl http://localhost:{args.ollama_port}/api/chat -d '{{
-    "model": "{args.model_name}",
-    "messages": [
-        {{"role": "user", "content": "Your prompt here"}}
-    ]
-}}'
-
-Or with the Ollama CLI:
-ollama run {args.model_name}
-""")
+    except Exception as e:
+        print(f"Pipeline failed: {e}")
+        exit(1)
 
 
 if __name__ == "__main__":
