@@ -47,7 +47,7 @@ Manage your console environment:
 ## Getting Started
 
 To begin using ```./nutrikidsai.py```, simply launch the console application and use the `help` command to explore available functionality. For detailed information about specific commands, use `help <command>`.
-
+```
 ╔══════════════════════════════════════════════════╗
 ║             NutriKids AI Console v1.0            ║
 ║      Malnutrition Detection Command Interface    ║
@@ -55,7 +55,7 @@ To begin using ```./nutrikidsai.py```, simply launch the console application and
 
   System Time: 2025-03-03 13:05:16
   Type 'help' for command overview or 'help <command>' for details
-  
+```
 ## Development Status
 
 ⚠️ **This project is currently under active development** ⚠️
