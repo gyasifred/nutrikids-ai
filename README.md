@@ -21,7 +21,7 @@ Train and fine-tune various machine learning models on your clinical data:
 - `traintextcnn`: Train new TextCNN models for text classification
 - `traintabpfn`: Train tabular probabilistic functional networks on structured data
 - `tunexgb`: Fine-tune XGBoost models for optimal performance
-- `trainxgb`: Train new XGBoost models for regression or classification tasks
+- `trainxgb`: Train new XGBoost models for classification tasks
 - `llmtrain`: Train or fine-tune large language models for specialized medical text analysis
 
 ### Model Evaluation
@@ -31,7 +31,7 @@ Assess model performance with comprehensive evaluation tools:
 - `evaluatexgb`: Generate detailed performance reports for XGBoost models
 
 ### Model Inference
-Deploy trained models to make predictions on new data:
+Use trained models to make predictions on new data:
 - `textcnnpredict`: Make predictions using trained TextCNN models
 - `predicttabpfn`: Generate predictions from TabPFN models
 - `predictxgb`: Use XGBoost models for inference on new data
@@ -48,13 +48,13 @@ Manage your console environment:
 
 To begin using ```./nutrikidsai.py```, simply launch the console application and use the `help` command to explore available functionality. For detailed information about specific commands, use `help <command>`.
 ```
-╔══════════════════════════════════════════════════╗
-║             NutriKids AI Console v1.0            ║
-║      Malnutrition Detection Command Interface    ║
-╚══════════════════════════════════════════════════╝
+     ╔══════════════════════════════════════════════════╗
+     ║             NutriKids AI Console v1.0            ║
+     ║      Malnutrition Detection Command Interface    ║
+     ╚══════════════════════════════════════════════════╝
 
-  System Time: 2025-03-03 13:05:16
-  Type 'help' for command overview or 'help <command>' for details
+    System Time: 2025-03-03 13:05:16
+    Type 'help' for command overview or 'help <command>' for details
 ```
 
 ### Example
