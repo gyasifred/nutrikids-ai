@@ -210,7 +210,7 @@ def generate_class_distribution(y_true, y_pred, classes, output_dir):
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Evaluate TextCNN model on test data')
-    parser.add_argument('--test', type=str, required=True,
+    parser.add_argument('--test_data', type=str, required=True,
                         help='Path to test CSV file')
     parser.add_argument('--text_column', type=str, default='Note_Column',
                         help='Name of the text column in CSV (default: Note_Column)')
@@ -235,8 +235,8 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load data
-    print(f"Loading Test Data from {args.test}...")
-    test_df = pd.read_csv(args.test)
+    print(f"Loading Test Data from {args.test_data}...")
+    test_df = pd.read_csv(args.test_data)
 
     # Check if required columns exist
     if args.text_column not in test_df.columns:
@@ -323,6 +323,7 @@ def main():
     pred_df.to_csv(os.path.join(args.output_dir, 'predictions.csv'), index=False)
 
     print(f"Evaluation complete. Results saved to {args.output_dir}")
+
 
 if __name__ == "__main__":
     main()

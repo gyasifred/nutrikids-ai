@@ -92,11 +92,11 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Tune TextCNN hyperparameters using Ray Tune.
 
-        Usage: tunetextcnn --train <train_file> --val <val_file> [options]
+        Usage: tunetextcnn --train_data <train_file> --val_data <val_file> [options]
 
         Required Arguments:
-            --train          Path to training CSV file
-            --val            Path to validation CSV file
+            --train_data          Path to training CSV file
+            --val_data            Path to validation CSV file
 
         Data Options:
             --text-column    Name of the text column in CSV (default: Note_Column)
@@ -119,16 +119,16 @@ class NutrikidsAiCommand(cmd.Cmd):
             --grace-period   Minimum epochs per trial (default: 3)
 
         Example:
-            tunetextcnn --train data/train.csv --val data/val.csv --max-epochs 15 --num-samples 20
+            tunetextcnn --train_data data/train.csv --val_data data/val.csv --max-epochs 15 --num-samples 20
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Tune TextCNN hyperparameters')
 
         # Required arguments
-        parser.add_argument('--train', type=str, required=True,
+        parser.add_argument('--train_data', type=str, required=True,
                             help='Path to training CSV file')
-        parser.add_argument('--val', type=str, required=True,
+        parser.add_argument('--val_data', type=str, required=True,
                             help='Path to validation CSV file')
 
         # Data options
@@ -167,7 +167,6 @@ class NutrikidsAiCommand(cmd.Cmd):
         try:
             parsed_args = parser.parse_args(args)
 
-            # Normalize arguments to use underscores for module imports
             cmd_args = []
             for key, value in vars(parsed_args).items():
                 if value is not None:
@@ -175,7 +174,6 @@ class NutrikidsAiCommand(cmd.Cmd):
                     cmd_args.append(f"--{key}")
                     cmd_args.append(str(value))
 
-            # Execute the tune script
             try:
                 from tune_textcnn import main as tune_main
                 sys.argv = ['tune_textcnn.py'] + cmd_args
@@ -187,18 +185,17 @@ class NutrikidsAiCommand(cmd.Cmd):
                 print(f"Error: Failed to execute tuning: {e}")
 
         except SystemExit:
-            # argparse will exit if --help is called or arguments are invalid
             pass
 
     def do_traintextcnn(self, arg):
         """
         Train TextCNN model with best hyperparameters.
 
-        Usage: traintextcnn --train <train_file> --val <val_file> [options]
+        Usage: traintextcnn --train_data <train_file> --val_data <val_file> [options]
 
         Required Arguments:
-            --train          Path to training CSV file
-            --val            Path to validation CSV file
+            --train_data          Path to training CSV file
+            --val_data            Path to validation CSV file
 
         Data Options:
             --text-column    Name of the text column in CSV (default: Note_Column)
@@ -211,14 +208,14 @@ class NutrikidsAiCommand(cmd.Cmd):
             --freeze-embeddings      Whether to freeze embeddings during training (flag)
 
         Example:
-            traintextcnn --train data/train.csv --val data/val.csv --epochs 15
+            traintextcnn --train_data data/train.csv --val_data data/val.csv --epochs 15
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Train TextCNN with best hyperparameters')
-        parser.add_argument('--train', type=str, required=True,
+        parser.add_argument('--train_data', type=str, required=True,
                             help='Path to training CSV file')
-        parser.add_argument('--val', type=str, required=True,
+        parser.add_argument('--val_data', type=str, required=True,
                             help='Path to validation CSV file')
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
                             help='Name of the text column in CSV (default: Note_Column)')
@@ -260,17 +257,17 @@ class NutrikidsAiCommand(cmd.Cmd):
                 print(f"Error: Failed to execute training: {e}")
 
         except SystemExit:
-            # argparse will exit if --help is called or arguments are invalid
+
             pass
 
     def do_evaluatetextcnn(self, arg):
         """
         Evaluate TextCNN model on test data.
 
-        Usage: evaluate_textcnn --test <test_file> --model-dir <model_dir> [options]
+        Usage: evaluate_textcnn --test_data <test_file> --model-dir <model_dir> [options]
 
         Required Arguments:
-            --test           Path to test CSV file
+            --test_data           Path to test CSV file
 
         Data Options:
             --text-column    Name of the text column in CSV (default: Note_Column)
@@ -283,12 +280,12 @@ class NutrikidsAiCommand(cmd.Cmd):
             --threshold      Threshold for binary classification (default: 0.5)
 
         Example:
-            evaluate_textcnn --test data/test.csv --model-dir my_textcnn_model
+            evaluate_textcnn --test_data data/test.csv --model-dir my_textcnn_model
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Evaluate TextCNN model on test data')
-        parser.add_argument('--test', type=str, required=True,
+        parser.add_argument('--test_data', type=str, required=True,
                             help='Path to test CSV file')
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
                             help='Name of the text column in CSV (default: Note_Column)')
@@ -519,10 +516,10 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Evaluate a trained TabPFN model.
 
-        Usage: evaluatetabpfn --model <model_dir> --data-file <data_file> [options]
+        Usage: evaluatetabpfn --model_path <model_dir> --data-file <data_file> [options]
 
         Required Arguments:
-            --model               Path to the directory containing model artifacts
+            --model_path          Path to the directory containing model artifacts
             --data-file           Path to the CSV test data file
 
         Data Options:
@@ -535,14 +532,14 @@ class NutrikidsAiCommand(cmd.Cmd):
             --model-name          Name to use for saved artifacts (default: tabpfn)
 
         Example:
-            evaluatetabpfn --model tabpfn_model --data-file data/test_data.csv
+            evaluatetabpfn --model_path tabpfn_model --data-file data/test_data.csv
         """
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Evaluate a trained TabPFN model')
 
         # Required parameters
-        parser.add_argument('--model', type=str, required=True,
+        parser.add_argument('--model_path', type=str, required=True,
                             help='Path to the directory containing model artifacts')
         parser.add_argument('--model-name', '--model_name', type=str, default="tabpfn",
                             help='Name of the model (default: tabpfn)')

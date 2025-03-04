@@ -7,7 +7,6 @@ import numpy as np
 from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from typing import List, Dict, Union, Optional, Tuple
 from collections import Counter
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -15,9 +14,6 @@ from sklearn.metrics import accuracy_score
 from torch.utils.data import Dataset
 from utils import encode_labels
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix, roc_curve, auc, classification_report
-import shap
 
 
 class TextTokenizer(BaseEstimator, TransformerMixin):
@@ -99,7 +95,8 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         """Convert texts to padded sequences."""
         if self.word2idx_ is None:
             raise ValueError(
-                "Tokenizer has not been fitted. Call fit or fit_transform first.")
+                "Tokenizer has not been fitted. Call fit \
+                  fit_transform first.")
 
         # Convert texts to sequences
         sequences = []
@@ -138,7 +135,8 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         """Create an embedding matrix for the vocabulary."""
         if self.word2idx_ is None:
             raise ValueError(
-                "Tokenizer has not been fitted. Call fit or fit_transform first.")
+                "Tokenizer has not been fitted.\
+                      Call fit or fit_transform first.")
 
         embedding_matrix = np.random.normal(
             scale=0.1, size=(self.vocab_size_, embedding_dim)
@@ -211,7 +209,8 @@ class TextCNN(nn.Module):
             kernel_sizes: List of kernel sizes for convolutions
             dropout_rate: Dropout rate
             pretrained_embeddings: Pre-trained embedding matrix (numpy array)
-            freeze_embeddings: Whether to freeze the embedding layer during training
+            freeze_embeddings: Whether to freeze the embedding \
+            layer during training
         """
         super(TextCNN, self).__init__()
 
@@ -527,7 +526,6 @@ def load_model_artifacts(model_dir):
         except:
             continue
 
-    # If config is not available, use default values
     if config is None:
         config = {
             "embed_dim": 100,

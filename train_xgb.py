@@ -21,8 +21,8 @@ def parse_arguments():
     parser.add_argument('--id_column', type=str, default="Patient_ID", help='Name of the ID column in the CSV')
     parser.add_argument("--config_dir", default="xgb_models", type=str, help='Path to best hyperparameter directory')
     parser.add_argument('--max_features', type=int, default=10000, help='Maximum number of features for vectorization')
-    parser.add_argument('--remove_stop_words', action='store_true',default= False, help='Remove stop words during preprocessing')
-    parser.add_argument('--apply_stemming', action='store_true',default= False, help='Apply stemming during preprocessing')
+    parser.add_argument('--remove_stop_words', action='store_true', default= False, help='Remove stop words during preprocessing')
+    parser.add_argument('--apply_stemming', action='store_true', default= False, help='Apply stemming during preprocessing')
     parser.add_argument('--vectorization_mode', type=str, default='tfidf', choices=['tfidf', 'count', 'binary'], help='Vectorization mode')
     parser.add_argument('--ngram_min', type=int, default=1, help='Minimum n-gram size')
     parser.add_argument('--ngram_max', type=int, default=1, help='Maximum n-gram size')
@@ -132,7 +132,8 @@ def main():
         
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}", exc_info=True)
-        
+
+
 if __name__ == "__main__":
     ray.init(ignore_reinit_error=True)
     main()

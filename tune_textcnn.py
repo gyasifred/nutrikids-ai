@@ -9,15 +9,15 @@ import ray
 import torch
 
 from models.text_cnn import train_textcnn, TextTokenizer
-from utils import encode_labels
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Tune TextCNN hyperparameters with Ray Tune')
     
     # Data paths and columns
-    parser.add_argument('--train', type=str, required=True, 
+    parser.add_argument('--train_data', type=str, required=True, 
                         help='Path to training CSV file')
-    parser.add_argument('--val', type=str, required=True, 
+    parser.add_argument('--val_data', type=str, required=True, 
                         help='Path to validation CSV file')
     parser.add_argument('--text_column', type=str, default='Note_Column',
                         help='Name of the text column in CSV (default: Note_Column)')
@@ -54,16 +54,17 @@ def parse_args():
     
     return parser.parse_args()
 
+
 def main():
     # Parse command line arguments
     args = parse_args()
     
     # Load data
-    print(f"Loading Training Data from {args.train}...")
-    train_df = pd.read_csv(args.train)
+    print(f"Loading Training Data from {args.train_data}...")
+    train_df = pd.read_csv(args.train_data)
 
-    print(f"Loading Validation Data from {args.val}...")
-    val_df = pd.read_csv(args.val)
+    print(f"Loading Validation Data from {args.val_data}...")
+    val_df = pd.read_csv(args.val_data)
 
     train_texts = train_df[args.text_column].tolist()
     train_labels = train_df[args.label_column].tolist()
@@ -171,6 +172,7 @@ def main():
     best_config_path = os.path.join(args.output_dir, "best_config.joblib")
     joblib.dump(best_result.config, best_config_path)
     print(f"Best configuration saved to {best_config_path}")
+
 
 if __name__ == "__main__":
     main()

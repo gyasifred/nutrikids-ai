@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import numpy as np
 import pandas as pd
 import torch
 import os
@@ -8,11 +7,12 @@ import joblib
 import argparse
 from models.text_cnn import train_textcnn, TextTokenizer, TextCNN
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train TextCNN with best hyperparameters')
-    parser.add_argument('--train', type=str, required=True, 
+    parser.add_argument('--train_data', type=str, required=True, 
                         help='Path to training CSV file')
-    parser.add_argument('--val', type=str, required=True, 
+    parser.add_argument('--val_data', type=str, required=True, 
                         help='Path to validation CSV file')
     parser.add_argument('--text_column', type=str, default='Note_Column',
                         help='Name of the text column in CSV (default: Note_Column)')
@@ -28,16 +28,17 @@ def parse_args():
                         help='Whether to freeze embeddings during training (default: False)')
     return parser.parse_args()
 
+
 def main():
     # Parse command line arguments
     args = parse_args()
     
     # Load data
-    print(f"Loading Training Data from {args.train}...")
-    train_df = pd.read_csv(args.train)
+    print(f"Loading Training Data from {args.train_data}...")
+    train_df = pd.read_csv(args.train_data)
 
-    print(f"Loading Validation Data from {args.val}...")
-    val_df = pd.read_csv(args.val)
+    print(f"Loading Validation Data from {args.val_data}...")
+    val_df = pd.read_csv(args.val_data)
 
     train_texts = train_df[args.text_column].tolist()
     train_labels = train_df[args.label_column].tolist()
@@ -113,7 +114,7 @@ def main():
         plt.ylabel('Loss')
         plt.legend()
         plt.title('Training and Validation Loss')
-        
+
         # Plot accuracy curves
         plt.subplot(1, 2, 2)
         plt.plot(final_metrics['train_accuracy'], label='Train Accuracy')
@@ -126,9 +127,12 @@ def main():
         # Save the plots
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, "training_curves.png"))
-        print(f"Training curves saved to {os.path.join(args.output_dir, 'training_curves.png')}")
+        print(f"Training curves saved to\
+               {os.path.join(args.output_dir, 'training_curves.png')}")
     except Exception as e:
         print(f"Could not generate training curves: {e}")
 
+
 if __name__ == "__main__":
     main()
+    
