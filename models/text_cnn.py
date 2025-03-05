@@ -476,13 +476,13 @@ def predict_batch(model, tokenizer, texts):
     # First, determine which device the model is on
     device = next(model.parameters()).device
 
-    # Convert texts to sequences
+    # Convert texts to sequences using the custom tokenizer's transform method
     sequences = tokenizer.transform(texts)
 
     # Convert to tensor and move to the same device as the model
     inputs = torch.tensor(sequences, dtype=torch.long).to(device)
 
-    # Predict
+    # Set model to evaluation mode and predict
     model.eval()
     with torch.no_grad():
         outputs = model(inputs)
@@ -496,7 +496,7 @@ def predict_batch(model, tokenizer, texts):
             probs = torch.softmax(outputs, dim=1)
             _, preds = torch.max(outputs, 1)
 
-    return preds.cpu().numpy(), probs.cpu().numpy()
+    return preds.cpu().numpy().flatten(), probs.cpu().numpy()
 
 
 def load_model_artifacts(model_dir):
@@ -904,7 +904,7 @@ def generate_occlusion_importance(model, tokenizer, texts, output_dir, num_sampl
 
 
 def generate_prediction_summary(predictions, probabilities, labels, output_path):
-    """Generate a summary of predictions."""
+    """Generate a summary of predictions and save as CSV."""
     # Count label frequencies
     label_counts = Counter(labels)
 
@@ -914,17 +914,25 @@ def generate_prediction_summary(predictions, probabilities, labels, output_path)
         mask = np.array(labels) == label
         avg_probs[label] = np.mean(np.array(probabilities)[mask, i])
 
-    # Create summary dictionary
-    summary = {
-        "total_predictions": len(predictions),
-        "label_counts": {label: count for label, count in label_counts.items()},
-        "label_percentages": {label: count/len(predictions)*100 for label, count in label_counts.items()},
-        "average_probabilities": avg_probs
+    # Prepare summary data for CSV
+    summary_data = {
+        'Label': list(label_counts.keys()),
+        'Count': list(label_counts.values()),
+        'Percentage': [count/len(predictions)*100 for count in label_counts.values()],
+        'Average Probability': [avg_probs[label] for label in label_counts.keys()]
     }
 
-    # Save summary to file
-    with open(output_path, 'w') as f:
-        json.dump(summary, f, indent=2)
+    # Convert to DataFrame and save as CSV
+    summary_df = pd.DataFrame(summary_data)
+    summary_df.to_csv(output_path, index=False)
+
+    # Additional metadata CSV
+    metadata_path = os.path.join(os.path.dirname(output_path), 'prediction_summary_metadata.csv')
+    metadata_df = pd.DataFrame({
+        'Total Predictions': [len(predictions)],
+        'Timestamp': [pd.Timestamp.now()]
+    })
+    metadata_df.to_csv(metadata_path, index=False)
 
     # Create bar chart of label distribution
     plt.figure(figsize=(10, 6))
@@ -938,4 +946,5 @@ def generate_prediction_summary(predictions, probabilities, labels, output_path)
         output_path), 'prediction_distribution.png'))
     plt.close()
 
-    return summary
+    # Return the summary for potential further use
+    return summary_df

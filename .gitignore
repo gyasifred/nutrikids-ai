@@ -195,3 +195,5 @@ _unsloth_temporary_saved_buffers/
 ollama_model/
 llama.cpp/
 flaskapp.py
+data/
+output/

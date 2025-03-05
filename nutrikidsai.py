@@ -267,7 +267,7 @@ class NutrikidsAiCommand(cmd.Cmd):
         Usage: evaluate_textcnn --test_data <test_file> --model-dir <model_dir> [options]
 
         Required Arguments:
-            --test_data           Path to test CSV file
+            --test-data           Path to test CSV file
 
         Data Options:
             --text-column    Name of the text column in CSV (default: Note_Column)
@@ -285,7 +285,7 @@ class NutrikidsAiCommand(cmd.Cmd):
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Evaluate TextCNN model on test data')
-        parser.add_argument('--test_data', type=str, required=True,
+        parser.add_argument('--test-data', type=str, required=True,
                             help='Path to test CSV file')
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
                             help='Name of the text column in CSV (default: Note_Column)')
@@ -343,6 +343,7 @@ class NutrikidsAiCommand(cmd.Cmd):
 
         Data Options (for CSV input):
             --text-column       Name of the text column in CSV (default: Note_Column)
+            --label-column      Name of the label column in csv )default: None)
 
         Explanation Options:
             --explain           Generate explanations for predictions (flag)
@@ -363,6 +364,8 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Path to input CSV file or a text string for prediction')
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
                             help='Name of the text column in CSV (default: Note_Column)')
+        parser.add_argument('--label-column', type=str, default=None,
+                            help='Name of the label column in CSV (optional)')
         parser.add_argument('--model-dir', '--model_dir', type=str, default="textcnn_model",
                             help='Directory containing saved model and artifacts (default: textcnn_model)')
         parser.add_argument('--output-dir', '--output_dir', type=str, default='text_cnn_predictions',
@@ -929,85 +932,6 @@ class NutrikidsAiCommand(cmd.Cmd):
             # argparse will exit if --help is called or arguments are invalid
             pass
 
-    def do_predicttabpfn(self, arg):
-        """
-        Make predictions using a trained TabPFN model.
-
-        Usage: predicttabpfn --model <model_dir> (--data-file <data_file> | --text <text>) [options]
-
-        Options:
-            --model                 Path to the directory containing model artifacts (required)
-            --data-file             Path to the CSV file with data to predict on
-            --text                  Single text input to predict on
-            --text-column           Name of the column containing text data (default: Note_Column)
-            --id-column             Name of the column containing IDs (default: Patient_ID)
-            --output-dir            Directory to save prediction results (default: tabpfn_predictions)
-            --run-name              Name for this prediction run (default: timestamp-based)
-            --include-features      Include features in output (flag)
-            --calculate-importance  Calculate feature importance (flag)
-            --top-features          Number of top features to display (default: 20)
-        """
-        args = shlex.split(arg)
-        parser = argparse.ArgumentParser(
-            description='Make predictions using a trained TabPFN model')
-
-        # Required parameter
-        parser.add_argument('--model', type=str, required=True,
-                            help='Path to the directory containing model artifacts')
-
-        # Input options (one of these is required)
-        input_group = parser.add_mutually_exclusive_group(required=True)
-        input_group.add_argument('--data-file', '--data_file', type=str,
-                                 help='Path to the CSV file with data to predict on')
-        input_group.add_argument('--text', type=str,
-                                 help='Single text input to predict on')
-
-        # Optional parameters
-        parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
-                            help='Name of the column containing text data (default: Note_Column)')
-        parser.add_argument('--id-column', '--id_column', type=str, default='Patient_ID',
-                            help='Name of the column containing IDs (default: Patient_ID)')
-        parser.add_argument('--output-dir', '--output_dir', type=str, default='tabpfn_predictions',
-                            help='Directory to save prediction results (default: tabpfn_predictions)')
-        parser.add_argument('--run-name', '--run_name', type=str,
-                            help='Name for this prediction run (default: timestamp-based)')
-        parser.add_argument('--include-features', '--include_features', action='store_true',
-                            help='Include features in output')
-        parser.add_argument('--calculate-importance', '--calculate_importance', action='store_true',
-                            help='Calculate feature importance')
-        parser.add_argument('--top-features', '--top_features', type=int, default=20,
-                            help='Number of top features to display (default: 20)')
-        parser.add_argument('--model-name', '--model_name', type=str, default="tabpfn",
-                            help='Name of the model type (default: tabpfn)')
-
-        try:
-            parsed_args = parser.parse_args(args)
-
-            # Normalize arguments to use underscores for module imports
-            cmd_args = []
-            for key, value in vars(parsed_args).items():
-                if value is not None:
-                    key = key.replace('-', '_')
-                    if isinstance(value, bool) and value:
-                        cmd_args.append(f"--{key}")
-                    elif not isinstance(value, bool):
-                        cmd_args.append(f"--{key}")
-                        cmd_args.append(str(value))
-
-            # Execute the predict script
-            try:
-                from predict_tabpfn import main as predict_main
-                sys.argv = ['predict_tabpfn.py'] + cmd_args
-                predict_main()
-            except ImportError:
-                print(
-                    "Error: Module 'predict_tabpfn' not found. Make sure it's in your PYTHONPATH.")
-            except Exception as e:
-                print(f"Error running TabPFN prediction: {e}")
-
-        except SystemExit:
-            # argparse will exit if --help is called or arguments are invalid
-            pass
 
     def do_evaluatexgb(self, arg):
         """
