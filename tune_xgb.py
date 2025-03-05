@@ -30,8 +30,11 @@ def parse_arguments():
     parser.add_argument('--ngram_min', type=int, default=1, help='Minimum n-gram size')
     parser.add_argument('--ngram_max', type=int, default=1, help='Maximum n-gram size')
     parser.add_argument('--model_name', type=str, default="xgb", help='Name of the type of Model being trained')
+    parser.add_argument('--num_samples', type=int, default=10,
+                        help='Number of parameter settings that are sampled (default: 10)')
     parser.add_argument('--model_dir', type=str, default='./xgbtune_params', help='Directory to save the model')
     return parser.parse_args()
+
 
 def main():
     args = parse_arguments()
@@ -42,13 +45,6 @@ def main():
     
     try:
         # Process the training CSV.
-        # process_csv returns:
-        #   X_df: DataFrame of transformed features,
-        #   complete_xdf: DataFrame with features and the label,
-        #   y: label Series (already encoded if applicable),
-        #   pipeline: fitted text preprocessing pipeline,
-        #   feature_dict: dictionary mapping feature names to indices,
-        #   label_encoder: fitted LabelEncoder (or None if not needed).
         X_df, complete_xdf, y, pipeline, feature_dict, label_encoder = process_csv(
             file_path=args.train_data_file,
             text_column=args.text_column,
@@ -91,9 +87,6 @@ def main():
         # Create a Ray Dataset from the complete validation DataFrame.
         valid_ds = from_pandas(valid_complete_df)
         
-        # Define feature_columns from the training features.
-        feature_columns = list(X_df.columns)
-        
         # Get scaling config and tree method (e.g., based on GPU availability).
         scaling_config, tree_method = get_scaling_config_and_tree_method()
         
@@ -119,13 +112,14 @@ def main():
         # Initialize XGBoostTrainer for hyperparameter tuning.
         trainer = XGBoostTrainer(
             label_column=args.label_column,
-            params={},  # Hyperparameters will be supplied by Tune.
+            params={}, 
             datasets={"train": train_ds, "validation": valid_ds},
         )
         
         tuner = Tuner(
             trainable=trainer,
             param_space=param_space,
+            tune_config=tune.TuneConfig(num_samples=args.num_samples),
             run_config=RunConfig(name="xgboost_gpu_tune_nutrikidai")
         )
         

@@ -41,6 +41,7 @@ def parse_arguments():
     
     return parser.parse_args()
 
+
 def main():
     try:
         ray.init(ignore_reinit_error=True)

@@ -14,6 +14,7 @@ import xgboost as xgb
 # GPU Detection: Configure Resources and Tree Method
 ############################################################
 
+
 def get_scaling_config_and_tree_method():
     """
     Checks Ray's cluster resources to see if a GPU is available.

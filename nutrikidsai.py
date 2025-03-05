@@ -669,7 +669,7 @@ class NutrikidsAiCommand(cmd.Cmd):
         """
         Tune XGBoost hyperparameters for text classification.
 
-        Usage: tunexgb --data-file <data_file> [options]
+        Usage: tunexgb --train-data-file <train-data_file> --valid-data-file <val_data_file> [options]
 
         Options:
             --train-data-file   Path to training data CSV file (required)
@@ -678,11 +678,12 @@ class NutrikidsAiCommand(cmd.Cmd):
             --label-column       Name of the label column in CSV (default: Malnutrition_Label)
             --id-column          Name of the ID column in CSV (default: Patient_ID)
             --max-features       Maximum number of features for vectorization (default: 10000)
-            --remove-stop-words  Remove stop words during preprocessing (flag)
-            --apply-stemming     Apply stemming during preprocessing (flag)
+            --remove-stop-words  Remove stop words during preprocessing (flag) (default: False)
+            --apply-stemming     Apply stemming during preprocessing (flag) (default: False)
             --vectorization-mode Vectorization mode: tfidf, count, binary (default: tfidf)
             --ngram-min          Minimum n-gram size (default: 1)
             --ngram-max          Maximum n-gram size (default: 1)
+            --num-samples    Number of parameter settings to sample (default: 10)
             --model-dir          Directory to save the model (default: ./xgb_models)
             --model-name         Name of the model (default: xgb)
         """
@@ -711,6 +712,8 @@ class NutrikidsAiCommand(cmd.Cmd):
                             default=1, help='Minimum n-gram size')
         parser.add_argument('--ngram-max', '--ngram_max', type=int,
                             default=1, help='Maximum n-gram size')
+        parser.add_argument('--num-samples', type=int, default=10,
+                            help='Number of parameter settings that are sampled (default: 10)')
         parser.add_argument('--model-dir', '--model_dir', type=str,
                             default='./xgb_models', help='Directory to save the model')
         parser.add_argument('--model-name', '--model_name', type=str,
