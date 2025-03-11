@@ -381,6 +381,6 @@ def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):
     return shap_values, explainer
 
 
-def get_api_key(): 
+def get_api_key(env_variable): 
     _ = load_dotenv(find_dotenv())
-    return os.getenv('GOOGLE_API_KEY')
+    return os.getenv(env_variable)

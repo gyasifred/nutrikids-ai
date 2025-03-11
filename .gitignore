@@ -199,3 +199,4 @@ data/
 output/
 gemini_inferece.py
 gemini_output/
+deepseek_output/
