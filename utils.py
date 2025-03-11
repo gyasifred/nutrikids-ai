@@ -22,6 +22,7 @@ from sklearn.metrics import (
     roc_curve, auc, confusion_matrix, classification_report
 )
 import shap
+from dotenv import load_dotenv, find_dotenv
 
 
 # Download NLTK stopwords (if not already downloaded)
@@ -378,3 +379,8 @@ def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):
         plt.close()
     
     return shap_values, explainer
+
+
+def get_api_key(): 
+    _ = load_dotenv(find_dotenv())
+    return os.getenv('GOOGLE_API_KEY')

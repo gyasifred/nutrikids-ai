@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import torch
 import pandas as pd
 import numpy as np
@@ -556,3 +557,27 @@ Now, assess the following patient:
         )
 
         return complete_prompt
+
+
+def extract_malnutrition_decision(response):
+    """Extract malnutrition=yes/no decision from model response.
+    Args:
+        response (str): Model response text
+        
+    Returns:
+        Tuple[str, str]: (malnutrition decision, explanation)
+    """
+    decision_pattern = r'malnutrition=(yes|no)'
+    match = re.search(decision_pattern, response, re.IGNORECASE)
+    
+    decision = "unknown"
+    if match:
+        decision = match.group(1).lower()
+    
+    explanation = response
+    if match:
+        explanation_parts = response.split('malnutrition=', 1)
+        if len(explanation_parts) > 0:
+            explanation = explanation_parts[0].strip()
+    
+    return decision, explanation

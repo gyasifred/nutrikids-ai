@@ -197,3 +197,5 @@ llama.cpp/
 flaskapp.py
 data/
 output/
+gemini_inferece.py
+gemini_output/

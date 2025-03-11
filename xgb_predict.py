@@ -19,6 +19,7 @@ from scipy.sparse import csr_matrix
 import xgboost as xgb
 import shap
 
+
 def load_artifacts(model_dir: str, model_name: str):
     """ 
     Load all model artifacts (model, label encoder, pipeline) from the given directory.
@@ -280,8 +281,8 @@ def predict_text(text, xgb_model, pipeline, label_encoder, feature_names, explai
     X_aligned = ensure_features_match(X_transformed, feature_names)
     
     # Get predictions
-    y_pred_proba = xgb_model.predict_proba(X_aligned)[:, 1]  # Positive class probability
-    y_pred = xgb_model.predict(X_aligned)  # Class prediction
+    y_pred_proba = xgb_model.predict_proba(X_aligned)[:, 1] 
+    y_pred = xgb_model.predict(X_aligned)  
     
     # Get class names
     class_names = label_encoder.classes_

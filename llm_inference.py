@@ -14,6 +14,7 @@ from tqdm import tqdm
 import csv
 from models.llm_models import (
     MalnutritionPromptBuilder,
+    extract_malnutrition_decision,
     set_seed,
     evaluate_predictions,
     plot_evaluation_metrics,
@@ -147,32 +148,6 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
         print(f"Error loading model: {e}")
         raise
 
-
-def extract_malnutrition_decision(response):
-    """Extract malnutrition=yes/no decision from model response.
-    
-    Args:
-        response (str): Model response text
-        
-    Returns:
-        Tuple[str, str]: (malnutrition decision, explanation)
-    """
-    decision_pattern = r'malnutrition=(yes|no)'
-    match = re.search(decision_pattern, response, re.IGNORECASE)
-    
-    decision = "unknown"
-    if match:
-        decision = match.group(1).lower()
-    
-    explanation = response
-    if match:
-        explanation_parts = response.split('malnutrition=', 1)
-        if len(explanation_parts) > 0:
-            explanation = explanation_parts[0].strip()
-    
-    return decision, explanation
-
-
 def process_single_text(text, model, tokenizer, prompt_builder, args):
     """Process a single patient note.
     
@@ -288,7 +263,8 @@ def process_csv_input(args, model, tokenizer, prompt_builder):
             true_label = "yes" if true_label in ["1", "yes", "true"] else "no"
         
         # Now pass the correct parameters to process_single_text
-        decision, explanation = process_single_text(text, model, tokenizer, prompt_builder, args)
+        decision, explanation = process_single_text(text, model, tokenizer,
+                                                    prompt_builder, args)
         
         result = {
             args.id_column: sample_id,
@@ -311,9 +287,6 @@ def main():
     """Main function to run the inference pipeline."""
     args = parse_arguments()
     
-    # Set environment variable for Unsloth logits (already done at the top of the file)
-    # os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
-    
     # Set seed for reproducibility
     set_seed(args.seed)
     
@@ -328,7 +301,8 @@ def main():
     
     # Load model and tokenizer
     model, tokenizer = load_model_and_tokenizer(
-        args.base_model, args.model_path, quantization_config, args.use_flash_attention
+        args.base_model, args.model_path,
+        quantization_config, args.use_flash_attention
     )
     
     if args.input_csv:
@@ -373,42 +347,6 @@ def main():
         print(f"Result saved to {output_path}")
     
     print("Inference complete!")
-
-
-# Simple usage example
-def example_usage():
-    """Example of directly using the model for streaming inference."""
-    model_name = "unsloth/Phi-3-mini-4k-instruct"
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        load_in_4bit=True,
-        dtype=torch.float16,
-        device_map="auto",
-        use_cache=True
-    )
-    FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
-    
-    messages = [
-        {"role": "user", "content": "Continue the fibonacci sequence: 1, 1, 2, 3, 5, 8,"},
-    ]
-    
-    inputs = tokenizer.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,  # Must add for generation
-        return_tensors="pt"
-    ).to("cuda")
-    
-    text_streamer = TextStreamer(tokenizer, skip_prompt=True)
-    
-    _ = model.generate(
-        input_ids=inputs,
-        streamer=text_streamer,
-        max_new_tokens=1024,
-        use_cache=True,
-        temperature=1.5,
-        min_p=0.1
-    )
 
 
 if __name__ == "__main__":
