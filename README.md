@@ -19,7 +19,7 @@ Navigate and manage your data files with ease using standard commands:
 Train and fine-tune various machine learning models on your clinical data:
 - `tunetextcnn`: Fine-tune TextCNN models for natural language processing tasks
 - `traintextcnn`: Train new TextCNN models for text classification
-- `traintabpfn`: Train tabular probabilistic functional networks on structured data
+- `traintabpfn`: Train Foundation Model for Tabular Data
 - `tunexgb`: Fine-tune XGBoost models for optimal performance
 - `trainxgb`: Train new XGBoost models for classification tasks
 - `llmtrain`: Train or fine-tune large language models for specialized medical text analysis
