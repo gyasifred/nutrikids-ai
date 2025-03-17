@@ -19,7 +19,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 import joblib
 from sklearn.metrics import (
-    average_precision_score, precision_recall_curve, roc_curve, auc, confusion_matrix
+    average_precision_score, precision_recall_curve, roc_curve, auc,
+    confusion_matrix
 )
 import shap
 from dotenv import load_dotenv, find_dotenv
