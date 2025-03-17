@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import glob
+import logging
 import re
 import os
 from typing import List
@@ -18,11 +19,12 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 import joblib
 from sklearn.metrics import (
-    roc_curve, auc, confusion_matrix
+    average_precision_score, precision_recall_curve, roc_curve, auc, confusion_matrix
 )
 import shap
 from dotenv import load_dotenv, find_dotenv
-
+import xgboost as xgb
+from scipy.sparse import csr_matrix
 
 # Download NLTK stopwords (if not already downloaded)
 nltk.download('stopwords', quiet=True)
@@ -329,6 +331,7 @@ def plot_confusion_matrix(y_true, y_pred, output_path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
+    return cm
 
 
 def plot_roc_curve(y_true, y_pred_proba, output_path):
@@ -347,32 +350,94 @@ def plot_roc_curve(y_true, y_pred_proba, output_path):
     plt.legend(loc="lower right")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
+    return fpr, tpr, roc_auc
 
 
-def plot_xgboost_feature_importance(model, feature_names,
-                                    output_path, top_n=20):
-    """Plot and save feature importance."""
-    # Get feature importance
-    importance = model.get_booster().get_score(importance_type='gain')
-    tuples = [(k, importance[k]) for k in importance]
-    tuples = sorted(tuples, key=lambda x: x[1], reverse=True)
-    # Get top N features
-    if top_n > 0 and top_n < len(tuples):
-        tuples = tuples[:top_n]
-    # Extract feature names and values
-    feature_indices = [int(t[0][1:]) for t in tuples]
-    feature_names_top = [feature_names[i] for i in feature_indices]
-    importance_values = [t[1] for t in tuples]
-    # Create plot
-    plt.figure(figsize=(12, 8))
-    y_pos = np.arange(len(feature_names_top))
-    plt.barh(y_pos, importance_values, align='center')
-    plt.yticks(y_pos, feature_names_top)
-    plt.xlabel('Importance (Gain)')
-    plt.title('Feature Importance (Top Features)')
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+def plot_precision_recall_curve(y_true, y_pred_proba, output_path):
+    """
+    Plots the precision-recall curve.
+
+    Args:
+        precision: Precision values
+        recall: Recall values
+        avg_precision: Average precision
+        output_path: Path to save the plot
+    """
+    precision_curve, recall_curve, _ = precision_recall_curve(
+                y_true, y_pred_proba)
+    avg_precision = average_precision_score(y_true, y_pred_proba)
+    plt.figure(figsize=(8, 6))
+    plt.plot(recall_curve, precision_curve, label=f'AP = {avg_precision:.3f}')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc='upper right')
+    plt.savefig(output_path)
     plt.close()
+    return precision_curve, recall_curve, avg_precision
+
+
+def plot_feature_importance(feature_names, importance, top_n, output_path):
+    """
+    Plots feature importance.
+
+    Args:
+        feature_names: Names of features
+        importance: Importance values
+        top_n: Number of top features to plot
+        output_path: Path to save the plot
+    """
+    if len(feature_names) == 0 or len(importance) == 0:
+        logging.warning(
+            "No feature names or importance values provided.\
+                Cannot plot feature importance.")
+        return
+
+    # Convert to numpy arrays for easier handling
+    feature_names = np.array(feature_names)
+    importance = np.array(importance)
+
+    # If there are too many features, limit to top N
+    if len(feature_names) > top_n:
+        # Get indices of top N features by importance
+        indices = np.argsort(importance)[-top_n:]
+        feature_names = feature_names[indices]
+        importance = importance[indices]
+
+    plt.figure(figsize=(10, 8))
+    plt.barh(range(len(feature_names)), importance, align='center')
+    plt.yticks(range(len(feature_names)), feature_names)
+    plt.xlabel('Importance')
+    plt.ylabel('Feature')
+    plt.title(f'Top {len(feature_names)} Feature Importance')
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+# def plot_xgboost_feature_importance(model, feature_names,
+#                                     output_path, top_n=20):
+#     """Plot and save feature importance."""
+#     # Get feature importance
+#     importance = model.get_booster().get_score(importance_type='gain')
+#     tuples = [(k, importance[k]) for k in importance]
+#     tuples = sorted(tuples, key=lambda x: x[1], reverse=True)
+#     # Get top N features
+#     if top_n > 0 and top_n < len(tuples):
+#         tuples = tuples[:top_n]
+#     # Extract feature names and values
+#     feature_indices = [int(t[0][1:]) for t in tuples]
+#     feature_names_top = [feature_names[i] for i in feature_indices]
+#     importance_values = [t[1] for t in tuples]
+#     # Create plot
+#     plt.figure(figsize=(12, 8))
+#     y_pos = np.arange(len(feature_names_top))
+#     plt.barh(y_pos, importance_values, align='center')
+#     plt.yticks(y_pos, feature_names_top)
+#     plt.xlabel('Importance (Gain)')
+#     plt.title('Feature Importance (Top Features)')
+#     plt.tight_layout()
+#     plt.savefig(output_path, dpi=300, bbox_inches='tight')
+#     plt.close()
 
 
 def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):
@@ -411,3 +476,118 @@ def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):
 def get_api_key(env_variable):
     _ = load_dotenv(find_dotenv())
     return os.getenv(env_variable)
+
+
+def load_xgbartifacts(model_dir: str, model_name: str):
+    """ 
+    Load all model artifacts (model, label encoder, pipeline)
+    from the given directory.
+
+    Args:
+        model_dir (str): Path to the directory containing model artifacts.
+        model_name (str): Name of the model.
+
+    Returns:
+        model, label_encoder, pipeline, feature_names
+    """
+
+    # Define the file patterns to match the latest files
+    model_pattern = os.path.join(
+        model_dir, f"{model_name}_nutrikidai_model.json")
+    label_encoder_pattern = os.path.join(
+        model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
+    pipeline_pattern = os.path.join(
+        model_dir, f"{model_name}_nutrikidai_pipeline.joblib")
+    # List the files that match the patterns
+    model_files = glob.glob(model_pattern)
+    label_encoder_files = glob.glob(label_encoder_pattern)
+    pipeline_files = glob.glob(pipeline_pattern)
+
+    # Debugging prints to check the found files
+    logging.info(f"Found model files: {model_files}")
+    logging.info(f"Found Label Encoder files: {label_encoder_files}")
+    logging.info(f"Found pipeline files: {pipeline_files}")
+
+    # Ensure that there are files found for each pattern
+    if not model_files:
+        raise ValueError(
+            f"No model files found matching pattern: {model_pattern}")
+    if not label_encoder_files:
+        raise ValueError(
+            f"No label encoder files found matching pattern:\
+                {label_encoder_pattern}")
+    if not pipeline_files:
+        raise ValueError(
+            f"No pipeline files found matching pattern: {pipeline_pattern}")
+
+    logging.info(f"Loading model from {model_dir}...")
+    model = xgb.XGBClassifier()
+    model.load_model(model_pattern)
+    # Get the latest label encoder file
+    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
+    logging.info(f"Loading label encoder from {label_encoder_path}...")
+    label_encoder = joblib.load(label_encoder_path)
+
+    # Get the latest pipeline file
+    pipeline_path = max(pipeline_files, key=os.path.getmtime)
+    logging.info(f"Loading pipeline from {pipeline_path}...")
+    pipeline = joblib.load(pipeline_path)
+
+    # Get feature names from pipeline
+    feature_names = None
+    try:
+        vectorizer = pipeline.named_steps.get(
+            'vectorizer')  # Update name if different
+        if vectorizer and hasattr(vectorizer, 'get_feature_names_out'):
+            feature_names = vectorizer.get_feature_names_out().tolist()
+            logging.info(
+                f"Extracted {len(feature_names)} feature names from pipeline")
+        else:
+            logging.warning(
+                "Could not find vectorizer or get_feature_names_out method")
+    except Exception as e:
+        logging.warning(f"Error extracting feature names: {str(e)}")
+
+    return model, label_encoder, pipeline, feature_names
+
+
+def ensure_xgbfeatures_match(X_test, feature_names):
+    """
+    Ensure the test feature matrix has all the features expected by the model,
+    in the correct order.
+
+    Args:
+        X_test: Test features DataFrame or sparse matrix
+        feature_names: List of expected feature names
+
+    Returns:
+        X_test_aligned: A matrix with columns aligned to feature_names
+    """
+    if feature_names is None:
+        logging.warning(
+            "No feature names provided. Cannot ensure feature alignment.")
+        return X_test
+
+    logging.info(
+        f"Ensuring feature alignment (expected {len(feature_names)} features)")
+
+    # Convert to DataFrame if it's a sparse matrix
+    if isinstance(X_test, csr_matrix):
+        X_test_dense = pd.DataFrame.sparse.from_spmatrix(X_test)
+    else:
+        X_test_dense = pd.DataFrame(X_test)
+
+    # Create empty DataFrame with training features
+    aligned_df = pd.DataFrame(columns=feature_names)
+
+    # Fill matching features
+    for col in X_test_dense.columns:
+        if isinstance(col, int) and col < len(feature_names):
+            aligned_df[feature_names[col]] = X_test_dense[col]
+
+    # Fill missing features with 0
+    aligned_df.fillna(0, inplace=True)
+
+    logging.info(
+        f"Feature alignment complete. Matrix shape: {aligned_df.shape}")
+    return aligned_df.values
