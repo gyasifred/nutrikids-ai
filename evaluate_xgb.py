@@ -41,9 +41,9 @@ def main():
                         help='Name of the column containing IDs')
 
     # Optional parameters
-    parser.add_argument('--model_dir', type=str, default='./xgb_models',
+    parser.add_argument('--model_dir', type=str, default='./xgboost',
                         help='Directory containing model artifacts')
-    parser.add_argument('--output_dir', type=str, default='./xgb_evaluation',
+    parser.add_argument('--output_dir', type=str, default='./xgboost_ouput',
                         help='Directory to save evaluation results')
     parser.add_argument('--num_shap_samples', type=int, default=100,
                         help='Number of samples for SHAP explanation')

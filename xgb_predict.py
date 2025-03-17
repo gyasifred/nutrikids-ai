@@ -12,7 +12,7 @@ import pandas as pd
 import logging
 import matplotlib.pyplot as plt
 import shap
-from utils import load_xgbartifact, ensure_xgbfeatures_match
+from utils import load_xgbartifacts, ensure_xgbfeatures_match
 
 
 def get_prediction_explanation(model, X, feature_names, top_n=5):
@@ -330,7 +330,7 @@ def main():
     try:
         # Load artifacts
         logger.info("Loading model artifacts...")
-        xgb_model, label_encoder, pipeline, feature_names = load_xgbartifact(
+        xgb_model, label_encoder, pipeline, feature_names = load_xgbartifacts(
             args.model_dir, args.model_name)
         # Process based on input type
         if args.text:

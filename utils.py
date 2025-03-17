@@ -190,8 +190,7 @@ def process_csv(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         encoder_filename = os.path.join(
             save_path,
-            f'{model_name}_nutrikidai_classifier_\
-                label_encoder_{timestamp}.joblib')
+            f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib')
         joblib.dump(label_encoder, encoder_filename)
         print(
             f"Label encoder saved to \

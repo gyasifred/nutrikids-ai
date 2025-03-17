@@ -203,3 +203,6 @@ deepseek_output/
 deepseek/
 gemma/
 llama/
+xgboost/
+xgboost_predictions/
+xgboost_ouput/
