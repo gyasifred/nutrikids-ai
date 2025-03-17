@@ -200,3 +200,6 @@ output/
 gemini_inferece.py
 gemini_output/
 deepseek_output/
+deepseek/
+gemma/
+llama/
