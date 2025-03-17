@@ -6,16 +6,17 @@ import numpy as np
 import pandas as pd
 import torch
 import os
-import joblib
 import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import average_precision_score, confusion_matrix, precision_recall_curve, roc_curve, auc, classification_report
-import shap
-from captum.attr import Saliency
-from models.text_cnn import TextTokenizer
-from sklearn.preprocessing import LabelEncoder
-from models.text_cnn import TextCNN, predict_batch, load_model_artifacts
+from sklearn.metrics import (
+    average_precision_score,
+    confusion_matrix,
+    precision_recall_curve,
+    roc_curve, auc,
+    classification_report
+)
+from models.text_cnn import predict_batch, load_model_artifacts
 
 
 def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
@@ -51,7 +52,8 @@ def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
     cm_data = {
         'confusion_matrix': cm.tolist(),
         'confusion_matrix_normalized': cm_normalized.tolist(),
-        'class_labels': classes.tolist() if hasattr(classes, 'tolist') else classes
+        'class_labels': classes.tolist()
+        if hasattr(classes, 'tolist') else classes
     }
 
     with open(os.path.join(output_dir, 'confusion_matrix.json'), 'w') as f:
@@ -163,7 +165,8 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
     plt.close()
 
     # Save PR data
-    with open(os.path.join(output_dir, 'precision_recall_data.json'), 'w') as f:
+    with open(os.path.join(output_dir,
+                           'precision_recall_data.json'), 'w') as f:
         json.dump(pr_data, f, indent=2)
 
 
@@ -212,18 +215,22 @@ def parse_args():
         description='Evaluate TextCNN model on test data')
     parser.add_argument('--test_data', type=str, required=True,
                         help='Path to test CSV file')
-    parser.add_argument('--text_column', type=str, default='Note_Column',
-                        help='Name of the text column in CSV (default: Note_Column)')
-    parser.add_argument('--label_column', type=str, default='Malnutrition_Label',
-                        help='Name of the label column in CSV (default: Malnutrition_Label)')
-    parser.add_argument('--model_dir', type=str, default='textcnn_model',
-                        help='Directory containing model and artifacts (default: model_output)')
-    parser.add_argument('--output_dir', type=str, default='textcnn_evaluation_output',
-                        help='Directory to save evaluation artifacts (default: evaluation_output)')
+    parser.add_argument('--text_column', type=str, default='txt',
+                        help='Name of the text column in CSV (default: txt)')
+    parser.add_argument('--label_column', type=str,
+                        default='label',
+                        help='Name of the label column in CSV')
+    parser.add_argument('--id_column', type=str, default="DEID",
+                        help='Name of the column containing IDs')
+    parser.add_argument('--model_dir', type=str, default='CNN',
+                        help='Directory containing model and artifacts')
+    parser.add_argument('--output_dir', type=str, default='CNN/evaluation',
+                        help='Directory to save evaluation artifacts')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for prediction (default: 32)')
     parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Threshold for binary classification (default: 0.5)')
+                        help='Threshold for binary classification \
+                            (default: 0.5)')
     return parser.parse_args()
 
 
@@ -240,9 +247,11 @@ def main():
 
     # Check if required columns exist
     if args.text_column not in test_df.columns:
-        raise ValueError(f"Text column '{args.text_column}' not found in the test file")
+        raise ValueError(
+            f"Text column '{args.text_column}' not found in the test file")
     if args.label_column not in test_df.columns:
-        raise ValueError(f"Label column '{args.label_column}' not found in the test file")
+        raise ValueError(
+            f"Label column '{args.label_column}' not found in the test file")
 
     test_texts = test_df[args.text_column].fillna("").tolist()
     test_labels = test_df[args.label_column].tolist()
@@ -267,13 +276,11 @@ def main():
         batch_texts = test_texts[i:i+args.batch_size]
         batch_preds, batch_probs = predict_batch(
             model, tokenizer, batch_texts)
-        
         # Convert tensors to lists if needed
         if isinstance(batch_preds, torch.Tensor):
             batch_preds = batch_preds.cpu().numpy().tolist()
         if isinstance(batch_probs, torch.Tensor):
             batch_probs = batch_probs.cpu().numpy().tolist()
-            
         all_predictions.extend(batch_preds)
         all_probabilities.extend(batch_probs)
 
@@ -288,8 +295,9 @@ def main():
     print(report)
 
     # Save classification report
-    with open(os.path.join(args.output_dir, 'classification_report.txt'), 'w') as f:
-        f.write(report)
+    with open(os.path.join(args.output_dir,
+                           'classification_report.json'), 'w') as f:
+        json.dump(report, f, indent=4)
 
     # Generate confusion matrix
     print("Generating confusion matrix...")
@@ -300,29 +308,33 @@ def main():
     print("Generating ROC curve...")
     generate_roc_curve(
         y_true, y_proba, label_encoder.classes_, args.output_dir)
-        
     # Generate precision-recall curve
     print("Generating precision-recall curve...")
     generate_precision_recall_curve(
         y_true, y_proba, label_encoder.classes_, args.output_dir)
-        
     # Generate class distribution
     print("Generating class distribution plots...")
     generate_class_distribution(
         y_true, y_pred, label_encoder.classes_, args.output_dir)
 
-    # Save predictions to CSV
     print("Saving predictions...")
-    pred_df = test_df.copy()
-    pred_df['predicted_label'] = label_encoder.inverse_transform(y_pred)
-    
-    # Add probabilities for each class
+
+    # Explicit copy to avoid modification issues
+    pred_df = test_df[[args.id_column]].copy()
+
+    # Store true and predicted labels
+    pred_df["true_label"] = y_true
+    pred_df["predicted_label"] = label_encoder.inverse_transform(y_pred)
+
+    # Add probability scores
     for i, class_name in enumerate(label_encoder.classes_):
         pred_df[f'prob_{class_name}'] = y_proba[:, i]
-        
-    pred_df.to_csv(os.path.join(args.output_dir, 'predictions.csv'), index=False)
 
-    print(f"Evaluation complete. Results saved to {args.output_dir}")
+    # Save to CSV
+    output_path = os.path.join(args.output_dir, 'predictions.csv')
+    pred_df.to_csv(output_path, index=False)
+
+    print(f"Evaluation complete. Results saved to {output_path}")
 
 
 if __name__ == "__main__":

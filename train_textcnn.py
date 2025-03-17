@@ -4,22 +4,27 @@ import pandas as pd
 import torch
 import os
 import joblib
+import json
 import argparse
-from models.text_cnn import train_textcnn, TextTokenizer, TextCNN
+from models.text_cnn import train_textcnn, TextTokenizer
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train TextCNN with best hyperparameters')
+    parser = argparse.ArgumentParser(
+        description='Train TextCNN with best hyperparameters')
     parser.add_argument('--train_data', type=str, required=True, 
                         help='Path to training CSV file')
     parser.add_argument('--val_data', type=str, required=True, 
                         help='Path to validation CSV file')
-    parser.add_argument('--text_column', type=str, default='Note_Column',
-                        help='Name of the text column in CSV (default: Note_Column)')
-    parser.add_argument('--label_column', type=str, default='Malnutrition_Label',
-                        help='Name of the label column in CSV (default: Malnutrition_Label)')
-    parser.add_argument('--output_dir', type=str, default='textcnn_model',
-                        help='Directory to save model and artifacts (default: model_output)')
+    parser.add_argument('--text_column', type=str, default='txt',
+                        help='Name of the text column in CSV (default: txt)')
+    parser.add_argument('--label_column', type=str,
+                        default='label',
+                        help='Name of the label column in CSV (default: label)')
+    parser.add_argument("--config_dir", default="CNN", type=str,
+                        help='Path to best hyperparameter directory')
+    parser.add_argument('--output_dir', type=str, default='CNN',
+                        help='Directory to save model and artifacts (default: CNN)')
     parser.add_argument('--epochs', type=int, default=10,
                         help='Number of epochs for final training (default: 10)')
     parser.add_argument('--pretrained_embeddings', type=str, default=None,
@@ -32,7 +37,6 @@ def parse_args():
 def main():
     # Parse command line arguments
     args = parse_args()
-    
     # Load data
     print(f"Loading Training Data from {args.train_data}...")
     train_df = pd.read_csv(args.train_data)
@@ -44,45 +48,45 @@ def main():
     train_labels = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
     val_labels = val_df[args.label_column].tolist()
-    
     print(f"Training data: {len(train_texts)} examples")
     print(f"Validation data: {len(val_texts)} examples")
-    
-    # Load best 
-    best_config_path = os.path.join(args.output_dir, "best_config.joblib")
+    # Load best config
+    best_config_path = os.path.join(args.config_dir, "best_config.joblib")
     print(f"Loading best configuration from {best_config_path}...")
-    
     best_config = joblib.load(best_config_path)
     print(f"Best configuration: {best_config}")
-    
     # Load pretrained embeddings if provided
     pretrained_embeddings_dict = None
     if args.pretrained_embeddings:
-        print(f"Loading pretrained embeddings from {args.pretrained_embeddings}...")
-        pretrained_embeddings_dict = TextTokenizer.load_pretrained_embeddings(args.pretrained_embeddings)
-        print(f"Loaded {len(pretrained_embeddings_dict)} pretrained word vectors")
-    
+        print(f"Loading pretrained embeddings from\
+              {args.pretrained_embeddings}...")
+        pretrained_embeddings_dict = TextTokenizer.load_pretrained_embeddings(
+            args.pretrained_embeddings)
+        print(f"Loaded {len(pretrained_embeddings_dict)}\
+               pretrained word vectors")
     # Add freeze_embeddings parameter to config
     best_config['freeze_embeddings'] = args.freeze_embeddings
-    
     # Train final model with best configuration
     print("Training final model with best configuration...")
     final_model, final_tokenizer, final_label_encoder, final_metrics = train_textcnn(
-        train_texts, train_labels, val_texts, val_labels, 
-        best_config, num_epochs=args.epochs, pretrained_embeddings_dict=pretrained_embeddings_dict
+        train_texts, train_labels, val_texts, val_labels,
+        best_config, num_epochs=args.epochs,
+        pretrained_embeddings_dict=pretrained_embeddings_dict
     )
-    
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
     # Save final model, tokenizer, and label encoder
-    torch.save(final_model.state_dict(), os.path.join(args.output_dir, "nutrikidaitextcnn_model.pt"))
-    
+    torch.save(final_model.state_dict(), os.path.join(
+        args.output_dir, "nutrikidaitextcnn_model.pt"))
     # Save tokenizer, label encoder, and training metrics using joblib
-    joblib.dump(final_tokenizer, os.path.join(args.output_dir, "tokenizer.joblib"))
-    joblib.dump(final_label_encoder, os.path.join(args.output_dir, "label_encoder.joblib"))
-    joblib.dump(final_metrics, os.path.join(args.output_dir, "training_metrics.joblib"))
-    
+    joblib.dump(final_tokenizer,
+                os.path.join(args.output_dir, "tokenizer.joblib"))
+    joblib.dump(final_label_encoder,
+                os.path.join(args.output_dir, "label_encoder.joblib"))
+    metrics_path = os.path.join(args.output_dir, "training_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(final_metrics, f, indent=4)
+   
     # Save model configuration
     model_config = {
         "vocab_size": final_tokenizer.vocab_size_,
@@ -92,7 +96,8 @@ def main():
         "dropout_rate": best_config.get("dropout_rate", 0.5),
         "freeze_embeddings": best_config.get("freeze_embeddings", False)
     }
-    joblib.dump(model_config, os.path.join(args.output_dir, "model_config.joblib"))
+    joblib.dump(model_config, os.path.join(args.output_dir,
+                                           "model_config.joblib"))
 
     print(f"Model and artifacts saved to {args.output_dir}")
     print("Final model metrics:")
@@ -104,7 +109,6 @@ def main():
     # Plot training curves if possible
     try:
         import matplotlib.pyplot as plt
-        
         # Plot loss curves
         plt.figure(figsize=(12, 4))
         plt.subplot(1, 2, 1)
@@ -122,8 +126,7 @@ def main():
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy')
         plt.legend()
-        plt.title('Training and Validation Accuracy')
-        
+        plt.title('Training and Validation Accuracy') 
         # Save the plots
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, "training_curves.png"))
@@ -135,4 +138,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

@@ -196,6 +196,7 @@ class NutrikidsAiCommand(cmd.Cmd):
         Required Arguments:
             --train_data          Path to training CSV file
             --val_data            Path to validation CSV file
+            --config-dir          Path to best hyperparameter directory
 
         Data Options:
             --text-column    Name of the text column in CSV (default: Note_Column)
@@ -213,14 +214,16 @@ class NutrikidsAiCommand(cmd.Cmd):
         args = shlex.split(arg)
         parser = argparse.ArgumentParser(
             description='Train TextCNN with best hyperparameters')
-        parser.add_argument('--train_data', type=str, required=True,
+        parser.add_argument('--train-data', type=str, required=True,
                             help='Path to training CSV file')
-        parser.add_argument('--val_data', type=str, required=True,
+        parser.add_argument('--val-data', type=str, required=True,
                             help='Path to validation CSV file')
         parser.add_argument('--text-column', '--text_column', type=str, default='Note_Column',
                             help='Name of the text column in CSV (default: Note_Column)')
         parser.add_argument('--label-column', '--label_column', type=str, default='Malnutrition_Label',
                             help='Name of the label column in CSV (default: Malnutrition_Label)')
+        parser.add_argument("--config-dir", default="CNN", type=str,
+                            help='Path to best hyperparameter directory')
         parser.add_argument('--output-dir', '--output_dir', type=str, default='textcnn_model',
                             help='Directory to save model and artifacts (default: textcnn_model)')
         parser.add_argument('--epochs', type=int, default=10,
@@ -278,6 +281,7 @@ class NutrikidsAiCommand(cmd.Cmd):
             --output-dir     Directory to save evaluation results (default: textcnn_evaluation_output)
             --batch-size     Batch size for prediction (default: 32)
             --threshold      Threshold for binary classification (default: 0.5)
+            --id-column      Patient ID column
 
         Example:
             evaluate_textcnn --test_data data/test.csv --model-dir my_textcnn_model
@@ -291,6 +295,8 @@ class NutrikidsAiCommand(cmd.Cmd):
                             help='Name of the text column in CSV (default: Note_Column)')
         parser.add_argument('--label-column', '--label_column', type=str, default='Malnutrition_Label',
                             help='Name of the label column in CSV (default: Malnutrition_Label)')
+        parser.add_argument('--id-column', type=str, default="DEID",
+                            help='Name of the column containing IDs')
         parser.add_argument('--model-dir', '--model_dir', type=str, default='textcnn_model',
                             help='Directory containing model and artifacts (default: textcnn_model)')
         parser.add_argument('--output-dir', '--output_dir', type=str, default='textcnn_evaluation_output',
@@ -934,7 +940,6 @@ class NutrikidsAiCommand(cmd.Cmd):
         except SystemExit:
             # argparse will exit if --help is called or arguments are invalid
             pass
-
 
     def do_evaluatexgb(self, arg):
         """

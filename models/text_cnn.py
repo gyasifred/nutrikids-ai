@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+from turtle import pd
 import joblib
 import torch
 import numpy as np
@@ -224,7 +225,8 @@ class TextCNN(nn.Module):
                 self.embedding.weight.requires_grad = False
 
         self.convs = nn.ModuleList([
-            nn.Conv1d(embed_dim, num_filters, kernel_size=k) for k in kernel_sizes
+            nn.Conv1d(embed_dim, num_filters, kernel_size=k)
+            for k in kernel_sizes
         ])
 
         self.pool = nn.AdaptiveMaxPool1d(1)
@@ -523,7 +525,7 @@ def load_model_artifacts(model_dir):
             if os.path.exists(config_path):
                 config = joblib.load(config_path)
                 break
-        except:
+        except KeyError:
             continue
 
     if config is None:
@@ -552,7 +554,9 @@ def load_model_artifacts(model_dir):
     return model, tokenizer, label_encoder, config
 
 
-def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_samples=5):
+def generate_integrated_gradients(model, tokenizer,
+                                  texts, output_dir,
+                                  num_samples=5):
     """
     Generate integrated gradients explanations for text samples.
     This is an alternative to SHAP that works better with integer inputs.
@@ -561,8 +565,9 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
 
     # Sample texts if there are many
     if len(texts) > num_samples:
-        sample_indices = np.random.choice(
-            len(texts), num_samples, replace=False)
+        sample_indices = np.random.choice(len(texts),
+                                          num_samples,
+                                          replace=False)
         sample_texts = [texts[i] for i in sample_indices]
     else:
         sample_texts = texts[:num_samples]
@@ -582,9 +587,11 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
         sequence = sequences[i]
         seq_length = len([idx for idx in sequence if idx > 0])
 
-        # Create input tensor
-        input_tensor = torch.tensor(
-            [sequence], dtype=torch.long, device=device)
+        # Convert sequence list into a NumPy array before making it a tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
+        input_tensor = torch.tensor(sequence_array,
+                                    dtype=torch.long,
+                                    device=device)
 
         # Create baseline of zeros (represents absence of words)
         baseline = torch.zeros_like(input_tensor)
@@ -593,19 +600,13 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
         steps = 20
         attr_scores = np.zeros(len(sequence))
 
-        # Get the original prediction
-        with torch.no_grad():
-            original_output = model(input_tensor).item()
-
         # For each word position, calculate its importance
         for pos in range(seq_length):
             # Create a modified input where we progressively add this word
             modified_inputs = []
             for step in range(steps + 1):
                 alpha = step / steps
-                # Create a copy of baseline
                 modified = baseline.clone()
-                # Only for positions up to current, interpolate between baseline and input
                 for j in range(pos + 1):
                     modified[0, j] = int(alpha * input_tensor[0, j])
                 modified_inputs.append(modified)
@@ -618,15 +619,13 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
                 outputs = model(batch_input).squeeze().cpu().numpy()
 
             # Calculate gradient approximation using integral
-            # (difference between consecutive outputs)
             deltas = outputs[1:] - outputs[:-1]
 
             # Score is the sum of these differences
             attr_scores[pos] = np.sum(deltas)
 
         # Get words for visualization
-        words = [reverse_word_index.get(idx, "<PAD>")
-                 for idx in sequence[:seq_length] if idx > 0]
+        words = [reverse_word_index.get(idx, "<PAD>") for idx in sequence[:seq_length] if idx > 0]
         values = attr_scores[:len(words)]
 
         # Store results
@@ -650,17 +649,14 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
 
         # Also create a heatmap-style visualization with text
         plt.figure(figsize=(12, 4))
-        # Normalize values for better visualization
-        norm_values = (values - values.min()) / \
-            (values.max() - values.min() + 1e-10)
+        norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
 
-        # Create a color-mapped visualization
         for j, (word, val) in enumerate(zip(words, norm_values)):
             plt.text(j, 0.5, word,
                      horizontalalignment='center',
                      verticalalignment='center',
-                     fontsize=14 + val * 10,  # Size based on importance
-                     color=plt.cm.RdBu(val))  # Color based on importance
+                     fontsize=14 + val * 10,
+                     color=plt.cm.RdBu(val))
 
         plt.xlim(-1, len(words))
         plt.ylim(0, 1)
@@ -709,8 +705,9 @@ def generate_permutation_importance(model, tokenizer, texts, output_dir, num_sam
             continue
 
         # Create input tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
         input_tensor = torch.tensor(
-            [sequence], dtype=torch.long, device=device)
+            sequence_array, dtype=torch.long, device=device)
 
         # Get the original prediction
         with torch.no_grad():
@@ -823,8 +820,9 @@ def generate_occlusion_importance(model, tokenizer, texts, output_dir, num_sampl
             continue
 
         # Create input tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
         input_tensor = torch.tensor(
-            [sequence], dtype=torch.long, device=device)
+            sequence_array, dtype=torch.long, device=device)
 
         # Get the original prediction
         with torch.no_grad():

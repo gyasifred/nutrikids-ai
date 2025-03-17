@@ -37,7 +37,7 @@ def main():
                         help='Name of the column containing text data')
     parser.add_argument('--label_column', type=str, default="label",
                         help='Name of the column containing labels')
-    parser.add_argument('--id_column', type=str, default="Patient_ID",
+    parser.add_argument('--id_column', type=str, default="DEID",
                         help='Name of the column containing IDs')
 
     # Optional parameters
