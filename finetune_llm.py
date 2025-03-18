@@ -57,9 +57,9 @@ def parse_arguments():
                         help="Number of gradient accumulation steps")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    parser.add_argument("--max_steps", type=int, default=60,
+    parser.add_argument("--max_steps", type=int, default=100,
                         help="Maximum number of training steps")
-    parser.add_argument("--max_seq_length", type=int, default=1024,
+    parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Maximum sequence length for tokenization")
     parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
@@ -86,9 +86,9 @@ def parse_arguments():
     parser.add_argument("--report_to", type=str, default="none",
                         choices=["none", "tensorboard", "wandb"],
                         help="Where to report training metrics")
-    parser.add_argument("--load_in_8bit", action="store_true",
+    parser.add_argument("--load_in_8bit", action="store_true", default=False,
                         help="Load model in 8-bit precision")
-    parser.add_argument("--load_in_4bit", action="store_true", default=True,
+    parser.add_argument("--load_in_4bit", action="store_true", default=False,
                         help="Load model in 4-bit precision")
 
     return parser.parse_args()

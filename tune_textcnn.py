@@ -33,15 +33,19 @@ def parse_args():
                         help='Token used for padding (default: <PAD>)')
     parser.add_argument('--unk_token', type=str, default='<UNK>',
                         help='Token used for unknown words (default: <UNK>)')
-    parser.add_argument('--max_length', type=int, default=None,
+    parser.add_argument('--max_length',
+                        type=lambda x: None if x.lower() == 'none' else int(x),
+                        default=None,
                         help='Maximum sequence length (default: None, will \
-                            use longest sequence)')
+                            use longest sequence')
     parser.add_argument('--padding', type=str, default='post',
-                        choices=['pre','post'],
+                        choices=['pre', 'post'],
                         help='Padding type: pre or post (default: post)')
     parser.add_argument('--embedding_dim', type=int, default=100,
                         help='Dimension of word embeddings (default: 100)')
-    parser.add_argument('--pretrained_embeddings', type=str, default=None,
+    parser.add_argument('--pretrained_embeddings', 
+                        type=lambda x: None if x.lower() == 'none' else str(x),
+                        default=None,
                         help='Path to pretrained word embeddings file \
                             (default: None)')
     # Ray Tune parameters

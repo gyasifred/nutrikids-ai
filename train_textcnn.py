@@ -27,7 +27,9 @@ def parse_args():
                         help='Directory to save model and artifacts (default: CNN)')
     parser.add_argument('--epochs', type=int, default=10,
                         help='Number of epochs for final training (default: 10)')
-    parser.add_argument('--pretrained_embeddings', type=str, default=None,
+    parser.add_argument('--pretrained_embeddings',
+                        type=lambda x: None if x.lower() == 'none' else str(x),
+                        default=None,
                         help='Path to pretrained word embeddings file (default: None)')
     parser.add_argument('--freeze_embeddings', action='store_true',
                         help='Whether to freeze embeddings during training (default: False)')

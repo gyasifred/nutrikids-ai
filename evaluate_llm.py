@@ -89,7 +89,8 @@ def get_quantization_config():
     )
 
 
-def load_model_and_tokenizer(base_model, model_path, quantization_config, use_flash_attention=False):
+def load_model_and_tokenizer(base_model, model_path, quantization_config,
+                             use_flash_attention=False):
     """
     Load model and tokenizer for evaluation.
 
