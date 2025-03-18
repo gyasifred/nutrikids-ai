@@ -261,7 +261,7 @@ def encode_labels(labels: List[str]) -> np.ndarray:
     return encoded_labels, label_encoder
 
 
-def load_artifacts(model_dir: str, model_name: str):
+def load_tabfnartifacts(model_dir: str, model_name: str):
     """ 
     Load all model artifacts (model,
     feature dict, pipeline) from the given directory.
@@ -413,31 +413,6 @@ def plot_feature_importance(feature_names, importance, top_n, output_path):
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
-
-# def plot_xgboost_feature_importance(model, feature_names,
-#                                     output_path, top_n=20):
-#     """Plot and save feature importance."""
-#     # Get feature importance
-#     importance = model.get_booster().get_score(importance_type='gain')
-#     tuples = [(k, importance[k]) for k in importance]
-#     tuples = sorted(tuples, key=lambda x: x[1], reverse=True)
-#     # Get top N features
-#     if top_n > 0 and top_n < len(tuples):
-#         tuples = tuples[:top_n]
-#     # Extract feature names and values
-#     feature_indices = [int(t[0][1:]) for t in tuples]
-#     feature_names_top = [feature_names[i] for i in feature_indices]
-#     importance_values = [t[1] for t in tuples]
-#     # Create plot
-#     plt.figure(figsize=(12, 8))
-#     y_pos = np.arange(len(feature_names_top))
-#     plt.barh(y_pos, importance_values, align='center')
-#     plt.yticks(y_pos, feature_names_top)
-#     plt.xlabel('Importance (Gain)')
-#     plt.title('Feature Importance (Top Features)')
-#     plt.tight_layout()
-#     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-#     plt.close()
 
 
 def create_shap_plots(model, X, feature_names, output_dir, num_samples=100):

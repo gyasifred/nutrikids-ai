@@ -18,11 +18,12 @@ from sklearn.metrics import (
 )
 from tabpfn import TabPFNClassifier
 
+
 def train_tabpfn(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     model_dir: str,
-      model_name: str,
+    model_name: str,
     device: str = "cpu",
     **tabpfn_kwargs
 ):
@@ -65,7 +66,7 @@ def evaluate_model(
     feature_names: List[str],
     output_dir: str = "model_output/tabpfn",
     model_name: str = "tabpfn",
-    label_encoder = None
+    label_encoder=None
 ) -> Dict[str, Any]:
     """
     Evaluate the TabPFN model on the test set and save evaluation metrics.
@@ -143,8 +144,9 @@ def evaluate_model(
     print(f"ROC curve saved to: {roc_filename}")
     
     # Feature importance analysis (for interpretability)
-    # TabPFN doesn't provide direct feature importances, but we can analyze using a simple permutation approach
-    if X_test.shape[1] <= 100:  # Only compute for reasonable number of features
+    # TabPFN doesn't provide direct feature importances,
+    # but we can analyze using a simple permutation approach
+    if X_test.shape[1] <= 100:
         print("Computing feature importance via permutation...")
         n_repeats = 5
         feature_importance = np.zeros(X_test.shape[1])
@@ -186,8 +188,8 @@ def evaluate_model(
         feature_imp_df.to_csv(feature_imp_filename, index=False)
         print(f"Feature importance saved to: {feature_imp_filename}")
         
-        # Plot top 15 features (or all if less than 15)
-        n_top_features = min(15, len(feature_names))
+        # Plot top 20 features (or all if less than 15)
+        n_top_features = min(20, len(feature_names))
         plt.figure(figsize=(10, 8))
         sns.barplot(x='importance', y='feature', data=feature_imp_df.head(n_top_features))
         plt.title('Feature Importance (Permutation-based)')
@@ -243,7 +245,9 @@ def evaluate_model(
     
     return results
 
+
 from sklearn.inspection import permutation_importance
+
 
 def get_feature_importance(
     model,
@@ -315,7 +319,6 @@ def get_feature_importance(
         plt.tight_layout()
         
         return importance_df, plt.gcf()
-    
     except Exception as e:
         print(f"Warning: Could not calculate feature importance: {str(e)}")
         return pd.DataFrame(), None

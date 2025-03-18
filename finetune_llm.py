@@ -30,7 +30,8 @@ def parse_arguments():
         description="Train a malnutrition detection model")
 
     # Model and data arguments
-    parser.add_argument("--model_name", type=str, default="unsloth/Phi-3-mini-4k-instruct",
+    parser.add_argument("--model_name", type=str,
+                        default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
                         help="Base model to use for fine-tuning")
     parser.add_argument("--train_data", type=str, required=True,
                         help="Path to training CSV data")
@@ -38,13 +39,13 @@ def parse_arguments():
                         help="Path to validation CSV data (optional)")
     parser.add_argument("--examples_data", type=str, default=None,
                         help="Path to few-shot examples CSV data (optional)")
-    parser.add_argument('--text_column', type=str, default="Note_Column",
+    parser.add_argument('--text_column', type=str, default="txt",
                         help='Name of the text column in the CSV')
-    parser.add_argument('--label_column', type=str, default="Malnutrition_Label",
+    parser.add_argument('--label_column', type=str, default="Label",
                         help='Name of the label column in the CSV')
 
     # Output arguments
-    parser.add_argument("--output_dir", type=str, default="./llm_train_output",
+    parser.add_argument("--output_dir", type=str, default="./llm",
                         help="Directory for saving training outputs")
     parser.add_argument("--model_output", type=str, default="./llm_models",
                         help="Path to save the final model")
@@ -60,7 +61,7 @@ def parse_arguments():
                         help="Maximum number of training steps")
     parser.add_argument("--max_seq_length", type=int, default=1024,
                         help="Maximum sequence length for tokenization")
-    parser.add_argument("--epochs", type=int, default=1,
+    parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
 
     # LoRA parameters
@@ -339,7 +340,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
             truncation=True,
             padding="max_length",
             max_length=max_seq_length,
-            return_tensors=None,  # Return lists instead of tensors
+            return_tensors=None,  
         )
         # Add labels for supervised fine-tuning
         tokenized["labels"] = tokenized["input_ids"].copy()

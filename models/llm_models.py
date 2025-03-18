@@ -71,20 +71,27 @@ def is_bfloat16_supported():
     return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
 
 
-def evaluate_predictions(y_true: List[str], y_pred: List[str], y_prob: Optional[List[float]] = None) -> Dict[str, Any]:
+def evaluate_predictions(y_true: List[Any],
+                         y_pred: List[Any], 
+                         y_prob: Optional[List[float]] = None) -> Dict[str, Any]:
     """Evaluate model predictions and return comprehensive metrics.
 
     Args:
-        y_true (List[str]): Ground truth labels ("yes" or "no")
-        y_pred (List[str]): Predicted labels ("yes" or "no")
+        y_true (List[Any]): Ground truth labels (1/0 or "yes"/"no")
+        y_pred (List[Any]): Predicted labels (1/0 or "yes"/"no")
         y_prob (Optional[List[float]]): Predicted probabilities for the positive class
 
     Returns:
         Dict[str, Any]: Dictionary containing evaluation metrics
     """
-    # Convert string labels to binary for sklearn metrics
-    y_true_binary = [1 if label.lower() == "yes" else 0 for label in y_true]
-    y_pred_binary = [1 if label.lower() == "yes" else 0 for label in y_pred]
+    # Convert labels to binary only if they are strings
+    def convert_to_binary(label):
+        if isinstance(label, str):
+            return 1 if label.lower() == "yes" else 0
+        return int(label)  # Assume already 0/1 if not a string
+
+    y_true_binary = [convert_to_binary(label) for label in y_true]
+    y_pred_binary = [convert_to_binary(label) for label in y_pred]
 
     # Calculate basic metrics
     accuracy = accuracy_score(y_true_binary, y_pred_binary)
@@ -96,16 +103,11 @@ def evaluate_predictions(y_true: List[str], y_pred: List[str], y_prob: Optional[
     cm = confusion_matrix(y_true_binary, y_pred_binary)
 
     # Get detailed classification report
-    cls_report = classification_report(y_true_binary, y_pred_binary, target_names=[
-                                       "no", "yes"], output_dict=True)
+    cls_report = classification_report(y_true_binary, y_pred_binary, target_names=["no", "yes"], output_dict=True)
 
     # ROC and PR curve metrics (if probabilities are provided)
-    auc = 0.0
-    avg_precision = 0.0
-    fpr = []
-    tpr = []
-    precision_curve = []
-    recall_curve = []
+    auc = avg_precision = 0.0
+    fpr = tpr = precision_curve = recall_curve = []
 
     # Ensure we have both classes
     if y_prob is not None and len(set(y_true_binary)) > 1:
@@ -129,10 +131,10 @@ def evaluate_predictions(y_true: List[str], y_pred: List[str], y_prob: Optional[
         'avg_precision': float(avg_precision),
         'confusion_matrix': cm.tolist(),
         'classification_report': cls_report,
-        'fpr': fpr.tolist() if len(fpr) > 0 else [],
-        'tpr': tpr.tolist() if len(tpr) > 0 else [],
-        'precision_curve': precision_curve.tolist() if len(precision_curve) > 0 else [],
-        'recall_curve': recall_curve.tolist() if len(recall_curve) > 0 else []
+        'fpr': fpr.tolist(),
+        'tpr': tpr.tolist(),
+        'precision_curve': precision_curve.tolist(),
+        'recall_curve': recall_curve.tolist()
     }
 
     return metrics

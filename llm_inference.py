@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-import os
-import unsloth
-os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
-
-import torch
-import argparse
-import pandas as pd
-import numpy as np
-import re
-from transformers import BitsAndBytesConfig, TextStreamer
-from unsloth import FastLanguageModel
-from tqdm import tqdm
-import csv
 from models.llm_models import (
     MalnutritionPromptBuilder,
     extract_malnutrition_decision,
@@ -20,8 +7,17 @@ from models.llm_models import (
     plot_evaluation_metrics,
     save_metrics_to_csv,
     print_metrics_report,
-    is_bfloat16_supported
+
 )
+from tqdm import tqdm
+from unsloth import FastLanguageModel
+from transformers import BitsAndBytesConfig, TextStreamer
+import pandas as pd
+import argparse
+import torch
+import os
+import unsloth
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 
 
 def parse_arguments():
@@ -29,28 +25,28 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Run inference with a malnutrition detection model (base or fine-tuned)"
     )
-    
+
     # Model arguments
     parser.add_argument("--model_path", type=str, default=None,
                         help="Path to the fine-tuned model adapter weights (optional). "
                              "If not provided, the base model is used for inference.")
-    parser.add_argument("--base_model", type=str, default="unsloth/Phi-3-mini-4k-instruct",
+    parser.add_argument("--base_model", type=str, default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
                         help="Base model that was fine-tuned or to be used for inference")
-    
+
     # Input arguments
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--input_csv", type=str,
                        help="Path to CSV file with patient notes")
     group.add_argument("--input_text", type=str,
                        help="Single patient note as text string")
-    
-    parser.add_argument("--text_column", type=str, default="Note_Column",
+
+    parser.add_argument("--text_column", type=str, default="txt",
                         help="Column name in CSV containing patient notes")
-    parser.add_argument("--id_column", type=str, default="Patient_ID",
+    parser.add_argument("--id_column", type=str, default="DEID",
                         help="Column name in CSV containing sample IDs")
-    parser.add_argument("--label_column", type=str, default='Malnutrition_Label',
+    parser.add_argument("--label_column", type=str, default='Label',
                         help="Column name in CSV containing true labels (optional)")
-    
+
     # Few-shot settings
     parser.add_argument("--examples_data", type=str, default=None,
                         help="Path to few-shot examples CSV data (optional)")
@@ -58,7 +54,7 @@ def parse_arguments():
                         help="Number of few-shot examples to use (default: 0 for zero-shot)")
     parser.add_argument("--balanced_examples", action="store_true",
                         help="Whether to balance positive/negative few-shot examples")
-    
+
     # Output arguments
     parser.add_argument("--output_dir", type=str, default="./llm_inference_results",
                         help="Directory to save inference results")
@@ -66,7 +62,7 @@ def parse_arguments():
                         help="Name of output CSV file")
     parser.add_argument("--print_report", action="store_true",
                         help="Print evaluation report to terminal (if labels available)")
-    
+
     # Model settings
     parser.add_argument("--use_flash_attention", action="store_true",
                         help="Use Flash Attention 2 if available")
@@ -80,7 +76,7 @@ def parse_arguments():
                         help="Min-P sampling parameter (optional)")
     parser.add_argument("--stream_output", action="store_true",
                         help="Stream model output to console during generation")
-    
+
     return parser.parse_args()
 
 
@@ -100,16 +96,16 @@ def get_quantization_config():
 def load_model_and_tokenizer(base_model, model_path, quantization_config, use_flash_attention=False):
     """
     Load base model and tokenizer.
-    
+
     If a fine-tuned model path (adapter weights) is provided, it loads the adapter alongside the base model.
     Otherwise, it loads the base model alone for inference.
-    
+
     Args:
         base_model (str): Base model name.
         model_path (str): Path to fine-tuned model adapter weights (optional).
         quantization_config: Quantization configuration.
         use_flash_attention (bool): Whether to use Flash Attention 2.
-        
+
     Returns:
         Tuple: (model, tokenizer)
     """
@@ -127,7 +123,8 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
                 use_flash_attention_2=use_flash_attention,
                 use_cache=True  # Enable caching for inference
             )
-            FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
+            # Enable native 2x faster inference
+            FastLanguageModel.for_inference(model)
             print("Model and adapter weights loaded successfully")
         else:
             # Load base model only
@@ -140,7 +137,8 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
                 use_flash_attention_2=use_flash_attention,
                 use_cache=True  # Enable caching for inference
             )
-            FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
+            # Enable native 2x faster inference
+            FastLanguageModel.for_inference(model)
             print("Base model loaded successfully")
 
         return model, tokenizer
@@ -148,24 +146,25 @@ def load_model_and_tokenizer(base_model, model_path, quantization_config, use_fl
         print(f"Error loading model: {e}")
         raise
 
+
 def process_single_text(text, model, tokenizer, prompt_builder, args):
     """Process a single patient note.
-    
+
     Args:
         text (str): Patient note text.
         model: The language model.
         tokenizer: The tokenizer.
         prompt_builder: MalnutritionPromptBuilder instance.
         args: Command line arguments.
-        
+
     Returns:
         Tuple[str, str]: (decision, explanation)
     """
     # Define default column names if processing a single text
     # These are only used for few-shot example formatting
-    text_col = args.text_column if hasattr(args, 'text_column') else "Note_Column"
-    label_col = args.label_column if hasattr(args, 'label_column') else "Malnutrition_Label"
-    
+    text_col = args.text_column if hasattr(args, 'text_column') else "txt"
+    label_col = args.label_column if hasattr(args, 'label_column') else "label"
+
     prompt = prompt_builder.get_inference_prompt(
         patient_notes=text,
         note_col=text_col,
@@ -174,20 +173,20 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
         specific_example_indices=None,
         balanced=args.balanced_examples
     )
-    
+
     # Prepare chat format messages
     messages = [
         {"role": "user", "content": prompt}
     ]
-    
+
     # Apply chat template
     inputs = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
-        add_generation_prompt=True,  # Must add for generation
+        add_generation_prompt=True,
         return_tensors="pt"
     ).to(model.device)
-    
+
     # Set up text streamer if requested
     if args.stream_output:
         text_streamer = TextStreamer(tokenizer, skip_prompt=True)
@@ -197,7 +196,7 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
         print("RESPONSE:")
     else:
         streamer = None
-    
+
     # Generate with properly formatted inputs
     with torch.no_grad():
         output = model.generate(
@@ -210,7 +209,7 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
             use_cache=True,
             pad_token_id=tokenizer.eos_token_id
         )
-    
+
     # If streaming was used, we need to get the full response as a string
     if args.stream_output:
         # Decode the output - make sure to get only the generated part
@@ -223,95 +222,95 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
         input_length = inputs.shape[1]
         response_tokens = output[0][input_length:]
         response = tokenizer.decode(response_tokens, skip_special_tokens=True)
-    
+
     decision, explanation = extract_malnutrition_decision(response)
-    
+
     return decision, explanation
 
 
 def process_csv_input(args, model, tokenizer, prompt_builder):
     """Process CSV input file and save results.
-    
+
     Args:
         args: Command line arguments.
         model: The language model.
         tokenizer: The tokenizer.
         prompt_builder: MalnutritionPromptBuilder instance.
-        
+
     Returns:
         pd.DataFrame: DataFrame with prediction results.
     """
     print(f"Processing input CSV: {args.input_csv}")
-    
+
     df = pd.read_csv(args.input_csv)
-    
+
     if args.text_column not in df.columns:
-        raise ValueError(f"Text column '{args.text_column}' not found in CSV file")
-    
+        raise ValueError(
+            f"Text column '{args.text_column}' not found in CSV file")
+
     if args.id_column not in df.columns:
         df[args.id_column] = [f"sample_{i}" for i in range(len(df))]
-    
+
     results = []
-    
+
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing"):
         text = row[args.text_column]
-        sample_id = row[args.id_column]
-        
+        patient_id = row[args.id_column]  # Using 'patient_id' instead of 'sample_id'
+
         true_label = None
         if args.label_column and args.label_column in df.columns:
             true_label = str(row[args.label_column]).lower()
             true_label = "yes" if true_label in ["1", "yes", "true"] else "no"
-        
+
         # Now pass the correct parameters to process_single_text
-        decision, explanation = process_single_text(text, model, tokenizer,
-                                                    prompt_builder, args)
-        
+        predicted_label, explanation = process_single_text(text, model, tokenizer,
+                                                            prompt_builder, args)
+
         result = {
-            args.id_column: sample_id,
-            args.text_column: text,
+            "patient_id": patient_id,  # Renamed to 'patient_id'
             "explanation": explanation,
-            "prediction": decision
+            "predicted_label": predicted_label,  # Renamed to 'predicted_label'
         }
-        
+
         if true_label is not None:
-            result["true_label"] = true_label
-        
+            result["true_label"] = true_label  # Added 'true_label' column if exists
+
         results.append(result)
-    
+
     results_df = pd.DataFrame(results)
-    
+
     return results_df
 
 
 def main():
     """Main function to run the inference pipeline."""
     args = parse_arguments()
-    
+
     # Set seed for reproducibility
     set_seed(args.seed)
-    
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
     # Initialize prompt builder
     prompt_builder = MalnutritionPromptBuilder(args.examples_data)
-    
+
     # Get quantization configuration
     quantization_config = get_quantization_config()
-    
+
     # Load model and tokenizer
     model, tokenizer = load_model_and_tokenizer(
         args.base_model, args.model_path,
         quantization_config, args.use_flash_attention
     )
-    
+
     if args.input_csv:
         # Process CSV input
         results_df = process_csv_input(args, model, tokenizer, prompt_builder)
         output_path = os.path.join(args.output_dir, args.output_csv)
         results_df.to_csv(output_path, index=False)
         print(f"Results saved to {output_path}")
-        
+
         # Evaluate if labels are available
         if args.label_column and "true_label" in results_df.columns:
             y_true = results_df["true_label"].tolist()
@@ -336,7 +335,7 @@ def main():
         }
         output_path = os.path.join(args.output_dir, args.output_csv)
         pd.DataFrame([result]).to_csv(output_path, index=False)
-        
+
         print("\n" + "="*50)
         print("MALNUTRITION DETECTION RESULT")
         print("="*50)
@@ -345,7 +344,7 @@ def main():
         print(f"\nDECISION: malnutrition={decision}")
         print("="*50)
         print(f"Result saved to {output_path}")
-    
+
     print("Inference complete!")
 
 
