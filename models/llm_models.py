@@ -7,8 +7,18 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import List, Dict, Optional, Union, Tuple, Any
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, confusion_matrix, classification_report, roc_curve, precision_recall_curve
+from typing import List, Dict, Optional, Any
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    classification_report,
+    roc_curve,
+    precision_recall_curve)
 
 
 class MalnutritionDataset:
@@ -71,9 +81,11 @@ def is_bfloat16_supported():
     return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
 
 
-def evaluate_predictions(y_true: List[Any],
-                         y_pred: List[Any], 
-                         y_prob: Optional[List[float]] = None) -> Dict[str, Any]:
+def evaluate_predictions(
+    y_true: List[Any],
+    y_pred: List[Any],
+    y_prob: Optional[List[float]] = None
+) -> Dict[str, Any]:
     """Evaluate model predictions and return comprehensive metrics.
 
     Args:
@@ -90,6 +102,7 @@ def evaluate_predictions(y_true: List[Any],
             return 1 if label.lower() == "yes" else 0
         return int(label)  # Assume already 0/1 if not a string
 
+    # Convert both y_true and y_pred to binary (0 or 1)
     y_true_binary = [convert_to_binary(label) for label in y_true]
     y_pred_binary = [convert_to_binary(label) for label in y_pred]
 
@@ -103,13 +116,14 @@ def evaluate_predictions(y_true: List[Any],
     cm = confusion_matrix(y_true_binary, y_pred_binary)
 
     # Get detailed classification report
-    cls_report = classification_report(y_true_binary, y_pred_binary, target_names=["no", "yes"], output_dict=True)
+    cls_report = classification_report(y_true_binary, y_pred_binary, target_names=[
+                                       "no", "yes"], output_dict=True)
 
     # ROC and PR curve metrics (if probabilities are provided)
     auc = avg_precision = 0.0
     fpr = tpr = precision_curve = recall_curve = []
 
-    # Ensure we have both classes
+    # Ensure we have both classes and predicted probabilities for ROC/PR curves
     if y_prob is not None and len(set(y_true_binary)) > 1:
         auc = roc_auc_score(y_true_binary, y_prob)
         avg_precision = average_precision_score(y_true_binary, y_prob)
@@ -121,7 +135,6 @@ def evaluate_predictions(y_true: List[Any],
         precision_curve, recall_curve, _ = precision_recall_curve(
             y_true_binary, y_prob)
 
-    # Combine all metrics
     metrics = {
         'accuracy': float(accuracy),
         'precision': float(precision),
@@ -131,10 +144,10 @@ def evaluate_predictions(y_true: List[Any],
         'avg_precision': float(avg_precision),
         'confusion_matrix': cm.tolist(),
         'classification_report': cls_report,
-        'fpr': fpr.tolist(),
-        'tpr': tpr.tolist(),
-        'precision_curve': precision_curve.tolist(),
-        'recall_curve': recall_curve.tolist()
+        'fpr': fpr,
+        'tpr': tpr,
+        'precision_curve': precision_curve,
+        'recall_curve': recall_curve
     }
 
     return metrics
@@ -231,8 +244,11 @@ def save_metrics_to_csv(metrics: Dict[str, Any], output_path: str):
         'avg_precision': metrics['avg_precision']
     }
 
-    # Save to CSV
-    pd.DataFrame([main_metrics]).to_csv(output_path, index=False)
+    # Convert to DataFrame
+    df = pd.DataFrame([main_metrics])
+
+    # Save CSV
+    df.to_csv(output_path, index=False)
 
 
 def print_metrics_report(metrics: Dict[str, Any]):
@@ -565,21 +581,21 @@ def extract_malnutrition_decision(response):
     """Extract malnutrition=yes/no decision from model response.
     Args:
         response (str): Model response text
-        
+
     Returns:
         Tuple[str, str]: (malnutrition decision, explanation)
     """
     decision_pattern = r'malnutrition=(yes|no)'
     match = re.search(decision_pattern, response, re.IGNORECASE)
-    
+
     decision = "unknown"
     if match:
         decision = match.group(1).lower()
-    
+
     explanation = response
     if match:
         explanation_parts = response.split('malnutrition=', 1)
         if len(explanation_parts) > 0:
             explanation = explanation_parts[0].strip()
-    
+
     return decision, explanation

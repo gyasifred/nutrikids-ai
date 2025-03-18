@@ -1074,6 +1074,9 @@ class NutrikidsAiCommand(cmd.Cmd):
         parser.add_argument('--base-model', '--base_model', type=str,
                             default="unsloth/Phi-3-mini-4k-instruct",
                             help="Base model that was fine-tuned or to be used for inference")
+        parser.add_argument("--threshold", type=float, default=0.5,
+                        help="Threshold for converting probabilities into binary predictions (default: 0.5)")
+
 
         # CSV column options
         parser.add_argument('--text-column', '--text_column', type=str, default="Note_Column",

@@ -2,12 +2,7 @@
 from models.llm_models import (
     MalnutritionPromptBuilder,
     extract_malnutrition_decision,
-    set_seed,
-    evaluate_predictions,
-    plot_evaluation_metrics,
-    save_metrics_to_csv,
-    print_metrics_report,
-
+    set_seed
 )
 from tqdm import tqdm
 from unsloth import FastLanguageModel
@@ -56,12 +51,10 @@ def parse_arguments():
                         help="Whether to balance positive/negative few-shot examples")
 
     # Output arguments
-    parser.add_argument("--output_dir", type=str, default="./llm_inference_results",
+    parser.add_argument("--output_dir", type=str, default="./llm_inference",
                         help="Directory to save inference results")
-    parser.add_argument("--output_csv", type=str, default="malnutrition_predictions.csv",
+    parser.add_argument("--output_csv", type=str, default="predictions.csv",
                         help="Name of output CSV file")
-    parser.add_argument("--print_report", action="store_true",
-                        help="Print evaluation report to terminal (if labels available)")
 
     # Model settings
     parser.add_argument("--use_flash_attention", action="store_true",
@@ -210,18 +203,13 @@ def process_single_text(text, model, tokenizer, prompt_builder, args):
             pad_token_id=tokenizer.eos_token_id
         )
 
-    # If streaming was used, we need to get the full response as a string
+    # Decode the output - make sure to get only the generated part
+    input_length = inputs.shape[1]
+    response_tokens = output[0][input_length:]
+    response = tokenizer.decode(response_tokens, skip_special_tokens=True)
+
     if args.stream_output:
-        # Decode the output - make sure to get only the generated part
-        input_length = inputs.shape[1]
-        response_tokens = output[0][input_length:]
-        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
         print("\n--- End of streaming output ---\n")
-    else:
-        # Decode the output - make sure to get only the generated part
-        input_length = inputs.shape[1]
-        response_tokens = output[0][input_length:]
-        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
 
     decision, explanation = extract_malnutrition_decision(response)
 
@@ -255,25 +243,24 @@ def process_csv_input(args, model, tokenizer, prompt_builder):
 
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing"):
         text = row[args.text_column]
-        patient_id = row[args.id_column]  # Using 'patient_id' instead of 'sample_id'
+        patient_id = row[args.id_column]
 
         true_label = None
         if args.label_column and args.label_column in df.columns:
             true_label = str(row[args.label_column]).lower()
             true_label = "yes" if true_label in ["1", "yes", "true"] else "no"
 
-        # Now pass the correct parameters to process_single_text
         predicted_label, explanation = process_single_text(text, model, tokenizer,
-                                                            prompt_builder, args)
+                                                          prompt_builder, args)
 
         result = {
-            "patient_id": patient_id,  # Renamed to 'patient_id'
+            "patient_id": patient_id,
             "explanation": explanation,
-            "predicted_label": predicted_label,  # Renamed to 'predicted_label'
+            "predicted_label": predicted_label,
         }
 
         if true_label is not None:
-            result["true_label"] = true_label  # Added 'true_label' column if exists
+            result["true_label"] = true_label
 
         results.append(result)
 
@@ -311,17 +298,16 @@ def main():
         results_df.to_csv(output_path, index=False)
         print(f"Results saved to {output_path}")
 
-        # Evaluate if labels are available
-        if args.label_column and "true_label" in results_df.columns:
-            y_true = results_df["true_label"].tolist()
-            y_pred = results_df["prediction"].tolist()
-            metrics = evaluate_predictions(y_true, y_pred)
-            plot_evaluation_metrics(metrics, args.output_dir)
-            metrics_path = os.path.join(args.output_dir, "metrics.csv")
-            save_metrics_to_csv(metrics, metrics_path)
-            print(f"Evaluation metrics saved to {metrics_path}")
-            if args.print_report:
-                print_metrics_report(metrics)
+        # Show a sample of results
+        if not results_df.empty:
+            sample = results_df.iloc[0]
+            print("\n" + "="*50)
+            print("SAMPLE RESULT:")
+            print("="*50)
+            print(f"PATIENT ID: {sample['patient_id']}")
+            print(f"EXPLANATION: {sample['explanation']}")
+            print(f"DECISION: malnutrition={sample['predicted_label']}")
+            print("="*50)
     else:  # Single text input
         # Process single text input
         decision, explanation = process_single_text(
