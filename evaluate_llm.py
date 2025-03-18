@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from unsloth import FastLanguageModel
-from transformers import BitsAndBytesConfig
+from transformers import BitsAndBytesConfig, TextStreamer
 
 # Import utilities from the existing implementation
 from models.llm_models import (
@@ -15,6 +15,9 @@ from models.llm_models import (
     extract_malnutrition_decision,
     set_seed,
     evaluate_predictions,
+    plot_evaluation_metrics,
+    save_metrics_to_csv,
+    print_metrics_report,
     is_bfloat16_supported
 )
 
@@ -32,7 +35,7 @@ def parse_arguments():
     parser.add_argument("--base_model", type=str, default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
                         help="Base model that was fine-tuned or to be used for inference")
 
-    # Test data arguments - only CSV
+    # Test data arguments
     parser.add_argument("--test_csv", type=str, required=True,
                         help="Path to CSV file with test data (patient notes and labels)")
     parser.add_argument("--text_column", type=str, default="txt",
@@ -49,14 +52,12 @@ def parse_arguments():
                         help="Number of few-shot examples to use (default: 0 for zero-shot)")
     parser.add_argument("--balanced_examples", action="store_true",
                         help="Whether to balance positive/negative few-shot examples")
-                        
-    # Threshold for binary classification
-    parser.add_argument("--threshold", type=float, default=0.5,
-                        help="Probability threshold for binary classification (default: 0.5)")
 
     # Output arguments
     parser.add_argument("--output_dir", type=str, default="./llm_evaluation_results",
                         help="Directory to save evaluation results")
+    parser.add_argument("--print_report", action="store_true",
+                        help="Print evaluation report to terminal")
 
     # Model settings
     parser.add_argument("--use_flash_attention", action="store_true",
@@ -67,6 +68,8 @@ def parse_arguments():
                         help="Maximum number of new tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
+    parser.add_argument("--batch_size", type=int, default=1,
+                        help="Batch size for processing (default: 1)")
 
     return parser.parse_args()
 
@@ -230,10 +233,7 @@ def process_single_text_with_logits(text, model, tokenizer, prompt_builder, args
     # Extract decision and explanation
     decision, explanation = extract_malnutrition_decision(response)
     
-    # Override decision based on threshold if necessary
-    threshold_decision = "yes" if yes_probability >= args.threshold else "no"
-    
-    return decision, threshold_decision, explanation, yes_probability
+    return decision, explanation, yes_probability
 
 
 def evaluate_model(args, model, tokenizer, prompt_builder):
@@ -275,7 +275,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
         true_label = "yes" if str(row[args.label_column]).lower() in ["1", "yes", "true"] else "no"
         
         # Get prediction, explanation, and probability
-        model_decision, threshold_decision, explanation, probability = process_single_text_with_logits(
+        predicted_label, explanation, probability = process_single_text_with_logits(
             patient_text, model, tokenizer, prompt_builder, args
         )
         
@@ -283,8 +283,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
         results.append({
             "patient_id": patient_id,
             "true_label": true_label,
-            "model_decision": model_decision,
-            "threshold_decision": threshold_decision,
+            "predicted_label": predicted_label,
             "probability": probability,
             "explanation": explanation
         })
@@ -325,13 +324,22 @@ def main():
     results_df.to_csv(predictions_path, index=False)
     print(f"Predictions saved to {predictions_path}")
     
-    # Evaluate model performance (based on threshold decision)
+    # Evaluate model performance
     y_true = results_df["true_label"].tolist()
-    y_pred = results_df["threshold_decision"].tolist()
+    y_pred = results_df["predicted_label"].tolist()
     y_prob = results_df["probability"].tolist()
     
     print("Computing evaluation metrics...")
     metrics = evaluate_predictions(y_true, y_pred, y_prob)
+    
+    # Generate and save plots
+    print("Generating evaluation plots...")
+    plot_evaluation_metrics(metrics, args.output_dir)
+    
+    # Save metrics to CSV
+    metrics_csv_path = os.path.join(args.output_dir, "metrics.csv")
+    save_metrics_to_csv(metrics, metrics_csv_path)
+    print(f"Metrics saved to {metrics_csv_path}")
     
     # Save detailed metrics to JSON
     metrics_json = {
@@ -340,26 +348,19 @@ def main():
         'recall': float(metrics['recall']),
         'f1': float(metrics['f1']),
         'auc': float(metrics['auc']),
-        'threshold': float(args.threshold),
+        'avg_precision': float(metrics['avg_precision']),
         'confusion_matrix': metrics['confusion_matrix'],
+        'classification_report': metrics['classification_report']
     }
     
     metrics_json_path = os.path.join(args.output_dir, "metrics.json")
     with open(metrics_json_path, 'w') as f:
         json.dump(metrics_json, f, indent=2)
-    print(f"Metrics saved to {metrics_json_path}")
+    print(f"Detailed metrics saved to {metrics_json_path}")
     
-    # Print a simple report
-    print("\n" + "="*50)
-    print(f"EVALUATION RESULTS (threshold = {args.threshold})")
-    print("="*50)
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1 Score:  {metrics['f1']:.4f}")
-    print(f"AUC:       {metrics['auc']:.4f}")
-    print("="*50)
-    
+    # Print evaluation report
+    if args.print_report:
+        print_metrics_report(metrics)
     print("Evaluation complete!")
 
 
