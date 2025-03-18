@@ -175,18 +175,30 @@ def load_model_and_tokenizer(args, quantization_config):
     
     try:
         print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}, "
-              f"load_in_4bit={args.load_in_4bit}, load_in_8bit={args.load_in_8bit}")
+              f"quantization_config={quantization_config is not None}")
         
-        base_model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=args.model_name,
-            load_in_4bit=args.load_in_4bit,
-            load_in_8bit=args.load_in_8bit,
-            dtype=dtype,
-            quantization_config=quantization_config,
-            device_map="auto",
-            use_flash_attention_2=args.use_flash_attention,
-            use_cache=False
-        )
+        # Don't pass load_in_4bit and load_in_8bit when passing quantization_config
+        if quantization_config is not None:
+            base_model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=args.model_name,
+                dtype=dtype,
+                quantization_config=quantization_config,
+                device_map="auto",
+                use_flash_attention_2=args.use_flash_attention,
+                use_cache=False
+            )
+        else:
+            # Use load_in_4bit and load_in_8bit only when not using quantization_config
+            base_model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=args.model_name,
+                load_in_4bit=args.load_in_4bit,
+                load_in_8bit=args.load_in_8bit,
+                dtype=dtype,
+                device_map="auto",
+                use_flash_attention_2=args.use_flash_attention,
+                use_cache=False
+            )
+        
         print("Model and tokenizer loaded successfully.")
         return base_model, tokenizer, fp16, bf16
     except Exception as e:

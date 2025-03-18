@@ -209,3 +209,4 @@ xgboost_ouput/
 CNN/
 TABPFN/
 fix_none_values.py
+trained_models/
