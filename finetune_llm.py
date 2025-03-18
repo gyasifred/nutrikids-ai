@@ -177,15 +177,41 @@ def load_model_and_tokenizer(args, quantization_config):
         print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}, "
               f"quantization_config={quantization_config is not None}")
         
+        # Configure attention implementation properly
+        attention_config = {}
+        if args.use_flash_attention:
+            # Use flash attention 2 properly - do NOT use eager attention with it
+            attention_config = {
+                "attn_implementation": "flash_attention_2",
+                "use_flash_attention_2": False  # Avoid duplicate settings
+            }
+        else:
+            # Use default eager attention if flash attention not requested
+            attention_config = {
+                "attn_implementation": "eager",
+                "use_flash_attention_2": False
+            }
+        
+        # Check if model is a Gemma model
+        is_gemma_model = "gemma" in args.model_name.lower()
+        
+        # Prepare model kwargs, keeping compatibility with different model types
+        model_kwargs = {
+            "dtype": dtype,
+            "device_map": "auto",
+        }
+        
+        # Only add attention config and use_cache for compatible models
+        if not is_gemma_model:
+            model_kwargs.update(attention_config)
+            model_kwargs["use_cache"] = False
+        
         # Don't pass load_in_4bit and load_in_8bit when passing quantization_config
         if quantization_config is not None:
             base_model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=args.model_name,
-                dtype=dtype,
                 quantization_config=quantization_config,
-                device_map="auto",
-                use_flash_attention_2=args.use_flash_attention,
-                use_cache=False
+                **model_kwargs
             )
         else:
             # Use load_in_4bit and load_in_8bit only when not using quantization_config
@@ -193,10 +219,7 @@ def load_model_and_tokenizer(args, quantization_config):
                 model_name=args.model_name,
                 load_in_4bit=args.load_in_4bit,
                 load_in_8bit=args.load_in_8bit,
-                dtype=dtype,
-                device_map="auto",
-                use_flash_attention_2=args.use_flash_attention,
-                use_cache=False
+                **model_kwargs
             )
         
         print("Model and tokenizer loaded successfully.")
@@ -252,22 +275,29 @@ def create_peft_model(base_model, args):
     target_modules = get_target_modules(args, args.model_name)
     print(f"Using target modules: {target_modules}")
     
+    # Check if we're using a Gemma model
+    is_gemma_model = "gemma" in args.model_name.lower()
+    
+    # Configure gradient checkpointing based on model type
+    use_gradient_checkpointing = not is_gemma_model
+    
     model = FastLanguageModel.get_peft_model(
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=0,
         target_modules=target_modules,
-        use_gradient_checkpointing=True,
+        use_gradient_checkpointing=use_gradient_checkpointing,
         random_state=args.seed,
         use_rslora=True,
         loftq_config=None
     )
 
-    # Enable gradient checkpointing for efficient training
-    model.gradient_checkpointing_enable()
-    if hasattr(model, 'enable_input_require_grads'):
-        model.enable_input_require_grads()
+    # Enable gradient checkpointing for efficient training - only for non-Gemma models
+    if use_gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        if hasattr(model, 'enable_input_require_grads'):
+            model.enable_input_require_grads()
 
     return model
 
@@ -283,6 +313,9 @@ def get_sft_config(args, fp16, bf16):
     Returns:
         SFTConfig: Configuration for SFT training
     """
+    # Check if we're using a Gemma model
+    is_gemma_model = "gemma" in args.model_name.lower()
+    
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation,
@@ -305,6 +338,15 @@ def get_sft_config(args, fp16, bf16):
         "packing": False,
         "num_train_epochs": args.epochs
     }
+    
+    # For Gemma models, adjust certain parameters
+    if is_gemma_model:
+        # Reduce batch size for Gemma to avoid memory issues
+        config_kwargs["per_device_train_batch_size"] = max(1, args.batch_size // 2)
+        # Increase gradient accumulation steps to compensate
+        config_kwargs["gradient_accumulation_steps"] = args.gradient_accumulation * 2
+        # Disable gradient checkpointing which can cause issues with causal masks
+        config_kwargs["gradient_checkpointing"] = False
     
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:
