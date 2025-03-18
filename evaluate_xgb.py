@@ -141,7 +141,14 @@ def main():
 
         # Print classification report
         logger.info("\nClassification Report:")
-        class_names = label_encoder.classes_
+        
+        # Fix for classification report with numeric labels
+        class_names = None
+        if hasattr(label_encoder, 'classes_'):
+            # Convert numeric labels to strings if needed
+            class_names = [str(cls) for cls in label_encoder.classes_]
+        
+        # Generate classification report with appropriate target names
         cls_report = classification_report(
             y_test, y_pred, target_names=class_names, zero_division=0)
         logger.info("\n" + cls_report)
@@ -256,12 +263,12 @@ def main():
             'avg_precision': float(avg_precision),
             'confusion_matrix': cm.tolist(),
             'classification_report': cls_report,
-            'fpr': fpr.tolist() if len(fpr) > 0 else [],
-            'tpr': tpr.tolist() if len(tpr) > 0 else [],
+            'fpr': fpr.tolist() if 'fpr' in locals() and len(fpr) > 0 else [],
+            'tpr': tpr.tolist() if 'tpr' in locals() and len(tpr) > 0 else [],
             'precision_curve': precision_curve.tolist()
-            if len(precision_curve) > 0 else [],
+            if 'precision_curve' in locals() and len(precision_curve) > 0 else [],
             'recall_curve': recall_curve.tolist()
-            if len(recall_curve) > 0 else []
+            if 'recall_curve' in locals() and len(recall_curve) > 0 else []
         }
 
         # Save as JSON for better readability

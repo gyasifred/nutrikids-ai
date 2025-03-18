@@ -26,10 +26,13 @@ def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
     # Normalize confusion matrix
     cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
 
+    # Convert class labels to strings for display
+    str_classes = [str(c) for c in classes]
+
     # Create non-normalized confusion matrix plot
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=classes, yticklabels=classes)
+                xticklabels=str_classes, yticklabels=str_classes)
     plt.title('Confusion Matrix')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
@@ -40,7 +43,7 @@ def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
     # Create normalized confusion matrix plot
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
-                xticklabels=classes, yticklabels=classes)
+                xticklabels=str_classes, yticklabels=str_classes)
     plt.title('Normalized Confusion Matrix')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
@@ -52,8 +55,7 @@ def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
     cm_data = {
         'confusion_matrix': cm.tolist(),
         'confusion_matrix_normalized': cm_normalized.tolist(),
-        'class_labels': classes.tolist()
-        if hasattr(classes, 'tolist') else classes
+        'class_labels': [str(c) for c in classes]
     }
 
     with open(os.path.join(output_dir, 'confusion_matrix.json'), 'w') as f:
@@ -65,6 +67,7 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
     plt.figure(figsize=(10, 8))
 
     roc_data = {}
+    str_classes = [str(c) for c in classes]
 
     if len(classes) == 2:
         # Binary classification
@@ -83,7 +86,7 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
         # Multi-class classification (one-vs-rest)
         roc_data['multiclass'] = {}
 
-        for i, class_name in enumerate(classes):
+        for i, class_name in enumerate(str_classes):
             y_true_binary = (np.array(y_true) == i).astype(int)
             fpr, tpr, thresholds = roc_curve(y_true_binary, y_proba[:, i])
             roc_auc = auc(fpr, tpr)
@@ -118,6 +121,7 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
     plt.figure(figsize=(10, 8))
 
     pr_data = {}
+    str_classes = [str(c) for c in classes]
 
     if len(classes) == 2:
         # Binary classification
@@ -138,7 +142,7 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
         # Multi-class classification (one-vs-rest)
         pr_data['multiclass'] = {}
 
-        for i, class_name in enumerate(classes):
+        for i, class_name in enumerate(str_classes):
             y_true_binary = (np.array(y_true) == i).astype(int)
             precision, recall, thresholds = precision_recall_curve(
                 y_true_binary, y_proba[:, i])
@@ -172,11 +176,17 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
 
 def generate_class_distribution(y_true, y_pred, classes, output_dir):
     """Generate and save class distribution plots."""
+    # Convert classes to strings for plotting and counting
+    str_classes = [str(c) for c in classes]
+    
+    # Create mapping from index to string class label
+    class_mapping = {i: str_classes[i] for i in range(len(str_classes))}
+    
     # Actual label distribution
     plt.figure(figsize=(10, 6))
     # Convert numpy arrays to scalar values if needed
     y_true_list = [i.item() if hasattr(i, 'item') else i for i in y_true]
-    y_true_counts = Counter([classes[i] for i in y_true_list])
+    y_true_counts = Counter([class_mapping[i] for i in y_true_list])
     sns.barplot(x=list(y_true_counts.keys()), y=list(y_true_counts.values()))
     plt.title('Actual Class Distribution')
     plt.xlabel('Class')
@@ -190,7 +200,7 @@ def generate_class_distribution(y_true, y_pred, classes, output_dir):
     plt.figure(figsize=(10, 6))
     # Convert numpy arrays to scalar values if needed
     y_pred_list = [i.item() if hasattr(i, 'item') else i for i in y_pred]
-    y_pred_counts = Counter([classes[i] for i in y_pred_list])
+    y_pred_counts = Counter([class_mapping[i] for i in y_pred_list])
     sns.barplot(x=list(y_pred_counts.keys()), y=list(y_pred_counts.values()))
     plt.title('Predicted Class Distribution')
     plt.xlabel('Class')
@@ -263,12 +273,17 @@ def main():
     model, tokenizer, label_encoder, config = load_model_artifacts(
         args.model_dir)
 
-    # Convert string labels to integers
-    y_true = label_encoder.transform(test_labels)
+    # Convert string labels to integers if they're not already integers
+    if isinstance(test_labels[0], (int, float, np.integer, np.floating)):
+        unique_labels = np.unique(test_labels)
+        label_map = {val: idx for idx, val in enumerate(unique_labels)}
+        y_true = np.array([label_map[label] for label in test_labels])
+        label_encoder.classes_ = unique_labels
+    else:
+        y_true = label_encoder.transform(test_labels)
 
     # Make predictions
     print(f"Making predictions on {len(test_texts)} texts...")
-    # Process in batches to handle large datasets
     all_predictions = []
     all_probabilities = []
 
@@ -276,7 +291,6 @@ def main():
         batch_texts = test_texts[i:i+args.batch_size]
         batch_preds, batch_probs = predict_batch(
             model, tokenizer, batch_texts)
-        # Convert tensors to lists if needed
         if isinstance(batch_preds, torch.Tensor):
             batch_preds = batch_preds.cpu().numpy().tolist()
         if isinstance(batch_probs, torch.Tensor):
@@ -290,11 +304,19 @@ def main():
 
     # Generate classification report
     print("Generating classification report...")
+    str_classes = [str(c) for c in label_encoder.classes_]
     report = classification_report(
-        y_true, y_pred, target_names=label_encoder.classes_)
-    print(report)
+        y_true, y_pred, target_names=str_classes, output_dict=True)
+    
+    print("Classification Report:")
+    for class_label, metrics in report.items():
+        if isinstance(metrics, dict):  # For individual classes
+            print(f"Class {class_label}:")
+            for metric_name, value in metrics.items():
+                print(f"  {metric_name}: {value:.4f}")
+        else:  # For accuracy, macro avg, and weighted avg
+            print(f"{class_label}: {metrics:.4f}")
 
-    # Save classification report
     with open(os.path.join(args.output_dir,
                            'classification_report.json'), 'w') as f:
         json.dump(report, f, indent=4)
@@ -318,19 +340,17 @@ def main():
         y_true, y_pred, label_encoder.classes_, args.output_dir)
 
     print("Saving predictions...")
-
-    # Explicit copy to avoid modification issues
     pred_df = test_df[[args.id_column]].copy()
+    pred_df["true_label"] = test_labels
+    
+    if isinstance(test_labels[0], (int, float, np.integer, np.floating)):
+        pred_df["predicted_label"] = [label_encoder.classes_[idx] for idx in y_pred]
+    else:
+        pred_df["predicted_label"] = label_encoder.inverse_transform(y_pred)
 
-    # Store true and predicted labels
-    pred_df["true_label"] = y_true
-    pred_df["predicted_label"] = label_encoder.inverse_transform(y_pred)
-
-    # Add probability scores
-    for i, class_name in enumerate(label_encoder.classes_):
+    for i, class_name in enumerate(str_classes):
         pred_df[f'prob_{class_name}'] = y_proba[:, i]
 
-    # Save to CSV
     output_path = os.path.join(args.output_dir, 'predictions.csv')
     pred_df.to_csv(output_path, index=False)
 
