@@ -57,9 +57,9 @@ def parse_arguments():
                         help="Number of gradient accumulation steps")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    parser.add_argument("--max_steps", type=int, default=100,
+    parser.add_argument("--max_steps", type=int, default=60,
                         help="Maximum number of training steps")
-    parser.add_argument("--max_seq_length", type=int, default=2048,
+    parser.add_argument("--max_seq_length", type=int, default=1024,
                         help="Maximum sequence length for tokenization")
     parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
@@ -88,10 +88,15 @@ def parse_arguments():
                         help="Where to report training metrics")
     parser.add_argument("--load_in_8bit", action="store_true", default=False,
                         help="Load model in 8-bit precision")
-    parser.add_argument("--load_in_4bit", action="store_true", default=False,
+    parser.add_argument("--load_in_4bit", action="store_true", default=True,
                         help="Load model in 4-bit precision")
-
-    return parser.parse_args()
+    
+    args = parser.parse_args()
+    
+    if args.load_in_8bit:
+        args.load_in_4bit = False
+        
+    return args
 
 
 def get_quantization_config(args):
@@ -103,10 +108,11 @@ def get_quantization_config(args):
     Returns:
         BitsAndBytesConfig: Quantization configuration
     """
-    # Determine if we should use 8-bit or 4-bit quantization
+    # Determine if we should use 8-bit or 4-bit quantization (but not both)
     if args.load_in_8bit:
         return BitsAndBytesConfig(
             load_in_8bit=True,
+            load_in_4bit=False,  
             llm_int8_enable_fp32_cpu_offload=True
         )
     elif args.load_in_4bit:
@@ -118,6 +124,7 @@ def get_quantization_config(args):
             
         return BitsAndBytesConfig(
             load_in_4bit=True,
+            load_in_8bit=False,  # Explicitly set to False
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
@@ -158,15 +165,7 @@ def determine_model_precision(args):
 
 
 def load_model_and_tokenizer(args, quantization_config):
-    """Load base model and tokenizer with appropriate settings.
-
-    Args:
-        args: Command line arguments
-        quantization_config: Quantization configuration
-
-    Returns:
-        Tuple: (model, tokenizer)
-    """
+    """Load base model and tokenizer with appropriate settings."""
     print(f"Loading base model and tokenizer: {args.model_name}")
     
     # Determine precision based on hardware and user preferences
@@ -174,54 +173,25 @@ def load_model_and_tokenizer(args, quantization_config):
     dtype = torch.bfloat16 if bf16 else torch.float16
     
     try:
+        # Ensure we're not using both 4-bit and 8-bit
+        load_in_4bit = args.load_in_4bit and not args.load_in_8bit
+        load_in_8bit = args.load_in_8bit and not args.load_in_4bit
+        
         print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}, "
-              f"quantization_config={quantization_config is not None}")
+              f"load_in_4bit={load_in_4bit}, load_in_8bit={load_in_8bit}")
         
-        # Configure attention implementation properly
-        attention_config = {}
-        if args.use_flash_attention:
-            # Use flash attention 2 properly - do NOT use eager attention with it
-            attention_config = {
-                "attn_implementation": "flash_attention_2",
-                "use_flash_attention_2": False  # Avoid duplicate settings
-            }
-        else:
-            # Use default eager attention if flash attention not requested
-            attention_config = {
-                "attn_implementation": "eager",
-                "use_flash_attention_2": False
-            }
+        # Set attention implementation based on flash attention flag
+        attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
         
-        # Check if model is a Gemma model
-        is_gemma_model = "gemma" in args.model_name.lower()
-        
-        # Prepare model kwargs, keeping compatibility with different model types
-        model_kwargs = {
-            "dtype": dtype,
-            "device_map": "auto",
-        }
-        
-        # Only add attention config and use_cache for compatible models
-        if not is_gemma_model:
-            model_kwargs.update(attention_config)
-            model_kwargs["use_cache"] = False
-        
-        # Don't pass load_in_4bit and load_in_8bit when passing quantization_config
-        if quantization_config is not None:
-            base_model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=args.model_name,
-                quantization_config=quantization_config,
-                **model_kwargs
-            )
-        else:
-            # Use load_in_4bit and load_in_8bit only when not using quantization_config
-            base_model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=args.model_name,
-                load_in_4bit=args.load_in_4bit,
-                load_in_8bit=args.load_in_8bit,
-                **model_kwargs
-            )
-        
+        base_model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=args.model_name,
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            dtype=dtype,
+            quantization_config=quantization_config,
+            device_map="auto",
+            attn_implementation=attn_implementation
+        )
         print("Model and tokenizer loaded successfully.")
         return base_model, tokenizer, fp16, bf16
     except Exception as e:
@@ -275,29 +245,22 @@ def create_peft_model(base_model, args):
     target_modules = get_target_modules(args, args.model_name)
     print(f"Using target modules: {target_modules}")
     
-    # Check if we're using a Gemma model
-    is_gemma_model = "gemma" in args.model_name.lower()
-    
-    # Configure gradient checkpointing based on model type
-    use_gradient_checkpointing = not is_gemma_model
-    
     model = FastLanguageModel.get_peft_model(
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=0,
         target_modules=target_modules,
-        use_gradient_checkpointing=use_gradient_checkpointing,
+        use_gradient_checkpointing=True,
         random_state=args.seed,
         use_rslora=True,
         loftq_config=None
     )
 
-    # Enable gradient checkpointing for efficient training - only for non-Gemma models
-    if use_gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-        if hasattr(model, 'enable_input_require_grads'):
-            model.enable_input_require_grads()
+    # Enable gradient checkpointing for efficient training
+    model.gradient_checkpointing_enable()
+    if hasattr(model, 'enable_input_require_grads'):
+        model.enable_input_require_grads()
 
     return model
 
@@ -313,9 +276,6 @@ def get_sft_config(args, fp16, bf16):
     Returns:
         SFTConfig: Configuration for SFT training
     """
-    # Check if we're using a Gemma model
-    is_gemma_model = "gemma" in args.model_name.lower()
-    
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation,
@@ -338,15 +298,6 @@ def get_sft_config(args, fp16, bf16):
         "packing": False,
         "num_train_epochs": args.epochs
     }
-    
-    # For Gemma models, adjust certain parameters
-    if is_gemma_model:
-        # Reduce batch size for Gemma to avoid memory issues
-        config_kwargs["per_device_train_batch_size"] = max(1, args.batch_size // 2)
-        # Increase gradient accumulation steps to compensate
-        config_kwargs["gradient_accumulation_steps"] = args.gradient_accumulation * 2
-        # Disable gradient checkpointing which can cause issues with causal masks
-        config_kwargs["gradient_checkpointing"] = False
     
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:

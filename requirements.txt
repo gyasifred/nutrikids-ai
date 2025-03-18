@@ -13,8 +13,8 @@ torch==2.6.0
 torchvision==0.21.0
 tqdm==4.67.1
 transformers==4.49.0
-unsloth==2025.3.15
-unsloth_zoo==2025.3.13
+unsloth==2025.2.15
+unsloth_zoo==2025.2.7
 xformers==0.0.29.post3
 xgboost==2.1.4
 nltk==3.9.1
