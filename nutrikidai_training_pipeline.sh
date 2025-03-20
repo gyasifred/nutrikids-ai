@@ -387,7 +387,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --batch_size 16 \
     --gradient_accumulation 4 \
     --learning_rate 2e-4 \
-    --max_steps 100 \
+    # --max_steps 100 \
     --max_seq_length 2048 \
     --epochs 50 \
     --lora_r 8 \
