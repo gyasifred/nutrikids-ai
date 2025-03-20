@@ -52,6 +52,24 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def fix_dataframe_for_ray(df):
+    """
+    Fix DataFrame to make it compatible with Ray's from_pandas function.
+    This addresses the 'DataFrame has no attribute dtype' error.
+    """
+    # Make a copy to avoid modifying the original
+    df_copy = df.copy()
+    
+    # Ensure all columns have proper types
+    for col in df_copy.columns:
+        # Check if column contains complex objects that might cause issues
+        if pd.api.types.is_object_dtype(df_copy[col]):
+            # Convert object columns to strings as a safe approach
+            df_copy[col] = df_copy[col].astype(str)
+    
+    return df_copy
+
+
 def main():
     args = parse_arguments()
     ngram_range = (args.ngram_min, args.ngram_max)
@@ -117,10 +135,33 @@ def main():
         # Execute validation data processing 
         valid_complete_df = process_validation_data()
         
+        # Fix DataFrames to make them compatible with Ray
+        complete_xdf_fixed = fix_dataframe_for_ray(complete_xdf)
+        valid_complete_df_fixed = fix_dataframe_for_ray(valid_complete_df)
+        
         # Convert training and validation dataframes to Ray Datasets
         # Using Ray's from_pandas() function already handles placing data in Ray's object store
-        train_ds = from_pandas(complete_xdf)
-        valid_ds = from_pandas(valid_complete_df)
+        print("Converting pandas DataFrames to Ray datasets...")
+        
+        try:
+            # Try with the fixed DataFrames
+            train_ds = from_pandas(complete_xdf_fixed)
+            valid_ds = from_pandas(valid_complete_df_fixed)
+        except Exception as e:
+            print(f"Error with fixed DataFrames: {e}")
+            print("Trying alternative method for Ray Dataset creation...")
+            
+            # Alternative method: convert to dictionary and create dataset from items
+            try:
+                train_records = complete_xdf_fixed.to_dict('records')
+                valid_records = valid_complete_df_fixed.to_dict('records')
+                
+                train_ds = ray.data.from_items(train_records)
+                valid_ds = ray.data.from_items(valid_records)
+                print("Successfully created Ray datasets using from_items")
+            except Exception as e2:
+                print(f"Error with alternative method: {e2}")
+                raise
         
         # Get scaling config and tree method (e.g., based on GPU availability).
         scaling_config, tree_method = get_scaling_config_and_tree_method()
@@ -219,6 +260,8 @@ def main():
         return best_params, pipeline, feature_dict
     except Exception as e:
         print(f"Error in main function: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 
