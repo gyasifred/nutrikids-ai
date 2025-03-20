@@ -80,29 +80,45 @@ def main():
     if ray.is_initialized():
         ray.shutdown()
     ray.init(ignore_reinit_error=True)
+    
+    # Put the large objects in Ray's object store
+    train_texts_ref = ray.put(train_texts)
+    train_labels_ref = ray.put(train_labels)
+    val_texts_ref = ray.put(val_texts)
+    val_labels_ref = ray.put(val_labels)
+    embeddings_ref = ray.put(pretrained_embeddings_dict)
+    
+    # Store fixed args in Ray's object store too
+    fixed_args_ref = ray.put({
+        "max_vocab_size": args.max_vocab_size,
+        "min_frequency": args.min_frequency,
+        "pad_token": args.pad_token,
+        "unk_token": args.unk_token,
+        "max_length": args.max_length,
+        "padding": args.padding,
+        "embed_dim": args.embedding_dim,
+        "freeze_embeddings": False,
+        "max_epochs": args.max_epochs
+    })
 
-    # Define trainable function for Ray
+    # Define trainable function for Ray that retrieves data from object store
     def train_func(config):
-        # Access the data directly from variables in the outer scope
-        # instead of using Ray object references
+        # Retrieve data from Ray's object store
+        train_texts = ray.get(train_texts_ref)
+        train_labels = ray.get(train_labels_ref)
+        val_texts = ray.get(val_texts_ref)
+        val_labels = ray.get(val_labels_ref)
+        pretrained_embeddings_dict = ray.get(embeddings_ref)
+        fixed_args = ray.get(fixed_args_ref)
         
         # Merge provided args with tunable config
-        full_config = {
-            "max_vocab_size": args.max_vocab_size,
-            "min_frequency": args.min_frequency,
-            "pad_token": args.pad_token,
-            "unk_token": args.unk_token,
-            "max_length": args.max_length,
-            "padding": args.padding,
-            "embed_dim": args.embedding_dim,
-            "freeze_embeddings": False
-        }
+        full_config = fixed_args.copy()
         full_config.update(config)
 
         # Train model
         model, tokenizer, label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
-            full_config, args.max_epochs, pretrained_embeddings_dict
+            full_config, fixed_args["max_epochs"], pretrained_embeddings_dict
         )
 
         # Report final metrics to Ray Tune
