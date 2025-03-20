@@ -48,7 +48,7 @@ COLSAMPLE_BYTREE=1.0
 DEVICE="cuda"
 TABPFN_MODEL_NAME="tabpfn"
 TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
-
+export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
   "unsloth/gemma-2-9b-it-bnb-4bit"
