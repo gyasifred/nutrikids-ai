@@ -58,7 +58,6 @@ def parse_arguments():
 
 
 def main():
-    def main():
     try:
         # Initialize Ray and set up logging
         ray.init(ignore_reinit_error=True)
