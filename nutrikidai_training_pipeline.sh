@@ -300,23 +300,23 @@ mkdir -p "$LLM_BASE_DIR"
 #   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
 #   $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
 
-echo "==================== Step 3: XGBoost Tuning ===================="
-# Run the XGBoost tuning script with correct parameter names
-./tune_xgb.py \
-  --train_data_file "$TRAIN_DATA" \
-  --valid_data_file "$VAL_DATA" \
-  --text_column "$TEXT_COLUMN" \
-  --label_column "$LABEL_COLUMN" \
-  --id_column "$ID_COLUMN" \
-  --max_features "$MAX_FEATURES" \
-  --vectorization_mode "$VECTORIZATION_MODE" \
-  --ngram_min "$NGRAM_MIN" \
-  --ngram_max "$NGRAM_MAX" \
-  --model_name "$MODEL_NAME" \
-  --num_samples "$NUM_SAMPLES" \
-  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-  --model_dir "$XGB_OUTPUT_DIR"
+# echo "==================== Step 3: XGBoost Tuning ===================="
+# # Run the XGBoost tuning script with correct parameter names
+# ./tune_xgb.py \
+#   --train_data_file "$TRAIN_DATA" \
+#   --valid_data_file "$VAL_DATA" \
+#   --text_column "$TEXT_COLUMN" \
+#   --label_column "$LABEL_COLUMN" \
+#   --id_column "$ID_COLUMN" \
+#   --max_features "$MAX_FEATURES" \
+#   --vectorization_mode "$VECTORIZATION_MODE" \
+#   --ngram_min "$NGRAM_MIN" \
+#   --ngram_max "$NGRAM_MAX" \
+#   --model_name "$MODEL_NAME" \
+#   --num_samples "$NUM_SAMPLES" \
+#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+#   --model_dir "$XGB_OUTPUT_DIR"
 
 echo "==================== Step 4: XGBoost Training ===================="
 # Run the XGBoost training script with tuned parameters
