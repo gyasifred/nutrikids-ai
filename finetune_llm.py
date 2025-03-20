@@ -183,15 +183,25 @@ def load_model_and_tokenizer(args, quantization_config):
         # Set attention implementation based on flash attention flag
         attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
         
-        base_model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=args.model_name,
-            load_in_4bit=load_in_4bit,
-            load_in_8bit=load_in_8bit,
-            dtype=dtype,
-            quantization_config=quantization_config,
-            device_map="auto",
-            attn_implementation=attn_implementation
-        )
+        # Create kwargs for model loading
+        model_kwargs = {
+            "model_name": args.model_name,
+            "dtype": dtype,
+            "device_map": "auto",
+            "attn_implementation": attn_implementation,
+        }
+        
+        # If quantization_config is provided, use it
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        else:
+            # Otherwise use the direct parameters
+            model_kwargs["load_in_4bit"] = load_in_4bit
+            model_kwargs["load_in_8bit"] = load_in_8bit
+        
+        # Load the model with the appropriate parameters
+        base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
+        
         print("Model and tokenizer loaded successfully.")
         return base_model, tokenizer, fp16, bf16
     except Exception as e:
@@ -424,7 +434,7 @@ def main():
     # Initialize SFT trainer
     trainer_kwargs = {
         "model": model,
-        "processing_class": tokenizer,
+        "tokenizer": tokenizer,  # Fixed this line to use tokenizer instead of processing_class
         "train_dataset": train_dataset,
         "args": sft_config,
     }
