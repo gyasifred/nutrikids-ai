@@ -52,19 +52,21 @@ def parse_arguments():
     parser.add_argument('--subsample', type=float, default=0.8,
                         help='Subsample ratio of the training instances')
     parser.add_argument('--colsample_bytree', type=float, default=0.8,
-                        help='Subsample ratio of columns when constructing\
-                              each tree')
+                        help='Subsample ratio of columns when constructing each tree')
     
     return parser.parse_args()
 
 
 def main():
     try:
+        # Initialize Ray and set up logging
         ray.init(ignore_reinit_error=True)
         args = parse_arguments()
         ngram_range = (args.ngram_min, args.ngram_max)
+        
         # Ensure model directory exists
         os.makedirs(args.model_dir, exist_ok=True)
+        
         # Set up logging
         logging.basicConfig(
             level=logging.INFO,
@@ -77,7 +79,8 @@ def main():
             ]
         )
         logger = logging.getLogger(__name__)
-        logger.info(f"Starting XGBoost training with arguments: {args}")   
+        logger.info(f"Starting XGBoost training with arguments: {args}")
+        
         # Process CSV data
         X_df, complete_xdf, y, pipeline, feature_dict, label_encoder = process_csv(
             file_path=args.data_file,
@@ -92,10 +95,13 @@ def main():
             ngram_range=ngram_range,
             save_path=args.model_dir
         )
+        
         # Define feature columns from the processed features
         feature_columns = list(X_df.columns)
+        
         # Get the tree method and scaling configuration for Ray
         scaling_config, tree_method = get_scaling_config_and_tree_method()
+        
         # Try to load best parameters if config_dir is provided
         if args.config_dir and os.path.exists(args.config_dir):
             try:
@@ -104,21 +110,17 @@ def main():
                     f"{args.model_name}_nutrikidai_config.joblib")
                 if os.path.exists(best_params_path):
                     best_params = joblib.load(best_params_path)
-                    logger.info(f"Loaded hyperparameters from\
-                                 {best_params_path}")
+                    logger.info(f"Loaded hyperparameters from {best_params_path}")
                 else:
-                    raise FileNotFoundError(f"Config file not found \
-                                             {best_params_path}")
+                    raise FileNotFoundError(f"Config file not found {best_params_path}")
             except Exception as e:
-                logger.warning(f"Failed to load hyperparameters: {str(e)}.\
-                                Using command line parameters.")
+                logger.warning(f"Failed to load hyperparameters: {str(e)}. Using command line parameters.")
                 best_params = None
         else:
-            logger.info("No config directory provided or it doesn't exist.\
-                        Using command line parameters.")
+            logger.info("No config directory provided or it doesn't exist. Using command line parameters.")
             best_params = None
-        # If best_params is not loaded,
-        # use command line arguments and save defaults
+        
+        # If best_params is not loaded, use command line arguments and save defaults
         if best_params is None:
             best_params = {
                 "objective": "binary:logistic",
@@ -134,24 +136,26 @@ def main():
                 args.model_dir,
                 f"{args.model_name}_nutrikidai_config.joblib")
             joblib.dump(best_params, default_params_path)
-            logger.info(f"Saved default hyperparameters \
-                         {default_params_path}")
+            logger.info(f"Saved default hyperparameters {default_params_path}")
+        
         logger.info(f"Training with parameters: {best_params}")
+        
         # Training
         combined_df = complete_xdf[feature_columns + [args.label_column]]
         X_train = combined_df[feature_columns]
         y_train = combined_df[args.label_column]
+        
         model = xgb.XGBClassifier(**best_params)
         model.fit(X_train, y_train)
+        
         # Save model
-        model_path = os.path.join(args.model_dir,
-                                  f"{args.model_name}_nutrikidai_model.json")
+        model_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_model.json")
         model.save_model(model_path)
         logger.info(f"Model saved to {model_path}")
+    
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}", exc_info=True)
 
 
 if __name__ == "__main__":
-    ray.init(ignore_reinit_error=True)
     main()
