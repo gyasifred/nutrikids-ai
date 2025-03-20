@@ -75,34 +75,41 @@ def main():
             save_path=args.model_dir
         )
         print("Training CSV processed. Feature DataFrame shape:", X_df.shape)
+        
+        # Use ray.put() to store large objects in Ray's object store
+        pipeline_ref = ray.put(pipeline)
+        feature_dict_ref = ray.put(feature_dict)
+
         # Convert the complete training DataFrame into a Ray Dataset.
         train_ds = from_pandas(complete_xdf)
+        
         # Process the validation CSV.
         valid_df = pd.read_csv(args.valid_data_file) 
-        # Transform the text column using the same pipeline.
-        valid_features_sparse = pipeline.transform(valid_df[args.text_column])
-        feature_names = pipeline.named_steps['vectorizer'].\
-            get_feature_names_out()
+        
+        # Transform the text column using the same pipeline stored in Ray.
+        valid_features_sparse = pipeline_ref.transform(valid_df[args.text_column])
+        feature_names = pipeline_ref.named_steps['vectorizer'].get_feature_names_out()
         valid_features_df = pd.DataFrame(valid_features_sparse.toarray(),
                                          columns=feature_names,
                                          index=valid_df.index)
+        
         # Transform the validation labels using the fitted LabelEncoder.
         if label_encoder is not None:
-            # It is a good idea to ensure consistent formatting.
             valid_labels = valid_df[args.label_column].astype(str).str.strip()
             valid_labels_encoded = pd.Series(
                 label_encoder.transform(valid_labels), index=valid_df.index)
         else:
             valid_labels_encoded = valid_df[args.label_column]
-        # Concatenate the encoded 
-        #  column back to the transformed features.
-        valid_complete_df = pd.concat([
-            valid_features_df, valid_labels_encoded.rename(args.label_column)],
-              axis=1)
+        
+        # Concatenate the encoded column back to the transformed features.
+        valid_complete_df = pd.concat([valid_features_df, valid_labels_encoded.rename(args.label_column)], axis=1)
+        
         # Create a Ray Dataset from the complete validation DataFrame.
         valid_ds = from_pandas(valid_complete_df)
+        
         # Get scaling config and tree method (e.g., based on GPU availability).
         scaling_config, tree_method = get_scaling_config_and_tree_method()
+        
         # Define hyperparameter search space.
         param_space = {
             "scaling_config": scaling_config,
@@ -128,57 +135,51 @@ def main():
             params={}, 
             datasets={"train": train_ds, "validation": valid_ds},
         )  
+        
         tuner = Tuner(
             trainable=trainer,
             param_space=param_space,
             tune_config=tune.TuneConfig(num_samples=args.num_samples),
             run_config=RunConfig(name="xgboost_gpu_tune_nutrikidai")
         )
+        
         results = tuner.fit()
+        
         # Save hyperparameter tuning results summary.
         results_df = results.get_dataframe()
-        results_path = os.path.join(
-            args.model_dir, f"{args.model_name}_nutrikidai_tuning_results.csv")
+        results_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_tuning_results.csv")
         results_df.to_csv(results_path)
         print(f"Tuning results saved to {results_path}")
+        
         # Extract best hyperparameters.
         if not results_df.empty:
             try:
-                best_result = results.get_best_result(
-                    metric="validation-logloss", mode="min")
+                best_result = results.get_best_result(metric="validation-logloss", mode="min")
                 print("Best trial config:", best_result.config)
-                print("Best trial final evaluation logloss:",
-                      best_result.metrics["validation-logloss"])
+                print("Best trial final evaluation logloss:", best_result.metrics["validation-logloss"])
             except KeyError:
                 available_metrics = list(results_df.columns)
-                metric_cols = [
-                    col for col in available_metrics if "validation-" in col
-                    ]
+                metric_cols = [col for col in available_metrics if "validation-" in col]
                 if metric_cols:
                     best_metric = metric_cols[0]
-                    best_result = results.get_best_result(
-                        metric=best_metric, mode="min")
-                    print(f"Best trial config based on {best_metric}:",
-                          best_result.config)
-                    print(f"Best trial final evaluation {best_metric}:",
-                          best_result.metrics[best_metric])
+                    best_result = results.get_best_result(metric=best_metric, mode="min")
+                    print(f"Best trial config based on {best_metric}:", best_result.config)
+                    print(f"Best trial final evaluation {best_metric}:", best_result.metrics[best_metric])
                 else:
-                    print("No validation metrics found in results.\
-                          Using the first result as best.")
+                    print("No validation metrics found in results. Using the first result as best.")
                     best_result = results.get_best_result()
         else:
             print("No valid results from tuning. Using default parameters.")
             best_result = None
+        
         if best_result:
             best_params = best_result.config["params"]
             # Save best hyperparameters.
-            hyperparams_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_config.joblib")
+            hyperparams_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_config.joblib")
             joblib.dump(best_result.config, hyperparams_path)
             print(f"Best hyperparameters saved to {hyperparams_path}")
             # Save best model metrics.
-            metrics_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_metrics.joblib")
+            metrics_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_metrics.joblib")
             joblib.dump(best_result.metrics, metrics_path)
             print(f"Best model metrics saved to {metrics_path}")
         else:
@@ -192,10 +193,10 @@ def main():
                 "subsample": 0.8,
                 "colsample_bytree": 0.8
             }
-            default_params_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
+            default_params_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
             joblib.dump(best_params, default_params_path)
             print(f"Using default parameters. Saved to {default_params_path}")
+        
         return best_params, pipeline, feature_dict
     except Exception as e:
         print(f"Error in main function: {e}")
