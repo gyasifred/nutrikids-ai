@@ -80,31 +80,46 @@ def main():
         )
         print("Training CSV processed. Feature DataFrame shape:", X_df.shape)
         
-        # Convert the complete training DataFrame into a Ray Dataset.
+        # Store pipeline and label_encoder in Ray's object store
+        pipeline_ref = ray.put(pipeline)
+        label_encoder_ref = ray.put(label_encoder)
+        
+        # Process the validation CSV within a function to avoid large object capture
+        def process_validation_data():
+            # Get validation data
+            valid_df = pd.read_csv(args.valid_data_file)
+            
+            # Retrieve pipeline and label_encoder from Ray's object store
+            pipeline = ray.get(pipeline_ref)
+            label_encoder = ray.get(label_encoder_ref)
+            
+            # Transform the text column using the pipeline
+            valid_features_sparse = pipeline.transform(valid_df[args.text_column])
+            feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
+            
+            valid_features_df = pd.DataFrame(valid_features_sparse.toarray(),
+                                             columns=feature_names,
+                                             index=valid_df.index)
+            
+            # Transform the validation labels using the fitted LabelEncoder.
+            if label_encoder is not None:
+                valid_labels = valid_df[args.label_column].astype(str).str.strip()
+                valid_labels_encoded = pd.Series(
+                    label_encoder.transform(valid_labels), index=valid_df.index)
+            else:
+                valid_labels_encoded = valid_df[args.label_column]
+            
+            # Concatenate the encoded column back to the transformed features.
+            valid_complete_df = pd.concat([valid_features_df, valid_labels_encoded.rename(args.label_column)], axis=1)
+            
+            return valid_complete_df
+        
+        # Execute validation data processing 
+        valid_complete_df = process_validation_data()
+        
+        # Convert training and validation dataframes to Ray Datasets
+        # Using Ray's from_pandas() function already handles placing data in Ray's object store
         train_ds = from_pandas(complete_xdf)
-        
-        # Process the validation CSV.
-        valid_df = pd.read_csv(args.valid_data_file) 
-        
-        # Transform the text column using the pipeline directly (not through ray.put)
-        valid_features_sparse = pipeline.transform(valid_df[args.text_column])
-        feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
-        valid_features_df = pd.DataFrame(valid_features_sparse.toarray(),
-                                         columns=feature_names,
-                                         index=valid_df.index)
-        
-        # Transform the validation labels using the fitted LabelEncoder.
-        if label_encoder is not None:
-            valid_labels = valid_df[args.label_column].astype(str).str.strip()
-            valid_labels_encoded = pd.Series(
-                label_encoder.transform(valid_labels), index=valid_df.index)
-        else:
-            valid_labels_encoded = valid_df[args.label_column]
-        
-        # Concatenate the encoded column back to the transformed features.
-        valid_complete_df = pd.concat([valid_features_df, valid_labels_encoded.rename(args.label_column)], axis=1)
-        
-        # Create a Ray Dataset from the complete validation DataFrame.
         valid_ds = from_pandas(valid_complete_df)
         
         # Get scaling config and tree method (e.g., based on GPU availability).
@@ -130,6 +145,7 @@ def main():
         }
         
         # Initialize XGBoostTrainer for hyperparameter tuning.
+        # By design, Ray already stores the datasets in Ray's object store
         trainer = XGBoostTrainer(
             label_column=args.label_column,
             params={}, 
@@ -196,6 +212,9 @@ def main():
             default_params_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
             joblib.dump(best_params, default_params_path)
             print(f"Using default parameters. Saved to {default_params_path}")
+        
+        # Get pipeline and feature dict from Ray's object store
+        pipeline = ray.get(pipeline_ref)
         
         return best_params, pipeline, feature_dict
     except Exception as e:
