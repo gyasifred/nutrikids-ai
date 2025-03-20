@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # Default values for training and validation data
-TRAIN_DATA="/content/train_data.csv"
-VAL_DATA="/content/val_data.csv"
+TRAIN_DATA="/data/train_data.csv"
+FULL_TRAIN_DATA="data/train.csv"
+VAL_DATA="/data/val_data.csv"
 
 # Default values for tuning
-TEXT_COLUMN="Note_Column"
-LABEL_COLUMN="Malnutrition_Label"
-ID_COLUMN="Patient_ID"
+TEXT_COLUMN="txt"
+LABEL_COLUMN="label"
+ID_COLUMN="DEID"
 MAX_VOCAB_SIZE=20000
 MIN_FREQUENCY=2
 PAD_TOKEN="<PAD>"
@@ -17,7 +18,7 @@ PADDING="post"
 EMBEDDING_DIM=100
 PRETRAINED_EMBEDDINGS="None"
 NUM_SAMPLES=20
-MAX_EPOCHS=30
+MAX_EPOCHS=50
 GRACE_PERIOD=5
 
 # Set common output directory
@@ -205,7 +206,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Check required parameters
-if [[ -z "$TRAIN_DATA" || -z "$VAL_DATA" ]]; then
+if [[ -z "$TRAIN_DATA" || -z "$VAL_DATA"||]]; then
   echo "Error: --train_data and --val_data are required."
   echo "Usage example: $0 --train_data path/to/train.csv --val_data path/to/val.csv"
   exit 1
@@ -266,7 +267,7 @@ mkdir -p "$LLM_BASE_DIR"
 #   fi
 # done
 
-# echo "==================== Step 1: TextCNN Tuning ===================="
+# # echo "==================== Step 1: TextCNN Tuning ===================="
 # # Run the CNN tuning script
 # ./tune_textcnn.py \
 #   --train_data "$TRAIN_DATA" \
@@ -320,7 +321,7 @@ mkdir -p "$LLM_BASE_DIR"
 # echo "==================== Step 4: XGBoost Training ===================="
 # # Run the XGBoost training script with tuned parameters
 # ./train_xgb.py \
-#   --data_file "$TRAIN_DATA" \
+#   --data_file "$FULL_TRAIN_DATA" \
 #   --text_column "$TEXT_COLUMN" \
 #   --label_column "$LABEL_COLUMN" \
 #   --id_column "$ID_COLUMN" \
@@ -342,7 +343,7 @@ mkdir -p "$LLM_BASE_DIR"
 # echo "==================== Step 5: TabPFN Training ===================="
 # # Run the TabPFN training script
 # ./train_tabpfn.py \
-#   --data_file "$TRAIN_DATA" \
+#   --data_file "$FULL_TRAIN_DATA" \
 #   --text_column "$TEXT_COLUMN" \
 #   --label_column "$LABEL_COLUMN" \
 #   --id_column "$ID_COLUMN" \
@@ -383,7 +384,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --label_column "$LABEL_COLUMN" \
     --output_dir "$MODEL_OUTPUT_DIR" \
     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-    --batch_size 2 \
+    --batch_size 16 \
     --gradient_accumulation 4 \
     --learning_rate 2e-4 \
     --max_steps 10 \
