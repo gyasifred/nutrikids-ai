@@ -60,6 +60,10 @@ def main():
     os.makedirs(args.model_dir, exist_ok=True)
     
     try:
+        # Initialize Ray
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True)
+        
         # Process the training CSV.
         X_df, complete_xdf, y, pipeline, feature_dict, label_encoder = process_csv(
             file_path=args.train_data_file,
@@ -76,19 +80,15 @@ def main():
         )
         print("Training CSV processed. Feature DataFrame shape:", X_df.shape)
         
-        # Use ray.put() to store large objects in Ray's object store
-        pipeline_ref = ray.put(pipeline)
-        feature_dict_ref = ray.put(feature_dict)
-
         # Convert the complete training DataFrame into a Ray Dataset.
         train_ds = from_pandas(complete_xdf)
         
         # Process the validation CSV.
         valid_df = pd.read_csv(args.valid_data_file) 
         
-        # Transform the text column using the same pipeline stored in Ray.
-        valid_features_sparse = pipeline_ref.transform(valid_df[args.text_column])
-        feature_names = pipeline_ref.named_steps['vectorizer'].get_feature_names_out()
+        # Transform the text column using the pipeline directly (not through ray.put)
+        valid_features_sparse = pipeline.transform(valid_df[args.text_column])
+        feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
         valid_features_df = pd.DataFrame(valid_features_sparse.toarray(),
                                          columns=feature_names,
                                          index=valid_df.index)
@@ -204,5 +204,4 @@ def main():
 
 
 if __name__ == "__main__":
-    ray.init(ignore_reinit_error=True)
     best_params, pipeline, feature_dict = main()
