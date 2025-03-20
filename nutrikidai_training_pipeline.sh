@@ -206,7 +206,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Check required parameters
-if [[ -z "$TRAIN_DATA" || -z "$VAL_DATA"||]]; then
+if [[ -z "$TRAIN_DATA" || -z "$VAL_DATA"]]; then
   echo "Error: --train_data and --val_data are required."
   echo "Usage example: $0 --train_data path/to/train.csv --val_data path/to/val.csv"
   exit 1
