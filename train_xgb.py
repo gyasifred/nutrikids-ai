@@ -58,6 +58,7 @@ def parse_arguments():
 
 
 def main():
+    def main():
     try:
         # Initialize Ray and set up logging
         ray.init(ignore_reinit_error=True)
@@ -140,10 +141,16 @@ def main():
         
         logger.info(f"Training with parameters: {best_params}")
         
-        # Training
-        combined_df = complete_xdf[feature_columns + [args.label_column]]
-        X_train = combined_df[feature_columns]
-        y_train = combined_df[args.label_column]
+        # FIXED SECTION: Use only the required columns and ensure label is proper binary format
+        # Get only the ID column, text column, and label column from the original data
+        X_train = X_df  # This already has the processed features from text_column
+        # Ensure y_train is properly converted to integer binary format (0 or 1)
+        y_train = y.astype(int)
+        
+        # Debug information
+        logger.info(f"X_train shape: {X_train.shape}")
+        logger.info(f"y_train shape: {y_train.shape}")
+        logger.info(f"Unique label values: {sorted(y_train.unique())}")
         
         model = xgb.XGBClassifier(**best_params)
         model.fit(X_train, y_train)
@@ -155,7 +162,6 @@ def main():
     
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}", exc_info=True)
-
 
 if __name__ == "__main__":
     main()
