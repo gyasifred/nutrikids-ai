@@ -76,22 +76,16 @@ def main():
             args.pretrained_embeddings)
         print(f"Loaded {len(pretrained_embeddings_dict)} pretrained word vectors")
 
-    # Store large objects in Ray Object Store
-    train_texts_ref = ray.put(train_texts)
-    train_labels_ref = ray.put(train_labels)
-    val_texts_ref = ray.put(val_texts)
-    val_labels_ref = ray.put(val_labels)
-    embeddings_ref = ray.put(pretrained_embeddings_dict) if pretrained_embeddings_dict else None
+    # Initialize Ray
+    if ray.is_initialized():
+        ray.shutdown()
+    ray.init(ignore_reinit_error=True)
 
     # Define trainable function for Ray
     def train_func(config):
-        # Retrieve stored objects inside function
-        train_texts = ray.get(train_texts_ref)
-        train_labels = ray.get(train_labels_ref)
-        val_texts = ray.get(val_texts_ref)
-        val_labels = ray.get(val_labels_ref)
-        pretrained_embeddings = ray.get(embeddings_ref) if embeddings_ref else None
-
+        # Access the data directly from variables in the outer scope
+        # instead of using Ray object references
+        
         # Merge provided args with tunable config
         full_config = {
             "max_vocab_size": args.max_vocab_size,
@@ -108,7 +102,7 @@ def main():
         # Train model
         model, tokenizer, label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
-            full_config, args.max_epochs, pretrained_embeddings
+            full_config, args.max_epochs, pretrained_embeddings_dict
         )
 
         # Report final metrics to Ray Tune
@@ -129,11 +123,6 @@ def main():
         "max_vocab_size": tune.choice([5000, 10000, 15000, 20000, 30000]),
         "kernel_sizes": tune.choice([[3, 4, 5], [2, 3, 4], [4, 5, 6], [2, 3, 4]])
     }
-
-    # Initialize Ray
-    if ray.is_initialized():
-        ray.shutdown()
-    ray.init(ignore_reinit_error=True)
 
     # Set resources based on GPU availability
     gpu_per_trial = 1 if torch.cuda.is_available() else 0
