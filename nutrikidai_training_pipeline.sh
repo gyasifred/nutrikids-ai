@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Default values for training and validation data
-TRAIN_DATA="/data/train_data.csv"
+TRAIN_DATA="data/train_data.csv"
 FULL_TRAIN_DATA="data/train.csv"
-VAL_DATA="/data/val_data.csv"
+VAL_DATA="data/val_data.csv"
 
 # Default values for tuning
 TEXT_COLUMN="txt"
