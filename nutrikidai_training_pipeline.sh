@@ -51,10 +51,10 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
+  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
   "unsloth/gemma-2-9b-it-bnb-4bit"
   "meta-llama/meta-Llama-3.1-8B-Instruct"
   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
-  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
 )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS"
 
@@ -318,44 +318,44 @@ mkdir -p "$LLM_BASE_DIR"
 #   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
 #   --model_dir "$XGB_OUTPUT_DIR"
 
-echo "==================== Step 4: XGBoost Training ===================="
-# Run the XGBoost training script with tuned parameters
-./train_xgb.py \
-  --data_file "$FULL_TRAIN_DATA" \
-  --text_column "$TEXT_COLUMN" \
-  --label_column "$LABEL_COLUMN" \
-  --id_column "$ID_COLUMN" \
-  --max_features "$MAX_FEATURES" \
-  --vectorization_mode "$VECTORIZATION_MODE" \
-  --ngram_min "$NGRAM_MIN" \
-  --ngram_max "$NGRAM_MAX" \
-  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-  --eta "$ETA" \
-  --max_depth "$MAX_DEPTH" \
-  --min_child_weight "$MIN_CHILD_WEIGHT" \
-  --subsample "$SUBSAMPLE" \
-  --colsample_bytree "$COLSAMPLE_BYTREE" \
-  --model_name "$MODEL_NAME" \
-  --config_dir "$XGB_OUTPUT_DIR" \
-  --model_dir "$XGB_OUTPUT_DIR"
+# echo "==================== Step 4: XGBoost Training ===================="
+# # Run the XGBoost training script with tuned parameters
+# ./train_xgb.py \
+#   --data_file "$FULL_TRAIN_DATA" \
+#   --text_column "$TEXT_COLUMN" \
+#   --label_column "$LABEL_COLUMN" \
+#   --id_column "$ID_COLUMN" \
+#   --max_features "$MAX_FEATURES" \
+#   --vectorization_mode "$VECTORIZATION_MODE" \
+#   --ngram_min "$NGRAM_MIN" \
+#   --ngram_max "$NGRAM_MAX" \
+#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+#   --eta "$ETA" \
+#   --max_depth "$MAX_DEPTH" \
+#   --min_child_weight "$MIN_CHILD_WEIGHT" \
+#   --subsample "$SUBSAMPLE" \
+#   --colsample_bytree "$COLSAMPLE_BYTREE" \
+#   --model_name "$MODEL_NAME" \
+#   --config_dir "$XGB_OUTPUT_DIR" \
+#   --model_dir "$XGB_OUTPUT_DIR"
 
-echo "==================== Step 5: TabPFN Training ===================="
-# Run the TabPFN training script
-./train_tabpfn.py \
-  --data_file "$FULL_TRAIN_DATA" \
-  --text_column "$TEXT_COLUMN" \
-  --label_column "$LABEL_COLUMN" \
-  --id_column "$ID_COLUMN" \
-  --device "$DEVICE" \
-  --model_name "$TABPFN_MODEL_NAME" \
-  --max_features "$MAX_FEATURES" \
-  --vectorization_mode "$VECTORIZATION_MODE" \
-  --ngram_min "$NGRAM_MIN" \
-  --ngram_max "$NGRAM_MAX" \
-  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-  --model_dir "$TABPFN_OUTPUT_DIR" 
+# echo "==================== Step 5: TabPFN Training ===================="
+# # Run the TabPFN training script
+# ./train_tabpfn.py \
+#   --data_file "$FULL_TRAIN_DATA" \
+#   --text_column "$TEXT_COLUMN" \
+#   --label_column "$LABEL_COLUMN" \
+#   --id_column "$ID_COLUMN" \
+#   --device "$DEVICE" \
+#   --model_name "$TABPFN_MODEL_NAME" \
+#   --max_features "$MAX_FEATURES" \
+#   --vectorization_mode "$VECTORIZATION_MODE" \
+#   --ngram_min "$NGRAM_MIN" \
+#   --ngram_max "$NGRAM_MAX" \
+#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+#   --model_dir "$TABPFN_OUTPUT_DIR" 
 
 echo "==================== Step 6: LLM Fine-tuning ===================="
 # Fine-tune LLMs with different directories for each model
