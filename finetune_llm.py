@@ -57,8 +57,8 @@ def parse_arguments():
                         help="Number of gradient accumulation steps")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    # parser.add_argument("--max_steps", type=int, default=60,
-    #                     help="Maximum number of training steps")
+    parser.add_argument("--max_steps", type=int, default=60,
+                        help="Maximum number of training steps")
     parser.add_argument("--max_seq_length", type=int, default=1024,
                         help="Maximum sequence length for tokenization")
     parser.add_argument("--epochs", type=int, default=30,
@@ -290,7 +290,7 @@ def get_sft_config(args, fp16, bf16):
         "per_device_train_batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation,
         "warmup_steps": 5,
-        # "max_steps": args.max_steps,
+        "max_steps": args.max_steps,
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
