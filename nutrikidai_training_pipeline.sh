@@ -53,8 +53,8 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 LLM_MODELS=(
   "unsloth/gemma-2-9b-it-bnb-4bit"
   "meta-llama/meta-Llama-3.1-8B-Instruct"
-  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
 )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS"
 
@@ -267,95 +267,95 @@ mkdir -p "$LLM_BASE_DIR"
 #   fi
 # done
 
-# # echo "==================== Step 1: TextCNN Tuning ===================="
-# # Run the CNN tuning script
-# ./tune_textcnn.py \
-#   --train_data "$TRAIN_DATA" \
-#   --val_data "$VAL_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --max_vocab_size "$MAX_VOCAB_SIZE" \
-#   --min_frequency "$MIN_FREQUENCY" \
-#   --pad_token "$PAD_TOKEN" \
-#   --unk_token "$UNK_TOKEN" \
-#   --max_length "$MAX_LENGTH" \
-#   --padding "$PADDING" \
-#   --embedding_dim "$EMBEDDING_DIM" \
-#   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
-#   --output_dir "$CNN_OUTPUT_DIR" \
-#   --num_samples "$NUM_SAMPLES" \
-#   --max_epochs "$MAX_EPOCHS" \
-#   --grace_period "$GRACE_PERIOD"
+# echo "==================== Step 1: TextCNN Tuning ===================="
+# Run the CNN tuning script
+./tune_textcnn.py \
+  --train_data "$TRAIN_DATA" \
+  --val_data "$VAL_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --max_vocab_size "$MAX_VOCAB_SIZE" \
+  --min_frequency "$MIN_FREQUENCY" \
+  --pad_token "$PAD_TOKEN" \
+  --unk_token "$UNK_TOKEN" \
+  --max_length "$MAX_LENGTH" \
+  --padding "$PADDING" \
+  --embedding_dim "$EMBEDDING_DIM" \
+  --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
+  --output_dir "$CNN_OUTPUT_DIR" \
+  --num_samples "$NUM_SAMPLES" \
+  --max_epochs "$MAX_EPOCHS" \
+  --grace_period "$GRACE_PERIOD"
 
-# echo "==================== Step 2: TextCNN Training ===================="
-# # Run the CNN training script with the tuned config
-# ./train_textcnn.py \
-#   --train_data "$TRAIN_DATA" \
-#   --val_data "$VAL_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --config_dir "$CNN_OUTPUT_DIR" \
-#   --output_dir "$CNN_OUTPUT_DIR" \
-#   --epochs "$EPOCHS" \
-#   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
-#   $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
+echo "==================== Step 2: TextCNN Training ===================="
+# Run the CNN training script with the tuned config
+./train_textcnn.py \
+  --train_data "$TRAIN_DATA" \
+  --val_data "$VAL_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --config_dir "$CNN_OUTPUT_DIR" \
+  --output_dir "$CNN_OUTPUT_DIR" \
+  --epochs "$EPOCHS" \
+  --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
+  $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
 
-# echo "==================== Step 3: XGBoost Tuning ===================="
-# # Run the XGBoost tuning script with correct parameter names
-# ./tune_xgb.py \
-#   --train_data_file "$TRAIN_DATA" \
-#   --valid_data_file "$VAL_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   --model_name "$MODEL_NAME" \
-#   --num_samples "$NUM_SAMPLES" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --model_dir "$XGB_OUTPUT_DIR"
+echo "==================== Step 3: XGBoost Tuning ===================="
+# Run the XGBoost tuning script with correct parameter names
+./tune_xgb.py \
+  --train_data_file "$TRAIN_DATA" \
+  --valid_data_file "$VAL_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  --model_name "$MODEL_NAME" \
+  --num_samples "$NUM_SAMPLES" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --model_dir "$XGB_OUTPUT_DIR"
 
-# echo "==================== Step 4: XGBoost Training ===================="
-# # Run the XGBoost training script with tuned parameters
-# ./train_xgb.py \
-#   --data_file "$FULL_TRAIN_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --eta "$ETA" \
-#   --max_depth "$MAX_DEPTH" \
-#   --min_child_weight "$MIN_CHILD_WEIGHT" \
-#   --subsample "$SUBSAMPLE" \
-#   --colsample_bytree "$COLSAMPLE_BYTREE" \
-#   --model_name "$MODEL_NAME" \
-#   --config_dir "$XGB_OUTPUT_DIR" \
-#   --model_dir "$XGB_OUTPUT_DIR"
+echo "==================== Step 4: XGBoost Training ===================="
+# Run the XGBoost training script with tuned parameters
+./train_xgb.py \
+  --data_file "$FULL_TRAIN_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --eta "$ETA" \
+  --max_depth "$MAX_DEPTH" \
+  --min_child_weight "$MIN_CHILD_WEIGHT" \
+  --subsample "$SUBSAMPLE" \
+  --colsample_bytree "$COLSAMPLE_BYTREE" \
+  --model_name "$MODEL_NAME" \
+  --config_dir "$XGB_OUTPUT_DIR" \
+  --model_dir "$XGB_OUTPUT_DIR"
 
-# echo "==================== Step 5: TabPFN Training ===================="
-# # Run the TabPFN training script
-# ./train_tabpfn.py \
-#   --data_file "$FULL_TRAIN_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --device "$DEVICE" \
-#   --model_name "$TABPFN_MODEL_NAME" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --model_dir "$TABPFN_OUTPUT_DIR" 
+echo "==================== Step 5: TabPFN Training ===================="
+# Run the TabPFN training script
+./train_tabpfn.py \
+  --data_file "$FULL_TRAIN_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --device "$DEVICE" \
+  --model_name "$TABPFN_MODEL_NAME" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --model_dir "$TABPFN_OUTPUT_DIR" 
 
 echo "==================== Step 6: LLM Fine-tuning ===================="
 # Fine-tune LLMs with different directories for each model
@@ -387,9 +387,9 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --batch_size 16 \
     --gradient_accumulation 4 \
     --learning_rate 2e-4 \
-    --max_steps 10 \
+    --max_steps 100 \
     --max_seq_length 2048 \
-    --epochs 1 \
+    --epochs 50 \
     --lora_r 8 \
     --lora_alpha 32 \
     --seed 42 \
