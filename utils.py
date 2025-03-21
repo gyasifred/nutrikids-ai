@@ -190,7 +190,7 @@ def process_csv(
         print(f"Unique label values found: {unique_values}")
         
         # Check if values are already binary (0/1) or need encoding
-        if set(unique_values) == {0, 1} or set(unique_values) == {'0', '1'}:
+        if set(unique_values) <= {0, 1, '0', '1'}:
             # Already binary, just convert to int
             print("Labels are already binary (0/1), no encoding needed")
             y = y_original.astype(int)
@@ -199,14 +199,19 @@ def process_csv(
             # Need to encode non-binary labels (like yes/no)
             print(f"Encoding non-binary labels: {unique_values}")
             label_encoder = LabelEncoder()
-            y = label_encoder.fit_transform(y_original)
             
-            # Ensure it's a binary encoding if we're expecting binary classification
-            unique_encoded = np.unique(y)
-            if len(unique_encoded) == 2:
-                print(f"Encoded to binary labels: {unique_encoded}")
+            # Make sure all values are strings for consistent encoding
+            y_str = y_original.astype(str).str.lower().str.strip()
+            
+            label_encoder.fit(y_str)
+            y = label_encoder.transform(y_str)
+            
+            # Check that we have exactly 2 classes for binary classification
+            if len(label_encoder.classes_) != 2:
+                print(f"Warning: Found {len(label_encoder.classes_)} classes, expected 2 for binary classification")
+                print(f"Classes: {label_encoder.classes_}")
             else:
-                print(f"Warning: Encoded to {len(unique_encoded)} classes: {unique_encoded}")
+                print(f"Successfully encoded to binary: {label_encoder.classes_} -> {np.unique(y)}")
                 
             # Save the label encoder
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
