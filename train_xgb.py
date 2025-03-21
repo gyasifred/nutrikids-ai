@@ -76,6 +76,7 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     
     # Transform labels
     if label_encoder is not None:
+        # Using a label encoder (for non-binary labels like yes/no)
         # Ensure consistent formatting
         labels = chunk_df[label_column].astype(str).str.strip()
         labels_encoded = pd.Series(
@@ -83,14 +84,15 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
             index=chunk_df.index
         )
     else:
-        labels_encoded = chunk_df[label_column]
+        # No label encoder needed (labels are already 0/1)
+        # Just ensure they're integers
+        labels_encoded = chunk_df[label_column].astype(int)
     
     # Return the processed chunk
     return pd.concat([
         features_df, 
         labels_encoded.rename(label_column)
     ], axis=1)
-
 
 def process_large_dataset(df,
                           pipeline,
