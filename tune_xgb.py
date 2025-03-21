@@ -76,13 +76,13 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
             index=chunk_df.index
         )
     else:
-        labels_encoded = chunk_df[label_column]
+        # For binary labels that don't need encoding
+        labels_encoded = chunk_df[label_column].astype(int)
     
-    # Return the processed chunk - FIXED: Create a proper DataFrame structure
+    # Return the processed chunk
     result_df = features_df.copy()
     result_df[label_column] = labels_encoded
     return result_df
-
 
 def process_large_dataset(df, pipeline, label_encoder, text_column, label_column, chunk_size=5000):
     """Process a large dataset in chunks using Ray."""
