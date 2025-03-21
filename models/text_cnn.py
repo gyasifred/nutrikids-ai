@@ -337,36 +337,87 @@ def evaluate_model(
 # =========================
 def train_textcnn(
     train_texts: List[str],
-    train_labels: List[str],
+    train_labels: List[Union[str, int, float]],
     val_texts: List[str],
-    val_labels: List[str],
+    val_labels: List[Union[str, int, float]],
     config: Dict,
     num_epochs: int,
-    pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None
+    pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
+    provided_label_encoder: Optional[LabelEncoder] = None
 ):
     """
-    End-to-end training function with label encoding.
+    End-to-end training function with flexible label handling.
 
     Args:
         train_texts: Training texts.
-        train_labels: Training labels as text ('yes'/'no').
+        train_labels: Training labels as either numeric (0/1) or text ('yes'/'no').
         val_texts: Validation texts.
-        val_labels: Validation labels as text ('yes'/'no').
+        val_labels: Validation labels as either numeric (0/1) or text ('yes'/'no').
         config: Dictionary with hyperparameters.
         num_epochs: Number of training epochs.
         pretrained_embeddings_dict: Dictionary of pretrained word embeddings.
+        provided_label_encoder: Pre-fitted label encoder (optional).
 
     Returns:
         model: Trained TextCNN model.
         tokenizer: Fitted TextTokenizer.
-        label_encoder: Fitted LabelEncoder.
+        label_encoder: Fitted LabelEncoder or None if numeric labels.
         metrics: Dictionary with training metrics.
     """
-    train_encoded_labels, label_encoder = encode_labels(train_labels)
-    val_encoded_labels = label_encoder.transform(val_labels)
+    # Check if we already have processed labels and encoder
+    if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
+        # Labels are already processed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = provided_label_encoder
+    elif isinstance(train_labels, np.ndarray) and provided_label_encoder is None:
+        # Numeric labels, no encoder needed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = None
+    else:
+        # Process labels based on type
+        is_numeric = all(isinstance(label, (int, float)) or 
+                        (isinstance(label, str) and label.strip().isdigit()) 
+                        for label in train_labels)
+        
+        if is_numeric:
+            # Convert string numbers to integers if needed
+            train_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                            for label in train_labels])
+            val_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                          for label in val_labels])
+            label_encoder = None
+        else:
+            # Use provided encoder or create a new one for text labels
+            if provided_label_encoder is not None:
+                label_encoder = provided_label_encoder
+                train_encoded_labels = label_encoder.transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+            else:
+                # Create and fit a new label encoder
+                label_encoder = LabelEncoder()
+                train_encoded_labels = label_encoder.fit_transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+                
+                # Ensure 'yes' or 'positive' maps to 1 if present
+                positive_terms = ['yes', 'positive', 'true', '1']
+                for pos_term in positive_terms:
+                    if pos_term in train_labels or pos_term.capitalize() in train_labels:
+                        try:
+                            pos_idx = next(i for i, label in enumerate(train_labels) 
+                                          if str(label).lower() == pos_term)
+                            pos_encoded = train_encoded_labels[pos_idx]
+                            if pos_encoded != 1:
+                                train_encoded_labels = 1 - train_encoded_labels
+                                val_encoded_labels = 1 - val_encoded_labels
+                            break
+                        except StopIteration:
+                            continue
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
+    print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
 
     tokenizer = TextTokenizer(
         max_vocab_size=config.get("max_vocab_size", 20000),
@@ -460,7 +511,6 @@ def train_textcnn(
         model.load_state_dict(best_model_state)
 
     return model, tokenizer, label_encoder, metrics
-
 
 def predict_batch(model, tokenizer, texts):
     """
