@@ -49,7 +49,7 @@ def main():
     train_texts = train_df[args.text_column].tolist()
     train_labels_raw = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
-    val_labels = val_df[args.label_column].tolist()
+    val_labels_raw = val_df[args.label_column].tolist()
     # Process labels
     train_labels, label_encoder = process_labels(train_labels_raw)
     val_labels, _ = process_labels(val_labels_raw) if label_encoder is None else (
