@@ -273,24 +273,49 @@ def process_csv(
 # =========================
 
 
-def encode_labels(labels: List[str]) -> np.ndarray:
+def process_labels(labels: List[Union[str, int, float]]) -> Tuple[np.ndarray, Optional[LabelEncoder]]:
     """
-    Encode text labels like 'yes'/'no' to binary values (1/0).  
+    Process labels that could be either numeric (0/1) or text (yes/no).
+    
     Args:
-        labels: List of text labels 
+        labels: List of labels that could be numeric or text
+        
     Returns:
-        numpy array of binary encoded labels (1 for 'yes', 0 for 'no')
+        Tuple of (processed_labels, label_encoder or None)
     """
-    label_encoder = LabelEncoder()
-    encoded_labels = label_encoder.fit_transform(labels)
-    # Ensure 'yes' is encoded as 1 if present
-    if 'yes' in labels:
-        yes_idx = labels.index('yes')
-        yes_encoded = encoded_labels[yes_idx]
-        if yes_encoded != 1:
-            encoded_labels = 1 - encoded_labels
-    return encoded_labels, label_encoder
-
+    # Check if all labels are numeric (integers or floats)
+    is_numeric = all(isinstance(label, (int, float)) or 
+                    (isinstance(label, str) and label.strip().isdigit()) 
+                    for label in labels)
+    
+    if is_numeric:
+        # Convert string numbers to integers if needed
+        numeric_labels = [int(label) if isinstance(label, str) else int(label) 
+                         for label in labels]
+        # Ensure labels are binary (0 or 1)
+        if not all(label in [0, 1] for label in numeric_labels):
+            raise ValueError("Numeric labels must be binary (0 or 1)")
+        return np.array(numeric_labels), None
+    else:
+        # Handle text labels
+        label_encoder = LabelEncoder()
+        encoded_labels = label_encoder.fit_transform(labels)
+        
+        # Ensure 'yes' or 'positive' maps to 1 if present
+        positive_terms = ['yes', 'positive', 'true', '1']
+        for pos_term in positive_terms:
+            if pos_term in labels or pos_term.capitalize() in labels:
+                try:
+                    pos_idx = next(i for i, label in enumerate(labels) 
+                                  if str(label).lower() == pos_term)
+                    pos_encoded = encoded_labels[pos_idx]
+                    if pos_encoded != 1:
+                        encoded_labels = 1 - encoded_labels  # Flip the encoding
+                    break
+                except StopIteration:
+                    continue
+                
+        return encoded_labels, label_encoder
 
 def plot_confusion_matrix(y_true, y_pred, output_path):
     """Plot and save confusion matrix."""
