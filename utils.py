@@ -287,65 +287,6 @@ def encode_labels(labels: List[str]) -> np.ndarray:
     return encoded_labels, label_encoder
 
 
-def load_tabfnartifacts(model_dir: str, model_name: str):
-    """ 
-    Load all model artifacts (model,
-    feature dict, pipeline) from the given directory.
-
-    Args:
-        model_dir (str): Path to the directory containing model artifacts.
-
-    Returns:
-        model, feature_dict, pipeline
-    """
-    # Define the file patterns to match the latest .joblib files
-    model_pattern = os.path.join(model_dir,
-                                 f"{model_name}_nutrikidai_model.joblib")
-    label_encoder_pattern = os.path.join(
-        model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
-    pipeline_pattern = os.path.join(model_dir,
-                                    f"{model_name}_nutrikidai_pipeline.joblib")
-
-    # List the files that match the patterns
-    model_files = glob.glob(model_pattern)
-    label_encoder_files = glob.glob(label_encoder_pattern)
-    pipeline_files = glob.glob(pipeline_pattern)
-
-    # Debugging prints to check the found files
-    print(f"Found model files: {model_files}")
-    print(f"Found Label Encoder files: {label_encoder_files}")
-    print(f"Found pipeline files: {pipeline_files}")
-
-    # Ensure that there are files found for each pattern
-    if not model_files:
-        raise ValueError(f"No model files found matching pattern:\
-                          {model_pattern}")
-    if not label_encoder_files:
-        raise ValueError(f"No feature dictionary files found matching pattern:\
-                          {label_encoder_files}")
-    if not pipeline_files:
-        raise ValueError(f"No pipeline files found matching pattern:\
-                          {pipeline_pattern}")
-
-    # Get the latest model file by sorting the files
-    # based on the modification time
-    model_path = max(model_files, key=os.path.getmtime)
-    print(f"Loading model from {model_path}...")
-    model = joblib.load(model_path)
-
-    # Get the latest feature dictionary file
-    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
-    print(f"Loading label Encoder from {label_encoder_path}...")
-    label_encoder = joblib.load(label_encoder_path)
-
-    # Get the latest pipeline file
-    pipeline_path = max(pipeline_files, key=os.path.getmtime)
-    print(f"Loading pipeline from {pipeline_path}...")
-    pipeline = joblib.load(pipeline_path)
-
-    return model, label_encoder, pipeline
-
-
 def plot_confusion_matrix(y_true, y_pred, output_path):
     """Plot and save confusion matrix."""
     cm = confusion_matrix(y_true, y_pred)
@@ -479,6 +420,66 @@ def get_api_key(env_variable):
     return os.getenv(env_variable)
 
 
+def load_tabfnartifacts(model_dir: str, model_name: str):
+    """ 
+    Load all model artifacts (model,
+    feature dict, pipeline) from the given directory.
+
+    Args:
+        model_dir (str): Path to the directory containing model artifacts.
+
+    Returns:
+        model, feature_dict, pipeline
+    """
+    # Define the file patterns to match the latest .joblib files
+    model_pattern = os.path.join(model_dir,
+                                 f"{model_name}_nutrikidai_model.joblib")
+    label_encoder_pattern = os.path.join(
+        model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
+    pipeline_pattern = os.path.join(model_dir,
+                                    f"{model_name}_nutrikidai_pipeline.joblib")
+
+    # List the files that match the patterns
+    model_files = glob.glob(model_pattern)
+    label_encoder_files = glob.glob(label_encoder_pattern)
+    pipeline_files = glob.glob(pipeline_pattern)
+
+    # Debugging prints to check the found files
+    print(f"Found model files: {model_files}")
+    print(f"Found Label Encoder files: {label_encoder_files}")
+    print(f"Found pipeline files: {pipeline_files}")
+
+    # Ensure that there are files found for each pattern
+    if not model_files:
+        raise ValueError(f"No model files found matching pattern:\
+                          {model_pattern}")
+    if not pipeline_files:
+        raise ValueError(f"No pipeline files found matching pattern:\
+                          {pipeline_pattern}")
+
+    # Get the latest model file by sorting the files
+    # based on the modification time
+    model_path = max(model_files, key=os.path.getmtime)
+    print(f"Loading model from {model_path}...")
+    model = joblib.load(model_path)
+
+    # Get the latest label encoder file if exists
+    label_encoder = None
+    if label_encoder_files:  # Only try to load if files exist
+        label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
+        print(f"Loading label Encoder from {label_encoder_path}...")
+        label_encoder = joblib.load(label_encoder_path)
+    else:
+        print("No label encoder found. Assuming binary labels.")
+
+    # Get the latest pipeline file
+    pipeline_path = max(pipeline_files, key=os.path.getmtime)
+    print(f"Loading pipeline from {pipeline_path}...")
+    pipeline = joblib.load(pipeline_path)
+
+    return model, label_encoder, pipeline
+
+
 def load_xgbartifacts(model_dir: str, model_name: str):
     """ 
     Load all model artifacts (model, label encoder, pipeline)
@@ -513,10 +514,6 @@ def load_xgbartifacts(model_dir: str, model_name: str):
     if not model_files:
         raise ValueError(
             f"No model files found matching pattern: {model_pattern}")
-    if not label_encoder_files:
-        raise ValueError(
-            f"No label encoder files found matching pattern:\
-                {label_encoder_pattern}")
     if not pipeline_files:
         raise ValueError(
             f"No pipeline files found matching pattern: {pipeline_pattern}")
@@ -524,10 +521,15 @@ def load_xgbartifacts(model_dir: str, model_name: str):
     logging.info(f"Loading model from {model_dir}...")
     model = xgb.XGBClassifier()
     model.load_model(model_pattern)
-    # Get the latest label encoder file
-    label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
-    logging.info(f"Loading label encoder from {label_encoder_path}...")
-    label_encoder = joblib.load(label_encoder_path)
+    
+    # Get the latest label encoder file if exists
+    label_encoder = None
+    if label_encoder_files:  # Only try to load if files exist
+        label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
+        logging.info(f"Loading label encoder from {label_encoder_path}...")
+        label_encoder = joblib.load(label_encoder_path)
+    else:
+        logging.info("No label encoder found. Assuming binary labels.")
 
     # Get the latest pipeline file
     pipeline_path = max(pipeline_files, key=os.path.getmtime)
