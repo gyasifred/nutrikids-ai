@@ -48,7 +48,7 @@ def train_tabpfn(
         device=device,
         **tabpfn_kwargs
     )
-    tabpfn_model.fit(X_train, y_train)
+    tabpfn_model.fit(X_train, y_train, ignore_pretraining_limits=True)
     
     # Save the model with timestamp
     #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
