@@ -152,9 +152,19 @@ def process_large_dataset(df,
     if logger:
         logger.info(f"Combined dataset shape: {combined_df.shape}")
         
-        # Verify label distribution
-        label_counts = combined_df[label_column].value_counts()
-        logger.info(f"Label distribution in processed data: {label_counts}")
+        # Ensure label column is 1-dimensional before calling value_counts
+        if isinstance(combined_df[label_column].iloc[0], (list, np.ndarray)):
+            logger.warning(f"Label column contains multi-dimensional values. Converting to 1D...")
+            # Convert to string representation if it's multi-dimensional
+            combined_df[label_column] = combined_df[label_column].apply(lambda x: str(x))
+        
+        # Use Series.value_counts() directly with try/except block for safety
+        try:
+            label_counts = combined_df[label_column].value_counts()
+            logger.info(f"Label distribution in processed data: {label_counts}")
+        except ValueError as e:
+            logger.warning(f"Could not compute value_counts: {str(e)}")
+            logger.info(f"First few label values: {combined_df[label_column].head()}")
         
         # Verify data types
         logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
@@ -164,7 +174,6 @@ def process_large_dataset(df,
             combined_df[label_column] = combined_df[label_column].astype(int)
     
     return combined_df
-
 
 def main():
     try:
