@@ -61,6 +61,7 @@ def parse_arguments():
     
     return parser.parse_args()
 
+
 @ray.remote
 def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     """Process a chunk of data using the fitted pipeline and label encoder."""
@@ -114,11 +115,13 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     if isinstance(labels_encoded, pd.DataFrame):
         labels_encoded = labels_encoded.iloc[:, 0]
     
-    # Return the processed chunk
-    return pd.concat([
-        features_df, 
-        labels_encoded.rename(label_column)
-    ], axis=1)
+    # Create a new DataFrame with features
+    result_df = features_df.copy()
+    
+    # Add label column as a Series (not a DataFrame)
+    result_df[label_column] = labels_encoded
+    
+    return result_df
 
 
 def process_large_dataset(df,
@@ -196,8 +199,8 @@ def process_large_dataset(df,
         # Check if combined_df[label_column] is a DataFrame instead of Series
         if isinstance(combined_df[label_column], pd.DataFrame):
             logger.warning(f"Label column '{label_column}' returned a DataFrame instead of a Series. Using first column.")
-            label_series = combined_df[label_column].iloc[:, 0]
-            logger.info(f"Label column dtype: {label_series.dtype}")
+            combined_df[label_column] = combined_df[label_column].iloc[:, 0]
+            logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
         else:
             logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
         
@@ -216,6 +219,39 @@ def process_large_dataset(df,
             combined_df[label_column] = combined_df[label_column].astype(int)
     
     return combined_df
+
+
+@ray.remote
+def train_xgboost_model(X_train_ref, y_train_ref, params):
+    """
+    Train an XGBoost model in a Ray remote function.
+    
+    Args:
+        X_train_ref: Ray object reference to training features
+        y_train_ref: Ray object reference to training labels
+        params: Dictionary of XGBoost parameters
+    
+    Returns:
+        The trained XGBoost model
+    """
+    # Get the data from object references
+    X_train = ray.get(X_train_ref)
+    y_train = ray.get(y_train_ref)
+    
+    # Create a DMatrix for XGBoost
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    # Train the model
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=100,  # You may want to make this configurable
+        evals=[(dtrain, "train")],
+        verbose_eval=10  # Print evaluation metrics every 10 rounds
+    )
+    
+    return model
+
 
 def main():
     try:
