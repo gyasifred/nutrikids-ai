@@ -76,9 +76,9 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     
     # Transform labels based on whether a label_encoder exists
     if label_encoder is not None:
-        # Using a label encoder (for non-binary labels like yes/no)
-        # Ensure consistent formatting
-        labels = chunk_df[label_column].astype(str).str.strip()
+        # Using a label encoder for text labels (like yes/no)
+        # Make sure all values are strings for consistent encoding
+        labels = chunk_df[label_column].astype(str).str.lower().str.strip()
         labels_encoded = pd.Series(
             label_encoder.transform(labels), 
             index=chunk_df.index
@@ -155,13 +155,25 @@ def process_large_dataset(df,
 @ray.remote
 def train_xgboost_model(X_train, y_train, params):
     """Train XGBoost model in a Ray task."""
-    # No need to call ray.get() here since we're passing the data directly
+    # Check the unique values of y_train to confirm it's properly processed
+    unique_values = np.unique(y_train)
+    print(f"Training with label values: {unique_values}")
+    
+    if len(unique_values) != 2:
+        print(f"Warning: Expected 2 classes for binary classification, got {len(unique_values)}")
+    
+    # Ensure params has the correct objective for binary classification
+    if 'objective' not in params or params['objective'] != 'binary:logistic':
+        print("Setting objective to binary:logistic for binary classification")
+        params['objective'] = 'binary:logistic'
+    
+    # Create and train the model
     model = xgb.XGBClassifier(**params)
     model.fit(X_train, y_train)
     
     return model
 
-
+# Update to the main() function in train_xgb.py to add additional validation
 def main():
     try:
         args = parse_arguments()
@@ -203,9 +215,9 @@ def main():
         
         # Log whether label encoding was used
         if label_encoder is None:
-            logger.info("Labels were already numeric - no encoding was needed")
+            logger.info("Labels were already numeric (0/1) - no encoding was needed")
         else:
-            logger.info(f"Label encoding applied. Classes: {label_encoder.classes_}")
+            logger.info(f"Label encoding applied. Classes: {label_encoder.classes_} -> {np.unique(y)}")
         
         # Define feature columns from the processed features
         feature_columns = list(X_df.columns)
@@ -222,6 +234,12 @@ def main():
             args.text_column, args.label_column, 
             args.chunk_size, logger
         )
+        
+        # Verify the processed labels to ensure they're binary
+        unique_processed = processed_df[args.label_column].unique()
+        logger.info(f"Unique values in processed labels: {unique_processed}")
+        if set(unique_processed) != {0, 1}:
+            logger.warning(f"Expected binary labels (0/1), but got: {unique_processed}")
         
         # Get the tree method and scaling configuration for Ray
         scaling_config, tree_method = get_scaling_config_and_tree_method()
@@ -247,7 +265,7 @@ def main():
         # If best_params is not loaded, use command line arguments and save defaults
         if best_params is None:
             best_params = {
-                "objective": "binary:logistic",
+                "objective": "binary:logistic",  # Ensure this is set for binary classification
                 "tree_method": tree_method,
                 "eval_metric": ["logloss", "error"],
                 "eta": args.eta,
@@ -262,12 +280,20 @@ def main():
             joblib.dump(best_params, default_params_path)
             logger.info(f"Saved default hyperparameters to {default_params_path}")
         
+        # Ensure objective is set to binary:logistic
+        if 'objective' not in best_params or best_params['objective'] != 'binary:logistic':
+            logger.info("Setting objective to binary:logistic for binary classification")
+            best_params['objective'] = 'binary:logistic'
+        
         logger.info(f"Training with parameters: {best_params}")
         
         # Extract features and labels from processed data
         logger.info("Preparing data for model training...")
         X_train = processed_df[feature_columns]
         y_train = processed_df[args.label_column]
+        
+        # Double-check y_train is proper format for XGBoost
+        logger.info(f"Label dtype: {y_train.dtype}, unique values: {y_train.unique()}")
         
         # Put training data in Ray object store
         logger.info("Putting training data in Ray object store...")
@@ -301,7 +327,6 @@ def main():
             logger.error(f"An error occurred: {str(e)}", exc_info=True)
         else:
             logging.error(f"An error occurred: {str(e)}", exc_info=True)
-
 
 if __name__ == "__main__":
     ray.init(ignore_reinit_error=True) 
