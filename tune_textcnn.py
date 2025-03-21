@@ -7,7 +7,7 @@ from ray import tune
 from ray.tune.schedulers import ASHAScheduler
 import ray
 import torch
-
+from utils import  process_labels
 from models.text_cnn import train_textcnn, TextTokenizer
 
 
@@ -49,6 +49,8 @@ def parse_args():
     return parser.parse_args()
 
 
+
+
 def main():
     # Parse command line arguments
     args = parse_args()
@@ -61,12 +63,18 @@ def main():
     val_df = pd.read_csv(args.val_data)
 
     train_texts = train_df[args.text_column].tolist()
-    train_labels = train_df[args.label_column].tolist()
+    train_labels_raw = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
-    val_labels = val_df[args.label_column].tolist()
+    val_labels_raw = val_df[args.label_column].tolist()
+
+    # Process labels
+    train_labels, label_encoder = process_labels(train_labels_raw)
+    val_labels, _ = process_labels(val_labels_raw) if label_encoder is None else (
+        label_encoder.transform(val_labels_raw), None)
 
     print(f"Training data: {len(train_texts)} examples")
     print(f"Validation data: {len(val_texts)} examples")
+    print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
 
     # Load pretrained embeddings if provided
     pretrained_embeddings_dict = None
@@ -87,6 +95,7 @@ def main():
     val_texts_ref = ray.put(val_texts)
     val_labels_ref = ray.put(val_labels)
     embeddings_ref = ray.put(pretrained_embeddings_dict)
+    label_encoder_ref = ray.put(label_encoder)
     
     # Store fixed args in Ray's object store too
     fixed_args_ref = ray.put({
@@ -109,6 +118,7 @@ def main():
         val_texts = ray.get(val_texts_ref)
         val_labels = ray.get(val_labels_ref)
         pretrained_embeddings_dict = ray.get(embeddings_ref)
+        label_encoder = ray.get(label_encoder_ref)
         fixed_args = ray.get(fixed_args_ref)
         
         # Merge provided args with tunable config
@@ -116,9 +126,10 @@ def main():
         full_config.update(config)
 
         # Train model
-        model, tokenizer, label_encoder, metrics = train_textcnn(
+        model, tokenizer, trained_label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
-            full_config, fixed_args["max_epochs"], pretrained_embeddings_dict
+            full_config, fixed_args["max_epochs"], pretrained_embeddings_dict,
+            provided_label_encoder=label_encoder
         )
 
         # Report final metrics to Ray Tune
@@ -185,7 +196,12 @@ def main():
     best_config_path = os.path.join(args.output_dir, "best_config.joblib")
     joblib.dump(best_result.config, best_config_path)
     print(f"Best configuration saved to {best_config_path}")
-
+    
+    # Save label encoder if it was used
+    if label_encoder is not None:
+        label_encoder_path = os.path.join(args.output_dir, "label_encoder.joblib")
+        joblib.dump(label_encoder, label_encoder_path)
+        print(f"Label encoder saved to {label_encoder_path}")
 
 if __name__ == "__main__":
     main()
