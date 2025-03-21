@@ -267,25 +267,25 @@ mkdir -p "$LLM_BASE_DIR"
 #   fi
 # done
 
-# echo "==================== Step 1: TextCNN Tuning ===================="
-# Run the CNN tuning script
-./tune_textcnn.py \
-  --train_data "$TRAIN_DATA" \
-  --val_data "$VAL_DATA" \
-  --text_column "$TEXT_COLUMN" \
-  --label_column "$LABEL_COLUMN" \
-  --max_vocab_size "$MAX_VOCAB_SIZE" \
-  --min_frequency "$MIN_FREQUENCY" \
-  --pad_token "$PAD_TOKEN" \
-  --unk_token "$UNK_TOKEN" \
-  --max_length "$MAX_LENGTH" \
-  --padding "$PADDING" \
-  --embedding_dim "$EMBEDDING_DIM" \
-  --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
-  --output_dir "$CNN_OUTPUT_DIR" \
-  --num_samples "$NUM_SAMPLES" \
-  --max_epochs "$MAX_EPOCHS" \
-  --grace_period "$GRACE_PERIOD"
+# # echo "==================== Step 1: TextCNN Tuning ===================="
+# # Run the CNN tuning script
+# ./tune_textcnn.py \
+#   --train_data "$TRAIN_DATA" \
+#   --val_data "$VAL_DATA" \
+#   --text_column "$TEXT_COLUMN" \
+#   --label_column "$LABEL_COLUMN" \
+#   --max_vocab_size "$MAX_VOCAB_SIZE" \
+#   --min_frequency "$MIN_FREQUENCY" \
+#   --pad_token "$PAD_TOKEN" \
+#   --unk_token "$UNK_TOKEN" \
+#   --max_length "$MAX_LENGTH" \
+#   --padding "$PADDING" \
+#   --embedding_dim "$EMBEDDING_DIM" \
+#   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
+#   --output_dir "$CNN_OUTPUT_DIR" \
+#   --num_samples "$NUM_SAMPLES" \
+#   --max_epochs "$MAX_EPOCHS" \
+#   --grace_period "$GRACE_PERIOD"
 
 echo "==================== Step 2: TextCNN Training ===================="
 # Run the CNN training script with the tuned config
