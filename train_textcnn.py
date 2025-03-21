@@ -47,7 +47,7 @@ def main():
     val_df = pd.read_csv(args.val_data)
 
     train_texts = train_df[args.text_column].tolist()
-    train_labels = train_df[args.label_column].tolist()
+    train_labels_raw = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
     val_labels = val_df[args.label_column].tolist()
     # Process labels
