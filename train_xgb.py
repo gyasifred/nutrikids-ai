@@ -222,23 +222,19 @@ def process_large_dataset(df,
 
 
 @ray.remote
-def train_xgboost_model(X_train_ref, y_train_ref, params):
+def train_xgboost_model(X_train, y_train, params):
     """
     Train an XGBoost model in a Ray remote function.
     
     Args:
-        X_train_ref: Ray object reference to training features
-        y_train_ref: Ray object reference to training labels
+        X_train: Training features dataframe
+        y_train: Training labels series
         params: Dictionary of XGBoost parameters
     
     Returns:
         The trained XGBoost model
     """
-    # Get the data from object references
-    X_train = ray.get(X_train_ref)
-    y_train = ray.get(y_train_ref)
-    
-    # Create a DMatrix for XGBoost
+    # Create a DMatrix for XGBoost (no need to call ray.get() anymore)
     dtrain = xgb.DMatrix(X_train, label=y_train)
     
     # Train the model
@@ -369,15 +365,9 @@ def main():
         label_counts = y_train.value_counts()
         logger.info(f"Final label distribution before training: {label_counts}")
         
-        # Put training data in Ray object store
-        logger.info("Putting training data in Ray object store...")
-        X_train_ref = ray.put(X_train)
-        y_train_ref = ray.put(y_train)
-        
-        # Train model using Ray 
+        # Train model using Ray - pass data directly without ray.put()
         logger.info("Starting model training in Ray...")
-        # Pass the Ray object references to the remote function
-        model_ref = train_xgboost_model.remote(X_train_ref, y_train_ref, best_params)
+        model_ref = train_xgboost_model.remote(X_train, y_train, best_params)
         
         # Get trained model
         logger.info("Waiting for model training to complete...")
@@ -389,11 +379,6 @@ def main():
         model.save_model(model_path)
         logger.info(f"Model saved to {model_path}")
         
-        # Clear references to free memory
-        del X_train_ref
-        del y_train_ref
-        del model_ref
-        
         logger.info("Training completed successfully.")
         
     except Exception as e:
@@ -402,7 +387,7 @@ def main():
         else:
             logging.error(f"An error occurred: {str(e)}", exc_info=True)
 
-            
+
 if __name__ == "__main__":
     ray.init(ignore_reinit_error=True) 
     main()
