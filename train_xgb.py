@@ -1,38 +1,35 @@
 #!/usr/bin/env python3
 
-import os
 import argparse
+import os
+import joblib
+import logging
+import xgboost as xgb
 import pandas as pd
 import numpy as np
-import joblib
-from models.xgboost import get_scaling_config_and_tree_method
-from utils import process_csv
 import ray
-from ray import tune
-from ray.train.xgboost import XGBoostTrainer
-from ray.train import RunConfig
-from ray.tune.tuner import Tuner
+from utils import process_csv
+from models.xgboost import get_scaling_config_and_tree_method
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description='Train an XGBoost model with hyperparameter tuning.')
-    parser.add_argument('--train_data_file', type=str, required=True,
+    parser = argparse.ArgumentParser(description='Train an XGBoost model.')
+    parser.add_argument('--data_file', type=str, required=True,
                         help='Path to training data CSV file')
-    parser.add_argument('--valid_data_file', type=str, required=True,
-                        help='Path to validation data CSV file')
     parser.add_argument('--text_column', type=str, default="txt",
                         help='Name of the text column in the CSV')
     parser.add_argument('--label_column', type=str, default="label",
                         help='Name of the label column in the CSV')
     parser.add_argument('--id_column', type=str, default="DEID",
                         help='Name of the ID column in the CSV')
+    parser.add_argument("--config_dir", default="xgboost", type=str,
+                        help='Path to best hyperparameter directory')
     parser.add_argument('--max_features', type=int, default=10000,
                         help='Maximum number of features for vectorization')
     parser.add_argument('--remove_stop_words', action='store_true',
                         default=False,
                         help='Remove stop words during preprocessing')
-    parser.add_argument('--apply_stemming', action='store_false',
+    parser.add_argument('--apply_stemming', action='store_true',
                         default=False,
                         help='Apply stemming during preprocessing')
     parser.add_argument('--vectorization_mode', type=str, default='tfidf',
@@ -42,19 +39,28 @@ def parse_arguments():
                         help='Minimum n-gram size')
     parser.add_argument('--ngram_max', type=int, default=1,
                         help='Maximum n-gram size')
+    parser.add_argument('--model_dir', type=str, default='./xgboost',
+                        help='Directory to save/load the model')
     parser.add_argument('--model_name', type=str, default="xgboost",
                         help='Name of the type of Model being trained')
-    parser.add_argument('--num_samples', type=int, default=20,
-                        help='Number of parameter settings that are sampled \
-                            (default: 20)')
-    parser.add_argument('--model_dir', type=str, default='./xgboost',
-                        help='Directory to save the model')
     parser.add_argument('--chunk_size', type=int, default=5000,
                         help='Chunk size for processing large datasets')
+    
+    # XGBoost parameters
+    parser.add_argument('--eta',
+                        type=float, default=0.1, help='Learning rate')
+    parser.add_argument('--max_depth', type=int, default=6,
+                        help='Maximum depth of trees')
+    parser.add_argument('--min_child_weight', type=float, default=1,
+                        help='Minimum sum of instance weight needed in a child')
+    parser.add_argument('--subsample', type=float, default=0.8,
+                        help='Subsample ratio of the training instances')
+    parser.add_argument('--colsample_bytree', type=float, default=0.8,
+                        help='Subsample ratio of columns when constructing\
+                              each tree')
+    
     return parser.parse_args()
 
-
-# Define a Ray task for processing chunks of data
 @ray.remote
 def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     """Process a chunk of data using the fitted pipeline and label encoder."""
@@ -67,105 +73,129 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
         index=chunk_df.index
     )
     
-    # Transform labels based on label type
+    # Transform labels based on their type
     if label_encoder is not None:
-        # Handle categorical labels that need encoding
+        # For categorical labels that need encoding
+        # Ensure consistent formatting
         labels = chunk_df[label_column].astype(str).str.lower().str.strip()
         labels_encoded = pd.Series(
             label_encoder.transform(labels), 
-            index=chunk_df.index,
-            name=label_column
+            index=chunk_df.index
         )
     else:
-        # Handle numeric labels (0/1) - ensure they're integers
-        labels = chunk_df[label_column]
-        # Convert various forms of 0/1 to integer
-        if set(labels.unique()) <= {0, 1, '0', '1'}:
-            labels_encoded = pd.Series(
-                labels.astype(int),
-                index=chunk_df.index,
-                name=label_column
-            )
-        else:
-            raise ValueError(f"Expected binary labels (0/1) but found {labels.unique()}")
+        # For numeric labels that are already 0/1 or '0'/'1'
+        # Convert to integer to ensure consistency
+        labels_encoded = chunk_df[label_column].astype(int)
     
     # Return the processed chunk
-    return pd.concat([features_df, labels_encoded], axis=1)
+    return pd.concat([
+        features_df, 
+        labels_encoded.rename(label_column)
+    ], axis=1)
 
 
-def process_large_dataset(df, pipeline, label_encoder, text_column, label_column, chunk_size=5000):
+def process_large_dataset(df,
+                          pipeline,
+                          label_encoder,
+                          text_column,
+                          label_column,
+                          chunk_size=5000,
+                          logger=None):
     """Process a large dataset in chunks using Ray."""
+    if logger:
+        logger.info(f"Processing large dataset in chunks of size {chunk_size}...")
+    
     # Split the dataframe into chunks
     chunks = np.array_split(df, max(1, len(df) // chunk_size))
+    
+    if logger:
+        logger.info(f"Dataset split into {len(chunks)} chunks")
+        if label_encoder is not None:
+            logger.info(f"Using label encoder with classes: {label_encoder.classes_}")
+        else:
+            logger.info("No label encoder needed - labels are already binary")
     
     # Store references to Ray objects
     refs = []
     
     # Process each chunk in parallel
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
+        if logger and i % 10 == 0:
+            logger.info(f"Submitting chunk {i+1}/{len(chunks)} for processing")
+        
         ref = process_chunk.remote(
             chunk, pipeline, label_encoder, text_column, label_column
         )
         refs.append(ref)
     
-    # Retrieve results
-    processed_chunks = ray.get(refs)
+    # Retrieve results in batches to manage memory
+    if logger:
+        logger.info("Processing chunks in Ray...")
+    
+    processed_chunks = []
+    batch_size = 5  # Number of chunks to process at once
+    
+    for i in range(0, len(refs), batch_size):
+        if logger:
+            logger.info(f"Getting results for chunks {i+1}-{min(i+batch_size, len(refs))}/{len(refs)}")
+        
+        batch_refs = refs[i:i+batch_size]
+        batch_results = ray.get(batch_refs)
+        processed_chunks.extend(batch_results)
     
     # Combine results
-    return pd.concat(processed_chunks, axis=0)
-
-
-def create_ray_datasets_in_chunks(train_df, valid_df, pipeline, label_encoder, 
-                                 text_column, label_column, chunk_size=5000):
-    """Create Ray datasets from large DataFrames by processing in chunks."""
-    # Process training data in chunks
-    print(f"Processing training data in chunks of size {chunk_size}...")
-    train_processed_df = process_large_dataset(
-        train_df, pipeline, label_encoder, text_column, label_column, chunk_size
-    )
+    if logger:
+        logger.info("Combining processed chunks...")
     
-    # Verify that labels are binary integers (0/1)
-    unique_labels = train_processed_df[label_column].unique()
-    if not set(unique_labels) <= {0, 1}:
-        raise ValueError(f"Labels in processed training data are not binary integers: {unique_labels}")
+    combined_df = pd.concat(processed_chunks, axis=0)
     
-    # Put the processed training data in the Ray object store
-    print("Putting training data in Ray object store...")
-    train_ref = ray.put(train_processed_df)
+    if logger:
+        logger.info(f"Combined dataset shape: {combined_df.shape}")
+        
+        # Verify label distribution
+        label_counts = combined_df[label_column].value_counts()
+        logger.info(f"Label distribution in processed data: {label_counts}")
+        
+        # Verify data types
+        logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
+        if combined_df[label_column].dtype != 'int64':
+            # Force conversion to int if somehow it wasn't done correctly
+            logger.warning(f"Converting {label_column} to int64 - was {combined_df[label_column].dtype}")
+            combined_df[label_column] = combined_df[label_column].astype(int)
     
-    # Process validation data in chunks
-    print(f"Processing validation data in chunks of size {chunk_size}...")
-    valid_processed_df = process_large_dataset(
-        valid_df, pipeline, label_encoder, text_column, label_column, chunk_size
-    )
-    
-    # Verify that labels are binary integers (0/1)
-    unique_labels = valid_processed_df[label_column].unique()
-    if not set(unique_labels) <= {0, 1}:
-        raise ValueError(f"Labels in processed validation data are not binary integers: {unique_labels}")
-    
-    # Put the processed validation data in the Ray object store
-    print("Putting validation data in Ray object store...")
-    valid_ref = ray.put(valid_processed_df)
-    
-    return train_ref, valid_ref
+    return combined_df
 
 
 def main():
-    args = parse_arguments()
-    ngram_range = (args.ngram_min, args.ngram_max)
-    
-    # Ensure model directory exists
-    os.makedirs(args.model_dir, exist_ok=True)
-    
     try:
-        # Process the training CSV to get the pipeline and label encoder
+        args = parse_arguments()
+        ngram_range = (args.ngram_min, args.ngram_max)
+        
+        # Ensure model directory exists
+        os.makedirs(args.model_dir, exist_ok=True)
+        
+        # Set up logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(os.path.join(
+                    args.model_dir,
+                    f"{args.model_name}_nutrikidai_training.log")),
+                logging.StreamHandler()
+            ]
+        )
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting XGBoost training with arguments: {args}")   
+        
+        # Process CSV data to get pipeline and label encoder
+        logger.info("Creating text processing pipeline...")
         X_df, _, y, pipeline, feature_dict, label_encoder = process_csv(
-            file_path=args.train_data_file,
+            file_path=args.data_file,
             text_column=args.text_column,
             label_column=args.label_column,
-            model_name=args.model_name,
             id_column=args.id_column,
+            model_name=args.model_name,
             max_features=args.max_features,
             remove_stop_words=args.remove_stop_words,
             apply_stemming=args.apply_stemming,
@@ -173,149 +203,119 @@ def main():
             ngram_range=ngram_range,
             save_path=args.model_dir
         )
-        print("Pipeline and encoder created. Feature DataFrame shape:", X_df.shape)
         
-        # Print label information for debugging
-        print(f"Label type after processing: {type(y)}")
-        print(f"Label values: {np.unique(y)}")
-        print(f"Label encoder: {'None' if label_encoder is None else 'Present'}")
+        # Verify label type returned from process_csv
+        logger.info(f"Labels from process_csv have dtype: {y.dtype}")
         if label_encoder is not None:
-            print(f"Label encoder classes: {label_encoder.classes_}")
+            logger.info(f"Label encoder classes: {label_encoder.classes_} -> {np.unique(y)}")
+        else:
+            logger.info("No label encoder needed - labels are already binary")
         
-        # Read the raw DataFrames
-        train_df = pd.read_csv(args.train_data_file)
-        valid_df = pd.read_csv(args.valid_data_file)
+        # Define feature columns from the processed features
+        feature_columns = list(X_df.columns)
+        logger.info(f"Number of features: {len(feature_columns)}")
         
-        # Process datasets in chunks and get references
-        train_ref, valid_ref = create_ray_datasets_in_chunks(
-            train_df, valid_df, pipeline, label_encoder,
-            args.text_column, args.label_column, args.chunk_size
+        # Read the original data in chunks
+        logger.info(f"Reading dataset from {args.data_file}...")
+        df = pd.read_csv(args.data_file)
+        logger.info(f"Dataset loaded with shape: {df.shape}")
+        
+        # Process the entire dataset in chunks
+        processed_df = process_large_dataset(
+            df, pipeline, label_encoder, 
+            args.text_column, args.label_column, 
+            args.chunk_size, logger
         )
         
-        # Get the processed DataFrames from Ray object store
-        print("Retrieving processed datasets from Ray object store...")
-        train_processed_df = ray.get(train_ref)
-        valid_processed_df = ray.get(valid_ref)
-        
-        # Final verification of label format
-        print(f"Training label distribution: {train_processed_df[args.label_column].value_counts()}")
-        print(f"Validation label distribution: {valid_processed_df[args.label_column].value_counts()}")
-        
-        # Create Ray datasets from the processed DataFrames
-        print("Creating Ray datasets...")
-        train_ds = ray.data.from_pandas(train_processed_df)
-        valid_ds = ray.data.from_pandas(valid_processed_df)
-        
-        # Get scaling config and tree method
+        # Get the tree method and scaling configuration for Ray
         scaling_config, tree_method = get_scaling_config_and_tree_method()
         
-        # Define hyperparameter search space
-        param_space = {
-            "scaling_config": scaling_config,
-            "params": {
-                "objective": "binary:logistic",
-                "tree_method": tree_method,
-                "eval_metric": ["logloss", "error"],
-                "eta": tune.loguniform(1e-4, 1e-1),
-                "subsample": tune.uniform(0.5, 1.0),
-                "max_depth": tune.randint(3, 10),
-                "min_child_weight": tune.randint(1, 10),
-                "gamma": tune.uniform(0, 5),
-                "colsample_bytree": tune.uniform(0.3, 1.0),
-                "reg_alpha": tune.loguniform(1e-4, 1e-1),
-                "reg_lambda": tune.loguniform(1e-4, 1e-1),
-                "max_bin": tune.randint(100, 300),
-            },
-        }
-        
-        # Initialize XGBoostTrainer for hyperparameter tuning
-        trainer = XGBoostTrainer(
-            label_column=args.label_column,
-            params={}, 
-            datasets={"train": train_ds, "validation": valid_ds},
-        )  
-        
-        tuner = Tuner(
-            trainable=trainer,
-            param_space=param_space,
-            tune_config=tune.TuneConfig(num_samples=args.num_samples),
-            run_config=RunConfig(name="xgboost_gpu_tune_nutrikidai")
-        )
-        
-        print("Starting hyperparameter tuning...")
-        results = tuner.fit()
-        
-        # Save hyperparameter tuning results summary
-        results_df = results.get_dataframe()
-        results_path = os.path.join(
-            args.model_dir, f"{args.model_name}_nutrikidai_tuning_results.csv")
-        results_df.to_csv(results_path)
-        print(f"Tuning results saved to {results_path}")
-        
-        # Extract best hyperparameters
-        if not results_df.empty:
+        # Try to load best parameters if config_dir is provided
+        if args.config_dir and os.path.exists(args.config_dir):
             try:
-                best_result = results.get_best_result(
-                    metric="validation-logloss", mode="min")
-                print("Best trial config:", best_result.config)
-                print("Best trial final evaluation logloss:",
-                      best_result.metrics["validation-logloss"])
-            except KeyError:
-                available_metrics = list(results_df.columns)
-                metric_cols = [
-                    col for col in available_metrics if "validation-" in col
-                ]
-                if metric_cols:
-                    best_metric = metric_cols[0]
-                    best_result = results.get_best_result(
-                        metric=best_metric, mode="min")
-                    print(f"Best trial config based on {best_metric}:",
-                          best_result.config)
-                    print(f"Best trial final evaluation {best_metric}:",
-                          best_result.metrics[best_metric])
+                best_params_path = os.path.join(
+                    args.config_dir,
+                    f"{args.model_name}_nutrikidai_config.joblib")
+                if os.path.exists(best_params_path):
+                    best_params = joblib.load(best_params_path)
+                    logger.info(f"Loaded hyperparameters from {best_params_path}")
                 else:
-                    print("No validation metrics found in results. Using the first result as best.")
-                    best_result = results.get_best_result()
+                    raise FileNotFoundError(f"Config file not found {best_params_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load hyperparameters: {str(e)}. Using command line parameters.")
+                best_params = None
         else:
-            print("No valid results from tuning. Using default parameters.")
-            best_result = None
-            
-        if best_result:
-            best_params = best_result.config["params"]
-            # Save best hyperparameters
-            hyperparams_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_config.joblib")
-            joblib.dump(best_result.config, hyperparams_path)
-            print(f"Best hyperparameters saved to {hyperparams_path}")
-            
-            # Save best model metrics
-            metrics_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_metrics.joblib")
-            joblib.dump(best_result.metrics, metrics_path)
-            print(f"Best model metrics saved to {metrics_path}")
-        else:
+            logger.info("No config directory provided or it doesn't exist. Using command line parameters.")
+            best_params = None
+        
+        # If best_params is not loaded, use command line arguments and save defaults
+        if best_params is None:
             best_params = {
                 "objective": "binary:logistic",
                 "tree_method": tree_method,
                 "eval_metric": ["logloss", "error"],
-                "eta": 0.1,
-                "max_depth": 6,
-                "min_child_weight": 1,
-                "subsample": 0.8,
-                "colsample_bytree": 0.8
+                "eta": args.eta,
+                "max_depth": args.max_depth,
+                "min_child_weight": args.min_child_weight,
+                "subsample": args.subsample,
+                "colsample_bytree": args.colsample_bytree
             }
             default_params_path = os.path.join(
-                args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
+                args.model_dir,
+                f"{args.model_name}_nutrikidai_config.joblib")
             joblib.dump(best_params, default_params_path)
-            print(f"Using default parameters. Saved to {default_params_path}")
-            
-        return best_params, pipeline, feature_dict
-    
+            logger.info(f"Saved default hyperparameters to {default_params_path}")
+        
+        logger.info(f"Training with parameters: {best_params}")
+        
+        # Extract features and labels from processed data
+        logger.info("Preparing data for model training...")
+        X_train = processed_df[feature_columns]
+        y_train = processed_df[args.label_column]
+        
+        # Final verification that labels are integers
+        if not pd.api.types.is_integer_dtype(y_train):
+            logger.warning(f"Converting y_train to int64 - was {y_train.dtype}")
+            y_train = y_train.astype(int)
+        
+        # Verify label distribution before training
+        label_counts = y_train.value_counts()
+        logger.info(f"Final label distribution before training: {label_counts}")
+        
+        # Put training data in Ray object store
+        logger.info("Putting training data in Ray object store...")
+        X_train_ref = ray.put(X_train)
+        y_train_ref = ray.put(y_train)
+        
+        # Train model using Ray 
+        logger.info("Starting model training in Ray...")
+        # Pass the Ray object references to the remote function
+        model_ref = train_xgboost_model.remote(X_train_ref, y_train_ref, best_params)
+        
+        # Get trained model
+        logger.info("Waiting for model training to complete...")
+        model = ray.get(model_ref)
+        
+        # Save model
+        model_path = os.path.join(args.model_dir,
+                                  f"{args.model_name}_nutrikidai_model.json")
+        model.save_model(model_path)
+        logger.info(f"Model saved to {model_path}")
+        
+        # Clear references to free memory
+        del X_train_ref
+        del y_train_ref
+        del model_ref
+        
+        logger.info("Training completed successfully.")
+        
     except Exception as e:
-        print(f"Error in main function: {e}")
-        raise
+        if 'logger' in locals():
+            logger.error(f"An error occurred: {str(e)}", exc_info=True)
+        else:
+            logging.error(f"An error occurred: {str(e)}", exc_info=True)
 
-
+            
 if __name__ == "__main__":
-    ray.init(ignore_reinit_error=True)  
-    best_params, pipeline, feature_dict = main()
+    ray.init(ignore_reinit_error=True) 
+    main()
