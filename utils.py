@@ -577,19 +577,20 @@ def ensure_xgbfeatures_match(X_test, feature_names):
     # Convert to DataFrame if it's a sparse matrix
     if isinstance(X_test, csr_matrix):
         X_test_dense = pd.DataFrame.sparse.from_spmatrix(X_test)
+    elif isinstance(X_test, pd.DataFrame):
+        X_test_dense = X_test
     else:
         X_test_dense = pd.DataFrame(X_test)
 
     # Create empty DataFrame with training features
-    aligned_df = pd.DataFrame(columns=feature_names)
+    aligned_df = pd.DataFrame(0, index=X_test_dense.index, columns=feature_names)
 
     # Fill matching features
     for col in X_test_dense.columns:
-        if isinstance(col, int) and col < len(feature_names):
+        if col in feature_names:
+            aligned_df[col] = X_test_dense[col]
+        elif isinstance(col, int) and col < len(feature_names):
             aligned_df[feature_names[col]] = X_test_dense[col]
-
-    # Fill missing features with 0
-    aligned_df.fillna(0, inplace=True)
 
     logging.info(
         f"Feature alignment complete. Matrix shape: {aligned_df.shape}")
