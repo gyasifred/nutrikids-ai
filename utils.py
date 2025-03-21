@@ -154,7 +154,7 @@ def process_csv(
       - feature_dict: Dictionary mapping feature names to indices
     """
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, usecols=[text_column, label_column, id_column])
         required_columns = [text_column, label_column, id_column]
         missing_columns = [
             col for col in required_columns if col not in df.columns
