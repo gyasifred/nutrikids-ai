@@ -74,7 +74,7 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
         index=chunk_df.index
     )
     
-    # Transform labels
+    # Transform labels based on whether a label_encoder exists
     if label_encoder is not None:
         # Using a label encoder (for non-binary labels like yes/no)
         # Ensure consistent formatting
@@ -93,6 +93,7 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
         features_df, 
         labels_encoded.rename(label_column)
     ], axis=1)
+
 
 def process_large_dataset(df,
                           pipeline,
@@ -184,6 +185,7 @@ def main():
         logger.info(f"Starting XGBoost training with arguments: {args}")   
         
         # Process CSV data to get pipeline and label encoder
+        # The process_csv function will automatically determine if label encoding is needed
         logger.info("Creating text processing pipeline...")
         X_df, _, y, pipeline, feature_dict, label_encoder = process_csv(
             file_path=args.data_file,
@@ -198,6 +200,12 @@ def main():
             ngram_range=ngram_range,
             save_path=args.model_dir
         )
+        
+        # Log whether label encoding was used
+        if label_encoder is None:
+            logger.info("Labels were already numeric - no encoding was needed")
+        else:
+            logger.info(f"Label encoding applied. Classes: {label_encoder.classes_}")
         
         # Define feature columns from the processed features
         feature_columns = list(X_df.columns)
@@ -277,7 +285,7 @@ def main():
         
         # Save model
         model_path = os.path.join(args.model_dir,
-                                  f"{args.model_name}_nutrikidai_model.json")
+                                 f"{args.model_name}_nutrikidai_model.json")
         model.save_model(model_path)
         logger.info(f"Model saved to {model_path}")
         
