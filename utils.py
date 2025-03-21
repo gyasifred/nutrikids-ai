@@ -180,23 +180,45 @@ def process_csv(
                                         StopWordsRemover()))
         if apply_stemming:
             preprocessing_steps.append(('stemmer', TextStemmer()))
-        # Process labels (convert 'yes'/'no' to 1/0 if needed)
+
+        # Process labels intelligently - detect if already numeric or text
         # First, save the original labels
         y_original = df[label_column]
-        # Create and fit a label encoder
-        label_encoder = LabelEncoder()
-        y = label_encoder.fit_transform(y_original)
-        # Save the label encoder
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        encoder_filename = os.path.join(
-            save_path,
-            f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib')
-        joblib.dump(label_encoder, encoder_filename)
-        print(
-            f"Label encoder saved to \
-                '{encoder_filename}'. Classes: {label_encoder.classes_}")
+        
+        # Determine if we need a label encoder
+        unique_values = y_original.unique()
+        print(f"Unique label values found: {unique_values}")
+        
+        # Check if values are already binary (0/1) or need encoding
+        if set(unique_values) == {0, 1} or set(unique_values) == {'0', '1'}:
+            # Already binary, just convert to int
+            print("Labels are already binary (0/1), no encoding needed")
+            y = y_original.astype(int)
+            label_encoder = None
+        else:
+            # Need to encode non-binary labels (like yes/no)
+            print(f"Encoding non-binary labels: {unique_values}")
+            label_encoder = LabelEncoder()
+            y = label_encoder.fit_transform(y_original)
+            
+            # Ensure it's a binary encoding if we're expecting binary classification
+            unique_encoded = np.unique(y)
+            if len(unique_encoded) == 2:
+                print(f"Encoded to binary labels: {unique_encoded}")
+            else:
+                print(f"Warning: Encoded to {len(unique_encoded)} classes: {unique_encoded}")
+                
+            # Save the label encoder
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            encoder_filename = os.path.join(
+                save_path,
+                f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib')
+            joblib.dump(label_encoder, encoder_filename)
+            print(f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
+        
         # Ensure the save_path directory exists
         os.makedirs(save_path, exist_ok=True)
+        
         # Configure the appropriate vectorizer based on mode
         if vectorization_mode == 'count':
             vectorizer = CountVectorizer(max_features=max_features,
@@ -211,26 +233,30 @@ def process_csv(
         else:
             raise ValueError("Invalid vectorization_mode."
                              "Choose from 'count' or 'tfidf'.")
+        
         # Add vectorizer to pipeline
         preprocessing_steps.append(('vectorizer', vectorizer))
         pipeline = Pipeline(preprocessing_steps)
+        
         # Fit and transform with the chosen vectorizer
         matrix = pipeline.fit_transform(df[text_column])
         feature_names = pipeline.named_steps['vectorizer'].\
             get_feature_names_out()
         X_df = pd.DataFrame(matrix.toarray(),
                             columns=feature_names, index=df.index)
+        
         # Create complete DataFrame with features and label
         complete_df = pd.concat([X_df,
-                                 pd.DataFrame({label_column: y})], axis=1)
+                                pd.DataFrame({label_column: y})], axis=1)
+        
         # Save the pipeline
         joblib.dump(pipeline, pipeline_filename)
         print(
-            f"{vectorization_mode.capitalize()}\
-              vectorizer pipeline with n-grams {ngram_range} saved to \
-              '{pipeline_filename}'.")
+            f"{vectorization_mode.capitalize()} vectorizer pipeline with n-grams {ngram_range} saved to '{pipeline_filename}'.")
+        
         # Create feature dictionary
         feature_dict = {name: idx for idx, name in enumerate(feature_names)}
+        
         return X_df, complete_df, y, pipeline, feature_dict, label_encoder
 
     except Exception as e:
