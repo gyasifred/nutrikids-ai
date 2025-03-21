@@ -5,7 +5,7 @@ import glob
 import logging
 import re
 import os
-from typing import List
+from typing import  List, Union
 from matplotlib import pyplot as plt
 import seaborn as sns
 import numpy as np
