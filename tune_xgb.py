@@ -3,12 +3,12 @@
 import os
 import argparse
 import pandas as pd
+import numpy as np
 import joblib
 from models.xgboost import get_scaling_config_and_tree_method
 from utils import process_csv
 import ray
 from ray import tune
-from ray.data import from_pandas
 from ray.train.xgboost import XGBoostTrainer
 from ray.train import RunConfig
 from ray.tune.tuner import Tuner
@@ -49,86 +49,100 @@ def parse_arguments():
                             (default: 20)')
     parser.add_argument('--model_dir', type=str, default='./xgboost',
                         help='Directory to save the model')
+    parser.add_argument('--chunk_size', type=int, default=5000,
+                        help='Chunk size for processing large datasets')
     return parser.parse_args()
 
 
-def fix_dataframe_for_ray(df):
-    """
-    Fix DataFrame to make it compatible with Ray's from_pandas function.
-    This addresses the 'DataFrame has no attribute dtype' error.
-    """
-    # Make a copy to avoid modifying the original
-    df_copy = df.copy()
+# Define a Ray task for processing chunks of data
+@ray.remote
+def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
+    """Process a chunk of data using the fitted pipeline and label encoder."""
+    # Transform text using the pipeline
+    features_sparse = pipeline.transform(chunk_df[text_column])
+    feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
+    features_df = pd.DataFrame(
+        features_sparse.toarray(),
+        columns=feature_names,
+        index=chunk_df.index
+    )
     
-    # First, ensure we have unique column names
-    # Ray needs unique column names to properly convert DataFrames
-    orig_columns = df_copy.columns
-    if len(orig_columns) != len(set(orig_columns)):
-        # Find duplicates and make them unique
-        new_columns = []
-        seen = set()
-        for i, col in enumerate(orig_columns):
-            if col in seen:
-                j = 1
-                new_col = f"{col}_{j}"
-                while new_col in seen:
-                    j += 1
-                    new_col = f"{col}_{j}"
-                new_columns.append(new_col)
-                seen.add(new_col)
-            else:
-                new_columns.append(col)
-                seen.add(col)
-        df_copy.columns = new_columns
+    # Transform labels
+    if label_encoder is not None:
+        # Ensure consistent formatting
+        labels = chunk_df[label_column].astype(str).str.strip()
+        labels_encoded = pd.Series(
+            label_encoder.transform(labels), 
+            index=chunk_df.index
+        )
+    else:
+        labels_encoded = chunk_df[label_column]
     
-    # Ensure all columns have proper types
-    for col in df_copy.columns:
-        # Check if column contains complex objects that might cause issues
-        if pd.api.types.is_object_dtype(df_copy[col]):
-            # Convert object columns to strings as a safe approach
-            df_copy[col] = df_copy[col].astype(str)
-    
-    return df_copy
+    # Return the processed chunk
+    return pd.concat([
+        features_df, 
+        labels_encoded.rename(label_column)
+    ], axis=1)
 
 
-def subset_dataframe(df, id_column=None, text_column=None, label_column=None):
-    """
-    Subset the DataFrame to only include the required columns.
-    This helps reduce memory usage and can avoid dtype issues.
-    """
-    columns_to_keep = []
+def process_large_dataset(df, pipeline, label_encoder, text_column, label_column, chunk_size=5000):
+    """Process a large dataset in chunks using Ray."""
+    # Split the dataframe into chunks
+    chunks = np.array_split(df, max(1, len(df) // chunk_size))
     
-    # Add the specified columns if they exist
-    if id_column and id_column in df.columns:
-        columns_to_keep.append(id_column)
+    # Store references to Ray objects
+    refs = []
     
-    if text_column and text_column in df.columns:
-        columns_to_keep.append(text_column)
+    # Process each chunk in parallel
+    for chunk in chunks:
+        ref = process_chunk.remote(
+            chunk, pipeline, label_encoder, text_column, label_column
+        )
+        refs.append(ref)
     
-    if label_column and label_column in df.columns:
-        columns_to_keep.append(label_column)
+    # Retrieve results
+    processed_chunks = ray.get(refs)
     
-    # If we couldn't find any of the specified columns, return the original DataFrame
-    if not columns_to_keep:
-        return df
+    # Combine results
+    return pd.concat(processed_chunks, axis=0)
+
+
+def create_ray_datasets_in_chunks(train_df, valid_df, pipeline, label_encoder, 
+                                 text_column, label_column, chunk_size=5000):
+    """Create Ray datasets from large DataFrames by processing in chunks."""
+    # Process training data in chunks
+    print(f"Processing training data in chunks of size {chunk_size}...")
+    train_processed_df = process_large_dataset(
+        train_df, pipeline, label_encoder, text_column, label_column, chunk_size
+    )
     
-    return df[columns_to_keep]
+    # Put the processed training data in the Ray object store
+    print("Putting training data in Ray object store...")
+    train_ref = ray.put(train_processed_df)
+    
+    # Process validation data in chunks
+    print(f"Processing validation data in chunks of size {chunk_size}...")
+    valid_processed_df = process_large_dataset(
+        valid_df, pipeline, label_encoder, text_column, label_column, chunk_size
+    )
+    
+    # Put the processed validation data in the Ray object store
+    print("Putting validation data in Ray object store...")
+    valid_ref = ray.put(valid_processed_df)
+    
+    return train_ref, valid_ref
 
 
 def main():
     args = parse_arguments()
     ngram_range = (args.ngram_min, args.ngram_max)
     
-    # Ensure model directory exists.
+    # Ensure model directory exists
     os.makedirs(args.model_dir, exist_ok=True)
     
     try:
-        # Initialize Ray
-        if not ray.is_initialized():
-            ray.init(ignore_reinit_error=True)
-        
-        # Process the training CSV.
-        X_df, complete_xdf, y, pipeline, feature_dict, label_encoder = process_csv(
+        # Process the training CSV to get the pipeline and label encoder
+        X_df, _, y, pipeline, feature_dict, label_encoder = process_csv(
             file_path=args.train_data_file,
             text_column=args.text_column,
             label_column=args.label_column,
@@ -141,119 +155,32 @@ def main():
             ngram_range=ngram_range,
             save_path=args.model_dir
         )
-        print("Training CSV processed. Feature DataFrame shape:", X_df.shape)
+        print("Pipeline and encoder created. Feature DataFrame shape:", X_df.shape)
         
-        # Store pipeline and label_encoder in Ray's object store
-        pipeline_ref = ray.put(pipeline)
-        label_encoder_ref = ray.get(ray.put(label_encoder))
+        # Read the raw DataFrames
+        train_df = pd.read_csv(args.train_data_file)
+        valid_df = pd.read_csv(args.valid_data_file)
         
-        # Process the validation CSV within a function to avoid large object capture
-        def process_validation_data():
-            # Get validation data - only load required columns
-            try:
-                valid_df = pd.read_csv(args.valid_data_file)
-                # Subset to only include the required columns
-                valid_df = subset_dataframe(valid_df, 
-                                          id_column=args.id_column, 
-                                          text_column=args.text_column, 
-                                          label_column=args.label_column)
-                print(f"Loaded validation data with shape: {valid_df.shape}")
-            except Exception as e:
-                print(f"Error loading validation data: {e}")
-                raise
-            
-            # Transform the text column using the pipeline
-            valid_features_sparse = pipeline.transform(valid_df[args.text_column])
-            feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
-            
-            valid_features_df = pd.DataFrame(valid_features_sparse.toarray(),
-                                             columns=feature_names,
-                                             index=valid_df.index)
-            
-            # Transform the validation labels using the fitted LabelEncoder.
-            if label_encoder is not None:
-                valid_labels = valid_df[args.label_column].astype(str).str.strip()
-                valid_labels_encoded = pd.Series(
-                    label_encoder.transform(valid_labels), index=valid_df.index)
-            else:
-                valid_labels_encoded = valid_df[args.label_column]
-            
-            # Concatenate the encoded column back to the transformed features.
-            valid_complete_df = pd.concat([valid_features_df, valid_labels_encoded.rename(args.label_column)], axis=1)
-            
-            return valid_complete_df
+        # Process datasets in chunks and get references
+        train_ref, valid_ref = create_ray_datasets_in_chunks(
+            train_df, valid_df, pipeline, label_encoder,
+            args.text_column, args.label_column, args.chunk_size
+        )
         
-        # Execute validation data processing 
-        print("Processing validation data...")
-        valid_complete_df = process_validation_data()
+        # Get the processed DataFrames from Ray object store
+        print("Retrieving processed datasets from Ray object store...")
+        train_processed_df = ray.get(train_ref)
+        valid_processed_df = ray.get(valid_ref)
         
-        # Fix DataFrames to make them compatible with Ray
-        print("Fixing DataFrames for Ray compatibility...")
-        complete_xdf_fixed = fix_dataframe_for_ray(complete_xdf)
-        valid_complete_df_fixed = fix_dataframe_for_ray(valid_complete_df)
+        # Create Ray datasets from the processed DataFrames
+        print("Creating Ray datasets...")
+        train_ds = ray.data.from_pandas(train_processed_df)
+        valid_ds = ray.data.from_pandas(valid_processed_df)
         
-        # Verify no duplicate columns
-        print(f"Training columns unique: {len(complete_xdf_fixed.columns) == len(set(complete_xdf_fixed.columns))}")
-        print(f"Validation columns unique: {len(valid_complete_df_fixed.columns) == len(set(valid_complete_df_fixed.columns))}")
-        
-        # Convert training and validation dataframes to Ray Datasets
-        print("Converting pandas DataFrames to Ray datasets...")
-        
-        try:
-            # Try with the fixed DataFrames
-            train_ds = from_pandas(complete_xdf_fixed)
-            valid_ds = from_pandas(valid_complete_df_fixed)
-            print("Successfully created Ray datasets using from_pandas")
-        except Exception as e:
-            print(f"Error with fixed DataFrames: {e}")
-            print("Trying alternative method for Ray Dataset creation...")
-            
-            # Alternative method: convert to dictionary and create dataset from items
-            try:
-                train_records = complete_xdf_fixed.to_dict('records')
-                valid_records = valid_complete_df_fixed.to_dict('records')
-                
-                train_ds = ray.data.from_items(train_records)
-                valid_ds = ray.data.from_items(valid_records)
-                print("Successfully created Ray datasets using from_items")
-            except Exception as e2:
-                print(f"Error with alternative method: {e2}")
-                
-                # Final fallback: convert to simpler format with fewer columns
-                print("Trying final fallback method with simplified data...")
-                try:
-                    # Keep only the most essential columns
-                    essential_cols = [args.label_column]
-                    # Add some of the most important feature columns
-                    feature_cols = complete_xdf_fixed.columns.tolist()
-                    # Remove the label column from the feature columns if present
-                    if args.label_column in feature_cols:
-                        feature_cols.remove(args.label_column)
-                    # Add up to 100 feature columns to reduce complexity
-                    essential_cols.extend(feature_cols[:100])
-                    
-                    # Subset DataFrames to essential columns
-                    simple_train_df = complete_xdf_fixed[essential_cols].copy()
-                    simple_valid_df = valid_complete_df_fixed[essential_cols].copy()
-                    
-                    # Convert all columns to float32 to ensure compatibility
-                    for col in simple_train_df.columns:
-                        if col != args.label_column:
-                            simple_train_df[col] = simple_train_df[col].astype('float32')
-                            simple_valid_df[col] = simple_valid_df[col].astype('float32')
-                    
-                    # Try once more with simplified DataFrames
-                    train_ds = from_pandas(simple_train_df)
-                    valid_ds = from_pandas(simple_valid_df)
-                    print("Successfully created Ray datasets using simplified DataFrames")
-                except Exception as e3:
-                    print(f"All DataFrame conversion methods failed: {e3}")
-                    raise
-        
-        # Get scaling config and tree method (e.g., based on GPU availability).
+        # Get scaling config and tree method
         scaling_config, tree_method = get_scaling_config_and_tree_method()
         
-        # Define hyperparameter search space.
+        # Define hyperparameter search space
         param_space = {
             "scaling_config": scaling_config,
             "params": {
@@ -272,7 +199,7 @@ def main():
             },
         }
         
-        # Initialize XGBoostTrainer for hyperparameter tuning.
+        # Initialize XGBoostTrainer for hyperparameter tuning
         trainer = XGBoostTrainer(
             label_column=args.label_column,
             params={}, 
@@ -286,43 +213,55 @@ def main():
             run_config=RunConfig(name="xgboost_gpu_tune_nutrikidai")
         )
         
+        print("Starting hyperparameter tuning...")
         results = tuner.fit()
         
-        # Save hyperparameter tuning results summary.
+        # Save hyperparameter tuning results summary
         results_df = results.get_dataframe()
-        results_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_tuning_results.csv")
+        results_path = os.path.join(
+            args.model_dir, f"{args.model_name}_nutrikidai_tuning_results.csv")
         results_df.to_csv(results_path)
         print(f"Tuning results saved to {results_path}")
         
-        # Extract best hyperparameters.
+        # Extract best hyperparameters
         if not results_df.empty:
             try:
-                best_result = results.get_best_result(metric="validation-logloss", mode="min")
+                best_result = results.get_best_result(
+                    metric="validation-logloss", mode="min")
                 print("Best trial config:", best_result.config)
-                print("Best trial final evaluation logloss:", best_result.metrics["validation-logloss"])
+                print("Best trial final evaluation logloss:",
+                      best_result.metrics["validation-logloss"])
             except KeyError:
                 available_metrics = list(results_df.columns)
-                metric_cols = [col for col in available_metrics if "validation-" in col]
+                metric_cols = [
+                    col for col in available_metrics if "validation-" in col
+                ]
                 if metric_cols:
                     best_metric = metric_cols[0]
-                    best_result = results.get_best_result(metric=best_metric, mode="min")
-                    print(f"Best trial config based on {best_metric}:", best_result.config)
-                    print(f"Best trial final evaluation {best_metric}:", best_result.metrics[best_metric])
+                    best_result = results.get_best_result(
+                        metric=best_metric, mode="min")
+                    print(f"Best trial config based on {best_metric}:",
+                          best_result.config)
+                    print(f"Best trial final evaluation {best_metric}:",
+                          best_result.metrics[best_metric])
                 else:
                     print("No validation metrics found in results. Using the first result as best.")
                     best_result = results.get_best_result()
         else:
             print("No valid results from tuning. Using default parameters.")
             best_result = None
-        
+            
         if best_result:
             best_params = best_result.config["params"]
-            # Save best hyperparameters.
-            hyperparams_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_config.joblib")
+            # Save best hyperparameters
+            hyperparams_path = os.path.join(
+                args.model_dir, f"{args.model_name}_nutrikidai_config.joblib")
             joblib.dump(best_result.config, hyperparams_path)
             print(f"Best hyperparameters saved to {hyperparams_path}")
-            # Save best model metrics.
-            metrics_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_metrics.joblib")
+            
+            # Save best model metrics
+            metrics_path = os.path.join(
+                args.model_dir, f"{args.model_name}_nutrikidai_metrics.joblib")
             joblib.dump(best_result.metrics, metrics_path)
             print(f"Best model metrics saved to {metrics_path}")
         else:
@@ -336,20 +275,18 @@ def main():
                 "subsample": 0.8,
                 "colsample_bytree": 0.8
             }
-            default_params_path = os.path.join(args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
+            default_params_path = os.path.join(
+                args.model_dir, f"{args.model_name}_nutrikidai_configs.joblib")
             joblib.dump(best_params, default_params_path)
             print(f"Using default parameters. Saved to {default_params_path}")
-        
-        # Get pipeline and feature dict from Ray's object store
-        pipeline = ray.get(pipeline_ref)
-        
+            
         return best_params, pipeline, feature_dict
+    
     except Exception as e:
         print(f"Error in main function: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
 
 if __name__ == "__main__":
+    ray.init(ignore_reinit_error=True)  
     best_params, pipeline, feature_dict = main()
