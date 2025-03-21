@@ -14,7 +14,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import accuracy_score
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
-
+from sklearn.preprocessing import LabelEncoder
 
 class TextTokenizer(BaseEstimator, TransformerMixin):
     def __init__(
