@@ -73,19 +73,46 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
         index=chunk_df.index
     )
     
-    # Transform labels based on their type
-    if label_encoder is not None:
-        # For categorical labels that need encoding
-        # Ensure consistent formatting
-        labels = chunk_df[label_column].astype(str).str.lower().str.strip()
-        labels_encoded = pd.Series(
-            label_encoder.transform(labels), 
-            index=chunk_df.index
-        )
+    # Check if labels are already numeric (0/1)
+    if chunk_df[label_column].dtype in ['int64', 'int32', 'float64', 'float32']:
+        # Check if values are already binary (only 0 and 1)
+        unique_values = set(chunk_df[label_column].unique())
+        if unique_values.issubset({0, 1}) or unique_values.issubset({0.0, 1.0}):
+            # Already binary numeric, just ensure it's int
+            labels_encoded = chunk_df[label_column].astype(int)
+        else:
+            # Numeric but not binary, use encoder
+            if label_encoder is not None:
+                labels = chunk_df[label_column].astype(str)
+                labels_encoded = pd.Series(
+                    label_encoder.transform(labels),
+                    index=chunk_df.index
+                )
+            else:
+                # Fallback to as-is if no encoder provided
+                labels_encoded = chunk_df[label_column]
     else:
-        # For numeric labels that are already 0/1 or '0'/'1'
-        # Convert to integer to ensure consistency
-        labels_encoded = chunk_df[label_column].astype(int)
+        # Handle string labels
+        if label_encoder is not None:
+            # Try to detect if it's already '0'/'1' strings
+            unique_values = set(chunk_df[label_column].astype(str).str.strip().unique())
+            if unique_values.issubset({'0', '1'}):
+                # Already binary strings, convert directly to int
+                labels_encoded = chunk_df[label_column].astype(str).str.strip().astype(int)
+            else:
+                # Not binary strings, use encoder
+                labels = chunk_df[label_column].astype(str).str.lower().str.strip()
+                labels_encoded = pd.Series(
+                    label_encoder.transform(labels),
+                    index=chunk_df.index
+                )
+        else:
+            # No encoder, try direct conversion (will fail if not convertible)
+            labels_encoded = chunk_df[label_column].astype(int)
+    
+    # Ensure labels_encoded is a Series, not a DataFrame
+    if isinstance(labels_encoded, pd.DataFrame):
+        labels_encoded = labels_encoded.iloc[:, 0]
     
     # Return the processed chunk
     return pd.concat([
@@ -110,10 +137,24 @@ def process_large_dataset(df,
     
     if logger:
         logger.info(f"Dataset split into {len(chunks)} chunks")
-        if label_encoder is not None:
-            logger.info(f"Using label encoder with classes: {label_encoder.classes_}")
+        # Check if the label column is already binary numeric
+        if df[label_column].dtype in ['int64', 'int32', 'float64', 'float32']:
+            unique_values = set(df[label_column].unique())
+            if unique_values.issubset({0, 1}) or unique_values.issubset({0.0, 1.0}):
+                logger.info(f"Label column '{label_column}' is already binary numeric (0/1). No encoding needed.")
+            else:
+                logger.info(f"Label column '{label_column}' is numeric but not binary. Encoding may be needed.")
+                if label_encoder is not None:
+                    logger.info(f"Using label encoder with classes: {label_encoder.classes_}")
         else:
-            logger.info("No label encoder needed - labels are already binary")
+            # Check if strings are already '0'/'1'
+            unique_values = set(df[label_column].astype(str).str.strip().unique())
+            if unique_values.issubset({'0', '1'}):
+                logger.info(f"Label column '{label_column}' contains binary strings ('0'/'1'). Will convert to integers.")
+            else:
+                logger.info(f"Label column '{label_column}' contains non-binary strings. Encoding will be applied.")
+                if label_encoder is not None:
+                    logger.info(f"Using label encoder with classes: {label_encoder.classes_}")
     
     # Store references to Ray objects
     refs = []
@@ -152,23 +193,24 @@ def process_large_dataset(df,
     if logger:
         logger.info(f"Combined dataset shape: {combined_df.shape}")
         
-        # Ensure label column is 1-dimensional before calling value_counts
-        if isinstance(combined_df[label_column].iloc[0], (list, np.ndarray)):
-            logger.warning(f"Label column contains multi-dimensional values. Converting to 1D...")
-            # Convert to string representation if it's multi-dimensional
-            combined_df[label_column] = combined_df[label_column].apply(lambda x: str(x))
+        # Check if combined_df[label_column] is a DataFrame instead of Series
+        if isinstance(combined_df[label_column], pd.DataFrame):
+            logger.warning(f"Label column '{label_column}' returned a DataFrame instead of a Series. Using first column.")
+            label_series = combined_df[label_column].iloc[:, 0]
+            logger.info(f"Label column dtype: {label_series.dtype}")
+        else:
+            logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
         
-        # Use Series.value_counts() directly with try/except block for safety
+        # Ensure label column is 1-dimensional before calling value_counts
         try:
             label_counts = combined_df[label_column].value_counts()
             logger.info(f"Label distribution in processed data: {label_counts}")
-        except ValueError as e:
+        except Exception as e:
             logger.warning(f"Could not compute value_counts: {str(e)}")
             logger.info(f"First few label values: {combined_df[label_column].head()}")
         
         # Verify data types
-        logger.info(f"Label column dtype: {combined_df[label_column].dtype}")
-        if combined_df[label_column].dtype != 'int64':
+        if not pd.api.types.is_integer_dtype(combined_df[label_column]):
             # Force conversion to int if somehow it wasn't done correctly
             logger.warning(f"Converting {label_column} to int64 - was {combined_df[label_column].dtype}")
             combined_df[label_column] = combined_df[label_column].astype(int)
