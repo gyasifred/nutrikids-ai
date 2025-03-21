@@ -7,7 +7,7 @@ import joblib
 import json
 import argparse
 from models.text_cnn import train_textcnn, TextTokenizer
-
+from utils import  process_labels
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -50,8 +50,14 @@ def main():
     train_labels = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
     val_labels = val_df[args.label_column].tolist()
+    # Process labels
+    train_labels, label_encoder = process_labels(train_labels_raw)
+    val_labels, _ = process_labels(val_labels_raw) if label_encoder is None else (
+        label_encoder.transform(val_labels_raw), None)
+
     print(f"Training data: {len(train_texts)} examples")
     print(f"Validation data: {len(val_texts)} examples")
+    print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
     # Load best config
     best_config_path = os.path.join(args.config_dir, "best_config.joblib")
     print(f"Loading best configuration from {best_config_path}...")
