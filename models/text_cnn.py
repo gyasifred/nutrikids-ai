@@ -13,7 +13,6 @@ from collections import Counter
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import accuracy_score
 from torch.utils.data import Dataset
-from utils import encode_labels
 import matplotlib.pyplot as plt
 
 
