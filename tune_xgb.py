@@ -78,11 +78,10 @@ def process_chunk(chunk_df, pipeline, label_encoder, text_column, label_column):
     else:
         labels_encoded = chunk_df[label_column]
     
-    # Return the processed chunk
-    return pd.concat([
-        features_df, 
-        labels_encoded.rename(label_column)
-    ], axis=1)
+    # Return the processed chunk - FIXED: Create a proper DataFrame structure
+    result_df = features_df.copy()
+    result_df[label_column] = labels_encoded
+    return result_df
 
 
 def process_large_dataset(df, pipeline, label_encoder, text_column, label_column, chunk_size=5000):
@@ -116,21 +115,18 @@ def create_ray_datasets_in_chunks(train_df, valid_df, pipeline, label_encoder,
         train_df, pipeline, label_encoder, text_column, label_column, chunk_size
     )
     
-    # Put the processed training data in the Ray object store
-    print("Putting training data in Ray object store...")
-    train_ref = ray.put(train_processed_df)
-    
     # Process validation data in chunks
     print(f"Processing validation data in chunks of size {chunk_size}...")
     valid_processed_df = process_large_dataset(
         valid_df, pipeline, label_encoder, text_column, label_column, chunk_size
     )
     
-    # Put the processed validation data in the Ray object store
-    print("Putting validation data in Ray object store...")
-    valid_ref = ray.put(valid_processed_df)
+    # Create Ray datasets directly
+    print("Creating Ray datasets...")
+    train_ds = ray.data.from_pandas(train_processed_df)
+    valid_ds = ray.data.from_pandas(valid_processed_df)
     
-    return train_ref, valid_ref
+    return train_ds, valid_ds
 
 
 def main():
@@ -161,21 +157,11 @@ def main():
         train_df = pd.read_csv(args.train_data_file)
         valid_df = pd.read_csv(args.valid_data_file)
         
-        # Process datasets in chunks and get references
-        train_ref, valid_ref = create_ray_datasets_in_chunks(
+        # FIXED: Create Ray datasets directly without using Ray object store intermediates
+        train_ds, valid_ds = create_ray_datasets_in_chunks(
             train_df, valid_df, pipeline, label_encoder,
             args.text_column, args.label_column, args.chunk_size
         )
-        
-        # Get the processed DataFrames from Ray object store
-        print("Retrieving processed datasets from Ray object store...")
-        train_processed_df = ray.get(train_ref)
-        valid_processed_df = ray.get(valid_ref)
-        
-        # Create Ray datasets from the processed DataFrames
-        print("Creating Ray datasets...")
-        train_ds = ray.data.from_pandas(train_processed_df)
-        valid_ds = ray.data.from_pandas(valid_processed_df)
         
         # Get scaling config and tree method
         scaling_config, tree_method = get_scaling_config_and_tree_method()
