@@ -300,101 +300,101 @@ mkdir -p "$LLM_BASE_DIR"
 #   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
 #   $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
 
-# echo "==================== Step 3: XGBoost Tuning ===================="
-# # Run the XGBoost tuning script with correct parameter names
-# ./tune_xgb.py \
-#   --train_data_file "$TRAIN_DATA" \
-#   --valid_data_file "$VAL_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   --model_name "$MODEL_NAME" \
-#   --num_samples "$NUM_SAMPLES" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --model_dir "$XGB_OUTPUT_DIR"
+echo "==================== Step 3: XGBoost Tuning ===================="
+# Run the XGBoost tuning script with correct parameter names
+./tune_xgb.py \
+  --train_data_file "$TRAIN_DATA" \
+  --valid_data_file "$VAL_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  --model_name "$MODEL_NAME" \
+  --num_samples "$NUM_SAMPLES" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --model_dir "$XGB_OUTPUT_DIR"
 
-# echo "==================== Step 4: XGBoost Training ===================="
-# # Run the XGBoost training script with tuned parameters
-# ./train_xgb.py \
-#   --data_file "$FULL_TRAIN_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --eta "$ETA" \
-#   --max_depth "$MAX_DEPTH" \
-#   --min_child_weight "$MIN_CHILD_WEIGHT" \
-#   --subsample "$SUBSAMPLE" \
-#   --colsample_bytree "$COLSAMPLE_BYTREE" \
-#   --model_name "$MODEL_NAME" \
-#   --config_dir "$XGB_OUTPUT_DIR" \
-#   --model_dir "$XGB_OUTPUT_DIR"
+echo "==================== Step 4: XGBoost Training ===================="
+# Run the XGBoost training script with tuned parameters
+./train_xgb.py \
+  --data_file "$FULL_TRAIN_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --eta "$ETA" \
+  --max_depth "$MAX_DEPTH" \
+  --min_child_weight "$MIN_CHILD_WEIGHT" \
+  --subsample "$SUBSAMPLE" \
+  --colsample_bytree "$COLSAMPLE_BYTREE" \
+  --model_name "$MODEL_NAME" \
+  --config_dir "$XGB_OUTPUT_DIR" \
+  --model_dir "$XGB_OUTPUT_DIR"
 
-# echo "==================== Step 5: TabPFN Training ===================="
-# # Run the TabPFN training script
-# ./train_tabpfn.py \
-#   --data_file "$FULL_TRAIN_DATA" \
-#   --text_column "$TEXT_COLUMN" \
-#   --label_column "$LABEL_COLUMN" \
-#   --id_column "$ID_COLUMN" \
-#   --device "$DEVICE" \
-#   --model_name "$TABPFN_MODEL_NAME" \
-#   --max_features "$MAX_FEATURES" \
-#   --vectorization_mode "$VECTORIZATION_MODE" \
-#   --ngram_min "$NGRAM_MIN" \
-#   --ngram_max "$NGRAM_MAX" \
-#   $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
-#   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
-#   --model_dir "$TABPFN_OUTPUT_DIR" 
+echo "==================== Step 5: TabPFN Training ===================="
+# Run the TabPFN training script
+./train_tabpfn.py \
+  --data_file "$FULL_TRAIN_DATA" \
+  --text_column "$TEXT_COLUMN" \
+  --label_column "$LABEL_COLUMN" \
+  --id_column "$ID_COLUMN" \
+  --device "$DEVICE" \
+  --model_name "$TABPFN_MODEL_NAME" \
+  --max_features "$MAX_FEATURES" \
+  --vectorization_mode "$VECTORIZATION_MODE" \
+  --ngram_min "$NGRAM_MIN" \
+  --ngram_max "$NGRAM_MAX" \
+  $( [[ "$REMOVE_STOP_WORDS" == true ]] && echo "--remove_stop_words" ) \
+  $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
+  --model_dir "$TABPFN_OUTPUT_DIR" 
 
-echo "==================== Step 6: LLM Fine-tuning ===================="
-# Fine-tune LLMs with different directories for each model
-for MODEL in "${LLM_MODELS[@]}"; do
-  # Extract model name for directory
-  MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
-  MODEL_OUTPUT_DIR="${LLM_BASE_DIR}/${MODEL_SHORT_NAME}"
+# echo "==================== Step 6: LLM Fine-tuning ===================="
+# # Fine-tune LLMs with different directories for each model
+# for MODEL in "${LLM_MODELS[@]}"; do
+#   # Extract model name for directory
+#   MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
+#   MODEL_OUTPUT_DIR="${LLM_BASE_DIR}/${MODEL_SHORT_NAME}"
   
-  echo "Training $MODEL_SHORT_NAME with output directory $MODEL_OUTPUT_DIR"
+#   echo "Training $MODEL_SHORT_NAME with output directory $MODEL_OUTPUT_DIR"
   
-  # Create model-specific output directory
-  mkdir -p "$MODEL_OUTPUT_DIR"
+#   # Create model-specific output directory
+#   mkdir -p "$MODEL_OUTPUT_DIR"
   
-  # Determine if model should be loaded in 4-bit (default) or 8-bit
-  if [[ "$MODEL" == *"4bit"* ]]; then
-    BIT_FLAG="--load_in_4bit"
-  else
-    BIT_FLAG="--load_in_8bit"
-  fi
+#   # Determine if model should be loaded in 4-bit (default) or 8-bit
+#   if [[ "$MODEL" == *"4bit"* ]]; then
+#     BIT_FLAG="--load_in_4bit"
+#   else
+#     BIT_FLAG="--load_in_8bit"
+#   fi
   
-  ./finetune_llm.py \
-    --model_name "$MODEL" \
-    --train_data "$TRAIN_DATA" \
-    --val_data "$VAL_DATA" \
-    --text_column "$TEXT_COLUMN" \
-    --label_column "$LABEL_COLUMN" \
-    --output_dir "$MODEL_OUTPUT_DIR" \
-    --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-    --batch_size 16 \
-    --gradient_accumulation 4 \
-    --learning_rate 2e-4 \
-    --max_steps 500 \
-    --max_seq_length 2048 \
-    --epochs 50 \
-    --lora_r 8 \
-    --lora_alpha 32 \
-    --seed 42 \
-    --use_flash_attention \
-    $BIT_FLAG
-done
+#   ./finetune_llm.py \
+#     --model_name "$MODEL" \
+#     --train_data "$TRAIN_DATA" \
+#     --val_data "$VAL_DATA" \
+#     --text_column "$TEXT_COLUMN" \
+#     --label_column "$LABEL_COLUMN" \
+#     --output_dir "$MODEL_OUTPUT_DIR" \
+#     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
+#     --batch_size 16 \
+#     --gradient_accumulation 4 \
+#     --learning_rate 2e-4 \
+#     --max_steps 500 \
+#     --max_seq_length 2048 \
+#     --epochs 50 \
+#     --lora_r 8 \
+#     --lora_alpha 32 \
+#     --seed 42 \
+#     --use_flash_attention \
+#     $BIT_FLAG
+# done
 
 echo "All training tasks completed successfully!"
