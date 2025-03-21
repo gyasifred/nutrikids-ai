@@ -2,6 +2,7 @@
 """
 Memory-Efficient TabPFN Training Script: Processes text data in batches and trains a TabPFN classifier.
 Saves the model, text vectorization pipeline, and label encoder to disk.
+Handles binary labels (1/0 or yes/no) appropriately.
 """
 
 import os
@@ -16,6 +17,40 @@ from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 # Import the text processing classes from utils
 from utils import ClinicalTextPreprocessor, StopWordsRemover, TextStemmer
+
+
+def is_binary_numeric(labels):
+    """
+    Check if labels are already binary numeric (0/1).
+    
+    Parameters:
+      - labels: Series or array of labels
+      
+    Returns:
+      - is_binary: Boolean indicating if labels are already binary numeric
+    """
+    unique_labels = set(str(label).strip().lower() for label in labels)
+    return unique_labels.issubset({'0', '1', 0, 1})
+
+
+def is_binary_text(labels):
+    """
+    Check if labels are binary text values like yes/no.
+    
+    Parameters:
+      - labels: Series or array of labels
+      
+    Returns:
+      - is_binary_text: Boolean indicating if labels are binary text
+    """
+    unique_labels = set(str(label).strip().lower() for label in labels if pd.notna(label))
+    binary_text_sets = [{'yes', 'no'}, {'true', 'false'}, {'positive', 'negative'}, {'y', 'n'}]
+    
+    for binary_set in binary_text_sets:
+        if unique_labels.issubset(binary_set):
+            return True
+    
+    return False
 
 
 def batch_process_csv(
@@ -34,7 +69,7 @@ def batch_process_csv(
 ):
     """
     Process CSV data in batches to avoid memory issues.
-    Maintains compatibility with the original process_csv function.
+    Handles binary labels appropriately.
     
     Parameters:
       - file_path: Path to the CSV file containing the data
@@ -53,7 +88,8 @@ def batch_process_csv(
     Returns:
       - data_generator: Generator yielding batches of processed data
       - feature_dict: Dictionary mapping feature indices to names
-      - label_encoder: Fitted LabelEncoder for the labels
+      - label_encoder: Fitted LabelEncoder for the labels or None if not used
+      - is_binary: Boolean indicating if labels are binary
     """
     # Validate inputs
     try:
@@ -91,18 +127,31 @@ def batch_process_csv(
         print(f"Error during first pass: {str(e)}")
         raise
     
-    # Create and fit a label encoder
-    label_encoder = LabelEncoder()
-    label_encoder.fit(list(all_labels))
+    # Determine if labels are already binary
+    is_binary_01 = is_binary_numeric(all_labels)
+    is_yes_no = is_binary_text(all_labels)
+    need_encoding = not is_binary_01
     
-    # Save the label encoder
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    encoder_filename = os.path.join(
-        save_path,
-        f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib'
-    )
-    joblib.dump(label_encoder, encoder_filename)
-    print(f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
+    # Create and fit a label encoder if needed
+    label_encoder = None
+    encoder_filename = None
+    
+    if need_encoding:
+        label_encoder = LabelEncoder()
+        label_encoder.fit(list(all_labels))
+        
+        # Save the label encoder
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        encoder_filename = os.path.join(
+            save_path,
+            f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib'
+        )
+        joblib.dump(label_encoder, encoder_filename)
+        
+        encoding_type = "binary text (yes/no)" if is_yes_no else "categorical"
+        print(f"Label encoder saved to '{encoder_filename}'. Labels were {encoding_type}. Classes: {label_encoder.classes_}")
+    else:
+        print("Labels are already binary (0/1). No encoding needed.")
     
     # Second pass: create and fit the text processing pipeline on a sample
     print("Second pass: Creating text processing pipeline...")
@@ -169,7 +218,14 @@ def batch_process_csv(
                 
                 # Get labels
                 y = chunk[label_column]
-                y_encoded = label_encoder.transform(y)
+                
+                # Process labels based on type
+                if need_encoding:
+                    # Encode non-binary labels
+                    y_encoded = label_encoder.transform(y)
+                else:
+                    # Convert to integers if they're already 0/1
+                    y_encoded = y.astype(int)
                 
                 # Create complete DataFrame with features and label for this batch
                 complete_df = pd.concat([X_dense, pd.DataFrame({label_column: y_encoded}, index=chunk.index)], axis=1)
@@ -184,7 +240,7 @@ def batch_process_csv(
                 print(f"Error processing batch: {str(e)}")
                 continue
     
-    return data_generator, feature_dict, label_encoder
+    return data_generator, feature_dict, label_encoder, is_binary_01
 
 
 def main():
@@ -237,7 +293,7 @@ def main():
     print(f"Processing CSV data from {args.data_file} in batches...")
     ngram_range = (args.ngram_min, args.ngram_max)
 
-    data_generator, feature_dict, label_encoder = batch_process_csv(
+    data_generator, feature_dict, label_encoder, is_binary = batch_process_csv(
         file_path=args.data_file,
         text_column=args.text_column,
         label_column=args.label_column,
@@ -260,7 +316,7 @@ def main():
     joblib.dump(feature_dict, feature_dict_path)
     print(f"Feature dictionary saved to: {feature_dict_path}")
     
-    # Note: Label encoder is already saved in batch_process_csv function
+    # Note: Label encoder is already saved in batch_process_csv function if needed
 
     # Collect training data up to max_train_samples
     print(f"Collecting up to {args.max_train_samples} samples for training...")
@@ -288,6 +344,10 @@ def main():
     y_train = np.concatenate(y_train_batches) if y_train_batches else np.array([])
     
     print(f"Collected {len(X_train)} samples for training")
+    
+    # Add info about label encoding
+    label_type = "already binary (0/1)" if is_binary else "encoded to integers"
+    print(f"Labels were {label_type}")
 
     # Train model
     results = train_tabpfn(
