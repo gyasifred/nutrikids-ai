@@ -46,9 +46,10 @@ def train_tabpfn(
     # Initialize and train the TabPFN classifier
     tabpfn_model = TabPFNClassifier(
         device=device,
+        ignore_pretraining_limits=True,
         **tabpfn_kwargs
     )
-    tabpfn_model.fit(X_train, y_train, ignore_pretraining_limits=True)
+    tabpfn_model.fit(X_train, y_train)
     
     # Save the model with timestamp
     #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
