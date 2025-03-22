@@ -9,7 +9,6 @@ from tqdm import tqdm
 from unsloth import FastLanguageModel
 from transformers import BitsAndBytesConfig
 
-# Import utilities from the existing implementation
 from models.llm_models import (
     MalnutritionPromptBuilder,
     extract_malnutrition_decision,
@@ -20,6 +19,309 @@ from models.llm_models import (
     print_metrics_report,
     is_bfloat16_supported
 )
+
+
+def get_quantization_config(args):
+    """Define quantization configuration for the model based on arguments."""
+    # Determine compute dtype based on hardware and user preferences
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
+    ) and not args.force_fp16 else torch.float16
+
+    # Handle 8-bit quantization
+    if args.load_in_8bit:
+        return BitsAndBytesConfig(
+            load_in_8bit=True,
+            load_in_4bit=False,
+            llm_int8_enable_fp32_cpu_offload=True
+        )
+    # Handle 4-bit quantization
+    elif args.load_in_4bit:
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            llm_int8_enable_fp32_cpu_offload=True,
+            llm_int8_threshold=6.0,
+            llm_int8_has_fp16_weight=True
+        )
+    # No quantization (full precision)
+    else:
+        return None
+
+
+def get_device():
+    """
+    Get the appropriate device, prioritizing GPU usage.
+
+    Returns:
+        torch.device: The device to use for model inference
+    """
+    if torch.cuda.is_available():
+        # Use CUDA GPU
+        device = torch.device("cuda")
+        print(f"GPU detected: {torch.cuda.get_device_name(0)}")
+        print(
+            f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        return device
+    else:
+        print("No GPU detected, falling back to CPU. This may significantly slow down inference.")
+        return torch.device("cpu")
+
+
+def load_model_and_tokenizer(base_model, model_path, args):
+    """
+    Load model and tokenizer for evaluation with appropriate quantization settings.
+
+    Args:
+        base_model (str): Base model name or path
+        model_path (str): Path to fine-tuned model adapter weights (optional)
+        args: Command line arguments with quantization settings
+
+    Returns:
+        tuple: (model, tokenizer)
+    """
+    # Get device
+    device = get_device()
+    print(f"Using device: {device}")
+
+    print(
+        f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
+    # Determine compute dtype based on hardware and preferences
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
+    ) and not args.force_fp16 else torch.float16
+    # Get appropriate quantization config
+    quantization_config = get_quantization_config(args)
+    try:
+        # Set up model loading kwargs with common parameters
+        model_kwargs = {
+            # Force GPU usage if available instead of "auto" mapping
+            "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
+            "use_flash_attention_2": args.use_flash_attention,
+            "use_cache": True  # Enable caching for inference
+        }
+        # Add quantization settings
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        else:
+            # Direct quantization flags if no config is provided
+            model_kwargs["load_in_4bit"] = args.load_in_4bit
+            model_kwargs["load_in_8bit"] = args.load_in_8bit
+        # Set dtype for the model
+        model_kwargs["dtype"] = compute_dtype
+        if model_path:
+            # Load base model with adapter weights (fine-tuned model)
+            model_kwargs["model_name"] = base_model
+            model_kwargs["adapter_name"] = model_path
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                **model_kwargs)
+            print(
+                f"Model loaded successfully with adapter weights from {model_path}")
+        else:
+            # Load base model only
+            model_kwargs["model_name"] = base_model
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                **model_kwargs)
+            print(f"Base model loaded successfully: {base_model}")
+        # Enable native 2x faster inference
+        FastLanguageModel.for_inference(model)
+        return model, tokenizer
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        raise
+
+
+def get_probability_from_logits(logits, tokenizer):
+    """
+    Extract probability of the 'yes' answer from model logits.
+    Args:
+        logits (torch.Tensor): The output logits from the model's forward pass
+        tokenizer: The tokenizer used with the model
+    Returns:
+        float: Probability score for "yes" class (0-1)
+    """
+    try:
+        # Get token IDs for "yes" and "no"
+        yes_tokens = tokenizer("yes", add_special_tokens=False).input_ids
+        no_tokens = tokenizer("no", add_special_tokens=False).input_ids
+        
+        # Take the first token ID as representative
+        yes_token_id = yes_tokens[0] if yes_tokens else tokenizer.encode("yes")[0]
+        no_token_id = no_tokens[0] if no_tokens else tokenizer.encode("no")[0]
+        
+        # Extract the relevant logits
+        yes_logit = logits[0, yes_token_id].item()
+        no_logit = logits[0, no_token_id].item()
+        
+        # Convert to probabilities using softmax
+        probs = np.exp([yes_logit, no_logit]) / np.sum(np.exp([yes_logit, no_logit]))
+        yes_prob = probs[0]
+        return yes_prob
+    except Exception as e:
+        print(f"Error calculating probability from logits: {e}")
+        # Fallback to a default probability of 0.5 in case of errors
+        return 0.5
+
+
+def process_single_text_with_logits(text, model, tokenizer, prompt_builder, args):
+    """
+    Process a single patient note and extract both the prediction and probability.
+    Args:
+        text (str): Patient note text
+        model: The language model
+        tokenizer: The tokenizer
+        prompt_builder: MalnutritionPromptBuilder instance
+        args: Command line arguments
+    Returns:
+        tuple: (decision, explanation, probability)
+    """
+    # Explicitly use GPU if available
+    device = torch.device("cuda") if torch.cuda.is_available(
+    ) and not args.force_cpu else torch.device("cpu")
+
+    # Prepare prompt with few-shot examples if specified
+    prompt = prompt_builder.get_inference_prompt(
+        patient_notes=text,
+        note_col=args.text_column,
+        label_col=args.label_column,
+        num_examples=args.few_shot_count,
+        balanced=args.balanced_examples
+    )
+    # Prepare chat format messages
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        # Apply chat template to get input tokens and move to device
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt"
+        )
+
+        # Explicitly move to device (preferably GPU)
+        inputs = inputs.to(device)
+
+        # Step 1: Run forward pass to get logits for the first token prediction
+        with torch.no_grad():
+            # Get the logits for the first generated token
+            outputs = model(inputs)
+            logits = outputs.logits[:, -1, :]
+            
+            # Get probability for "yes" class
+            yes_probability = get_probability_from_logits(logits, tokenizer)
+            
+            # Now generate the full response
+            output = model.generate(
+                input_ids=inputs,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                do_sample=args.temperature > 0,
+                use_cache=True,
+                pad_token_id=tokenizer.eos_token_id
+            )
+        
+        # Decode the output - only the generated part
+        input_length = inputs.shape[1]
+        response_tokens = output[0][input_length:]
+        response = tokenizer.decode(response_tokens, skip_special_tokens=True)
+        
+        # Extract decision and explanation
+        decision, explanation = extract_malnutrition_decision(response)
+        
+        # Apply threshold to convert probability to binary label (1/0)
+        binary_decision = 1 if yes_probability >= args.threshold else 0
+        
+        return binary_decision, explanation, yes_probability
+    
+    except Exception as e:
+        print(f"Error processing text: {e}")
+        # Return default values in case of error
+        return 0, "Error processing text", 0.0
+
+
+def evaluate_model(args, model, tokenizer, prompt_builder):
+    """
+    Evaluate model on test dataset.
+    Args:
+        args: Command line arguments
+        model: The language model
+        tokenizer: The tokenizer
+        prompt_builder: MalnutritionPromptBuilder instance
+    Returns:
+        DataFrame: Results with predictions and probabilities
+    """
+    print(f"Loading test data from {args.test_csv}")
+    # Load test data
+    df = pd.read_csv(args.test_csv)
+    
+    # Handle ID column
+    if args.id_column not in df.columns:
+        print(f"ID column '{args.id_column}' not found, creating it.")
+        df[args.id_column] = [f"patient_{i}" for i in range(len(df))]
+    
+    # Validate required columns exist
+    required_columns = [args.text_column, args.label_column, args.id_column]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        raise ValueError(f"Required columns {missing_columns} not found in test CSV")
+    
+    # Initialize results storage
+    results = []
+    # Process each example
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Evaluating"):
+        try:
+            patient_text = row[args.text_column]
+            patient_id = row[args.id_column]
+            
+            # Handle missing text
+            if pd.isna(patient_text) or patient_text == "":
+                print(f"Warning: Empty text for patient {patient_id}, skipping.")
+                continue
+                
+            # Convert true label to binary (1/0)
+            true_label_str = str(row[args.label_column]).lower()
+            true_label = 1 if true_label_str in ["1", "yes", "true"] else 0
+            
+            # Get prediction, explanation, and probability
+            predicted_label, explanation, probability = process_single_text_with_logits(
+                patient_text, model, tokenizer, prompt_builder, args
+            )
+            
+            # Store result
+            results.append({
+                "patient_id": patient_id,
+                "true_label": true_label,
+                "predicted_label": predicted_label,
+                "probability": probability,
+                "explanation": explanation
+            })
+        except Exception as e:
+            print(f"Error processing row {idx}: {e}")
+            # Add error record
+            results.append({
+                "patient_id": row.get(args.id_column, f"row_{idx}"),
+                "true_label": -1,  # Error indicator
+                "predicted_label": -1,
+                "probability": 0.0,
+                "explanation": f"Error: {str(e)}"
+            })
+    
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+    
+    # Filter out error rows for evaluation
+    eval_df = results_df[results_df["true_label"] != -1].copy()
+    
+    if len(eval_df) == 0:
+        print("Warning: No valid results to evaluate!")
+    elif len(eval_df) < len(df):
+        print(f"Warning: Only {len(eval_df)} out of {len(df)} records were processed successfully.")
+    
+    return results_df
 
 
 def parse_arguments():
@@ -78,274 +380,137 @@ def parse_arguments():
                         help="Batch size for processing (default: 1)")
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Probability threshold for binary classification (default: 0.5)")
-    
+
     # Force precision if needed
     parser.add_argument("--force_fp16", action="store_true",
                         help="Force using FP16 precision")
     parser.add_argument("--force_bf16", action="store_true",
                         help="Force using BF16 precision if supported")
 
+    # Device arguments
+    parser.add_argument("--force_cpu", action="store_true",
+                        help="Force using CPU even if GPU is available")
+    parser.add_argument("--gpu_id", type=int, default=0,
+                        help="GPU ID to use if multiple GPUs are available (default: 0)")
+
     args = parser.parse_args()
-    
+
     if args.load_in_8bit:
         args.load_in_4bit = False
-        
-    return args
-
-
-def get_quantization_config(args):
-    """Define quantization configuration for the model based on arguments."""
-    # Determine compute dtype based on hardware and user preferences
-    compute_dtype = torch.bfloat16 if is_bfloat16_supported() and not args.force_fp16 else torch.float16
     
-    # Handle 8-bit quantization
-    if args.load_in_8bit:
-        return BitsAndBytesConfig(
-            load_in_8bit=True,
-            load_in_4bit=False,
-            llm_int8_enable_fp32_cpu_offload=True
-        )
-    # Handle 4-bit quantization
-    elif args.load_in_4bit:
-        return BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            llm_int8_enable_fp32_cpu_offload=True,
-            llm_int8_threshold=6.0,
-            llm_int8_has_fp16_weight=True
-        )
-    # No quantization (full precision)
-    else:
-        return None
+    if args.force_fp16 and args.force_bf16:
+        print("Warning: Both --force_fp16 and --force_bf16 specified. Using --force_fp16.")
+        args.force_bf16 = False
 
-
-def load_model_and_tokenizer(base_model, model_path, args):
-    """
-    Load model and tokenizer for evaluation with appropriate quantization settings.
-
-    Args:
-        base_model (str): Base model name or path
-        model_path (str): Path to fine-tuned model adapter weights (optional)
-        args: Command line arguments with quantization settings
-
-    Returns:
-        tuple: (model, tokenizer)
-    """
-    print(f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
-    # Determine compute dtype based on hardware and preferences
-    compute_dtype = torch.bfloat16 if is_bfloat16_supported() and not args.force_fp16 else torch.float16
-    # Get appropriate quantization config
-    quantization_config = get_quantization_config(args)
-    try:
-        # Set up model loading kwargs with common parameters
-        model_kwargs = {
-            "device_map": "auto",
-            "use_flash_attention_2": args.use_flash_attention,
-            "use_cache": True  # Enable caching for inference
-        }
-        # Add quantization settings
-        if quantization_config is not None:
-            model_kwargs["quantization_config"] = quantization_config
-        else:
-            # Direct quantization flags if no config is provided
-            model_kwargs["load_in_4bit"] = args.load_in_4bit
-            model_kwargs["load_in_8bit"] = args.load_in_8bit 
-        # Set dtype for the model 
-        model_kwargs["dtype"] = compute_dtype
-        if model_path:
-            # Load base model with adapter weights (fine-tuned model)
-            model_kwargs["model_name"] = base_model
-            model_kwargs["adapter_name"] = model_path
-            model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
-            print(f"Model loaded successfully with adapter weights from {model_path}")
-        else:
-            # Load base model only
-            model_kwargs["model_name"] = base_model
-            model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
-            print(f"Base model loaded successfully: {base_model}")
-        # Enable native 2x faster inference
-        FastLanguageModel.for_inference(model)
-        return model, tokenizer
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        raise
-
-
-def get_probability_from_logits(logits, tokenizer):
-    """
-    Extract probability of the 'yes' answer from model logits.
-    Args:
-        logits (torch.Tensor): The output logits from the model's forward pass
-        tokenizer: The tokenizer used with the model
-    Returns:
-        float: Probability score for "yes" class (0-1)
-    """
-    # Get token IDs for "yes" and "no"
-    yes_tokens = tokenizer("yes", add_special_tokens=False).input_ids
-    no_tokens = tokenizer("no", add_special_tokens=False).input_ids
-    # Take the first token ID as representative
-    yes_token_id = yes_tokens[0]
-    no_token_id = no_tokens[0]
-    # Extract the relevant logits
-    yes_logit = logits[0, yes_token_id].item()
-    no_logit = logits[0, no_token_id].item()
-    # Convert to probabilities using softmax
-    probs = np.exp([yes_logit, no_logit]) / np.sum(np.exp([yes_logit, no_logit]))
-    yes_prob = probs[0]
-    return yes_prob
-
-
-def process_single_text_with_logits(text, model, tokenizer, prompt_builder, args):
-    """
-    Process a single patient note and extract both the prediction and probability.
-    Args:
-        text (str): Patient note text
-        model: The language model
-        tokenizer: The tokenizer
-        prompt_builder: MalnutritionPromptBuilder instance
-        args: Command line arguments
-    Returns:
-        tuple: (decision, explanation, probability)
-    """
-    # Prepare prompt with few-shot examples if specified
-    prompt = prompt_builder.get_inference_prompt(
-        patient_notes=text,
-        note_col=args.text_column,
-        label_col=args.label_column,
-        num_examples=args.few_shot_count,
-        balanced=args.balanced_examples
-    )
-    # Prepare chat format messages
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    # Apply chat template to get input tokens
-    inputs = tokenizer.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_tensors="pt"
-    ).to(model.device)
-    # Step 1: Run forward pass to get logits for the first token prediction
-    with torch.no_grad():
-        # Get the logits for the first generated token
-        logits = model(inputs).logits[:, -1, :]
-        # Get probability for "yes" class
-        yes_probability = get_probability_from_logits(logits, tokenizer)
-        # Now generate the full response
-        output = model.generate(
-            input_ids=inputs,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            do_sample=args.temperature > 0,
-            use_cache=True,
-            pad_token_id=tokenizer.eos_token_id
-        )
-    # Decode the output - only the generated part
-    input_length = inputs.shape[1]
-    response_tokens = output[0][input_length:]
-    response = tokenizer.decode(response_tokens, skip_special_tokens=True)
-    # Extract decision and explanation
-    decision, explanation = extract_malnutrition_decision(response)
-    # Apply threshold to convert probability to binary label (1/0)
-    binary_decision = 1 if yes_probability >= args.threshold else 0
-    return binary_decision, explanation, yes_probability
-
-
-def evaluate_model(args, model, tokenizer, prompt_builder):
-    """
-    Evaluate model on test dataset.
-    Args:
-        args: Command line arguments
-        model: The language model
-        tokenizer: The tokenizer
-        prompt_builder: MalnutritionPromptBuilder instance
-    Returns:
-        DataFrame: Results with predictions and probabilities
-    """
-    print(f"Loading test data from {args.test_csv}")
-    # Load test data
-    df = pd.read_csv(args.test_csv)
-    # Validate columns exist
-    required_columns = [args.text_column, args.label_column]
-    if args.id_column not in df.columns:
-        df[args.id_column] = [f"patient_{i}" for i in range(len(df))]
-    else:
-        required_columns.append(args.id_column)
-    for col in required_columns:
-        if col not in df.columns:
-            raise ValueError(f"Required column '{col}' not found in test CSV")
-    # Initialize results storage
-    results = []
-    # Process each example
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Evaluating"):
-        patient_text = row[args.text_column]
-        patient_id = row[args.id_column]
-        # Convert true label to binary (1/0)
-        true_label_str = str(row[args.label_column]).lower()
-        true_label = 1 if true_label_str in ["1", "yes", "true"] else 0
-        # Get prediction, explanation, and probability
-        predicted_label, explanation, probability = process_single_text_with_logits(
-            patient_text, model, tokenizer, prompt_builder, args
-        )
-        # Store result
-        results.append({
-            "patient_id": patient_id,
-            "true_label": true_label,
-            "predicted_label": predicted_label,
-            "probability": probability,
-            "explanation": explanation
-        })
-    # Convert to DataFrame
-    results_df = pd.DataFrame(results)
-    return results_df
+    return args
 
 
 def main():
     """Main function to run the evaluation pipeline."""
     args = parse_arguments()
-    
+
     # Set seed for reproducibility
     set_seed(args.seed)
-    
+
+    # Print CUDA information
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available() and not args.force_cpu:
+        print(f"CUDA device count: {torch.cuda.device_count()}")
+        for i in range(torch.cuda.device_count()):
+            print(f"CUDA device {i}: {torch.cuda.get_device_name(i)}")
+            props = torch.cuda.get_device_properties(i)
+            print(f"  - Memory: {props.total_memory / 1024**3:.2f} GB")
+            print(f"  - CUDA Capability: {props.major}.{props.minor}")
+
+        # Set specific GPU to be the current device
+        selected_gpu = min(args.gpu_id, torch.cuda.device_count() - 1)
+        torch.cuda.set_device(selected_gpu)
+        print(
+            f"Current CUDA device set to: {selected_gpu} ({torch.cuda.get_device_name(selected_gpu)})")
+
+        # Clear GPU cache to maximize available memory
+        torch.cuda.empty_cache()
+        print("GPU cache cleared")
+
+        # Verify GPU is being used
+        device = torch.device("cuda", selected_gpu)
+        print(f"Using device: {device}")
+
+        # Optimize CUDA operations - set these for maximum performance
+        torch.backends.cudnn.benchmark = True
+        print("cuDNN benchmark mode enabled for faster training")
+    else:
+        device = torch.device("cpu")
+        print(f"Using device: {device}")
+        if torch.cuda.is_available():
+            print("Note: GPU is available but not being used due to --force_cpu flag")
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
     # Initialize prompt builder
-    prompt_builder = MalnutritionPromptBuilder(args.examples_data)
-    
+    try:
+        prompt_builder = MalnutritionPromptBuilder(args.examples_data)
+    except Exception as e:
+        print(f"Error initializing prompt builder: {e}")
+        raise
+
     # Load model and tokenizer with appropriate quantization settings
-    model, tokenizer = load_model_and_tokenizer(
-        args.base_model, args.model_path, args
-    )
-    
+    try:
+        model, tokenizer = load_model_and_tokenizer(
+            args.base_model, args.model_path, args
+        )
+    except Exception as e:
+        print(f"Error loading model and tokenizer: {e}")
+        raise
+
     # Evaluate model on test data
-    results_df = evaluate_model(args, model, tokenizer, prompt_builder)
-    
+    try:
+        results_df = evaluate_model(args, model, tokenizer, prompt_builder)
+    except Exception as e:
+        print(f"Error during model evaluation: {e}")
+        raise
+
     # Save predictions to CSV
     predictions_path = os.path.join(args.output_dir, "predictions.csv")
     results_df.to_csv(predictions_path, index=False)
     print(f"Predictions saved to {predictions_path}")
+
+    # Filter out error rows for evaluation
+    eval_df = results_df[results_df["true_label"] != -1].copy()
+    
+    if len(eval_df) == 0:
+        print("ERROR: No valid results to evaluate! Check logs for details.")
+        return
     
     # Evaluate model performance
-    y_true = results_df["true_label"].tolist()
-    y_pred = results_df["predicted_label"].tolist()
-    y_prob = results_df["probability"].tolist()
-    
+    y_true = eval_df["true_label"].tolist()
+    y_pred = eval_df["predicted_label"].tolist()
+    y_prob = eval_df["probability"].tolist()
+
     print("Computing evaluation metrics...")
-    metrics = evaluate_predictions(y_true, y_pred, y_prob)
-    
+    try:
+        metrics = evaluate_predictions(y_true, y_pred, y_prob)
+    except Exception as e:
+        print(f"Error computing evaluation metrics: {e}")
+        raise
+
     # Generate and save plots
     print("Generating evaluation plots...")
-    plot_evaluation_metrics(metrics, args.output_dir)
-    
+    try:
+        plot_evaluation_metrics(metrics, args.output_dir)
+    except Exception as e:
+        print(f"Error generating evaluation plots: {e}")
+        # Continue even if plotting fails
+
     # Save metrics to CSV
-    metrics_csv_path = os.path.join(args.output_dir, "metrics.csv")
-    save_metrics_to_csv(metrics, metrics_csv_path)
-    print(f"Metrics saved to {metrics_csv_path}")
-    
+    try:
+        metrics_csv_path = os.path.join(args.output_dir, "metrics.csv")
+        save_metrics_to_csv(metrics, metrics_csv_path)
+        print(f"Metrics saved to {metrics_csv_path}")
+    except Exception as e:
+        print(f"Error saving metrics to CSV: {e}")
+
     # Save threshold used
     metrics_json = {
         'threshold': args.threshold,
@@ -358,15 +523,19 @@ def main():
         'confusion_matrix': metrics['confusion_matrix'],
         'classification_report': metrics['classification_report']
     }
-    
-    metrics_json_path = os.path.join(args.output_dir, "metrics.json")
-    with open(metrics_json_path, 'w') as f:
-        json.dump(metrics_json, f, indent=2)
-    print(f"Detailed metrics saved to {metrics_json_path}")
-    
+
+    try:
+        metrics_json_path = os.path.join(args.output_dir, "metrics.json")
+        with open(metrics_json_path, 'w') as f:
+            json.dump(metrics_json, f, indent=2)
+        print(f"Detailed metrics saved to {metrics_json_path}")
+    except Exception as e:
+        print(f"Error saving metrics to JSON: {e}")
+
     # Print evaluation report
     if args.print_report:
         print_metrics_report(metrics)
+    
     print("Evaluation complete!")
 
 
