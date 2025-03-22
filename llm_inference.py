@@ -2,6 +2,7 @@
 from models.llm_models import (
     MalnutritionPromptBuilder,
     extract_malnutrition_decision,
+    is_bfloat16_supported,
     set_seed
 )
 from tqdm import tqdm
@@ -55,6 +56,11 @@ def parse_arguments():
                         help="Directory to save inference results")
     parser.add_argument("--output_csv", type=str, default="predictions.csv",
                         help="Name of output CSV file")
+    # Quantization options
+    parser.add_argument("--load_in_8bit", action="store_true", default=False,
+                        help="Load model in 8-bit precision")
+    parser.add_argument("--load_in_4bit", action="store_true", default=True,
+                        help="Load model in 4-bit precision")
 
     # Model settings
     parser.add_argument("--use_flash_attention", action="store_true",
@@ -69,71 +75,123 @@ def parse_arguments():
                         help="Min-P sampling parameter (optional)")
     parser.add_argument("--stream_output", action="store_true",
                         help="Stream model output to console during generation")
+    parser.add_argument("--force_fp16", action="store_true", default=False,
+                        help="Force FP16 precision even if BF16 is supported")
+    parser.add_argument("--force_cpu", action="store_true", default=False,
+                        help="Force CPU usage even if GPU is available")
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
+    if args.load_in_8bit:
+        args.load_in_4bit = False
 
-def get_quantization_config():
-    """Define quantization configuration for the model."""
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        llm_int8_enable_fp32_cpu_offload=True,
-        llm_int8_threshold=6.0,
-        llm_int8_has_fp16_weight=True
-    )
+    return args
 
 
-def load_model_and_tokenizer(base_model, model_path, quantization_config, use_flash_attention=False):
+def get_quantization_config(args):
+    """Define quantization configuration for the model based on arguments."""
+    # Determine compute dtype based on hardware and user preferences
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
+    ) and not args.force_fp16 else torch.float16
+
+    # Handle 8-bit quantization
+    if args.load_in_8bit:
+        return BitsAndBytesConfig(
+            load_in_8bit=True,
+            load_in_4bit=False,
+            llm_int8_enable_fp32_cpu_offload=True
+        )
+    # Handle 4-bit quantization
+    elif args.load_in_4bit:
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            llm_int8_enable_fp32_cpu_offload=True,
+            llm_int8_threshold=6.0,
+            llm_int8_has_fp16_weight=True
+        )
+    # No quantization (full precision)
+    else:
+        return None
+
+
+def get_device():
     """
-    Load base model and tokenizer.
-
-    If a fine-tuned model path (adapter weights) is provided, it loads the adapter alongside the base model.
-    Otherwise, it loads the base model alone for inference.
-
-    Args:
-        base_model (str): Base model name.
-        model_path (str): Path to fine-tuned model adapter weights (optional).
-        quantization_config: Quantization configuration.
-        use_flash_attention (bool): Whether to use Flash Attention 2.
+    Get the appropriate device, prioritizing GPU usage.
 
     Returns:
-        Tuple: (model, tokenizer)
+        torch.device: The device to use for model inference
     """
-    print(f"Loading base model and tokenizer: {base_model}")
+    if torch.cuda.is_available():
+        # Use CUDA GPU
+        device = torch.device("cuda")
+        print(f"GPU detected: {torch.cuda.get_device_name(0)}")
+        print(
+            f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        return device
+    else:
+        print("No GPU detected, falling back to CPU. This may significantly slow down inference.")
+        return torch.device("cpu")
+
+
+def load_model_and_tokenizer(base_model, model_path, args):
+    """
+    Load model and tokenizer for evaluation with appropriate quantization settings.
+
+    Args:
+        base_model (str): Base model name or path
+        model_path (str): Path to fine-tuned model adapter weights (optional)
+        args: Command line arguments with quantization settings
+
+    Returns:
+        tuple: (model, tokenizer)
+    """
+    # Get device
+    device = get_device()
+    print(f"Using device: {device}")
+
+    print(
+        f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
+    # Determine compute dtype based on hardware and preferences
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
+    ) and not args.force_fp16 else torch.float16
+    # Get appropriate quantization config
+    quantization_config = get_quantization_config(args)
     try:
+        # Set up model loading kwargs with common parameters
+        model_kwargs = {
+            # Force GPU usage if available instead of "auto" mapping
+            "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
+            "use_flash_attention_2": args.use_flash_attention,
+            "use_cache": True  
+        }
+        # Add quantization settings
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        else:
+            # Direct quantization flags if no config is provided
+            model_kwargs["load_in_4bit"] = args.load_in_4bit
+            model_kwargs["load_in_8bit"] = args.load_in_8bit
+        # Set dtype for the model
+        model_kwargs["dtype"] = compute_dtype
         if model_path:
             # Load base model with adapter weights (fine-tuned model)
+            model_kwargs["model_name"] = base_model
+            model_kwargs["adapter_name"] = model_path
             model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=base_model,
-                adapter_name=model_path,
-                load_in_4bit=True,
-                dtype=torch.float16,
-                quantization_config=quantization_config,
-                device_map="auto",
-                use_flash_attention_2=use_flash_attention,
-                use_cache=True  # Enable caching for inference
-            )
-            # Enable native 2x faster inference
-            FastLanguageModel.for_inference(model)
-            print("Model and adapter weights loaded successfully")
+                **model_kwargs)
+            print(
+                f"Model loaded successfully with adapter weights from {model_path}")
         else:
             # Load base model only
+            model_kwargs["model_name"] = base_model
             model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=base_model,
-                load_in_4bit=True,
-                dtype=torch.float16,
-                quantization_config=quantization_config,
-                device_map="auto",
-                use_flash_attention_2=use_flash_attention,
-                use_cache=True  # Enable caching for inference
-            )
-            # Enable native 2x faster inference
-            FastLanguageModel.for_inference(model)
-            print("Base model loaded successfully")
-
+                **model_kwargs)
+            print(f"Base model loaded successfully: {base_model}")
+        # Enable native 2x faster inference
+        FastLanguageModel.for_inference(model)
         return model, tokenizer
     except Exception as e:
         print(f"Error loading model: {e}")
@@ -282,13 +340,9 @@ def main():
     # Initialize prompt builder
     prompt_builder = MalnutritionPromptBuilder(args.examples_data)
 
-    # Get quantization configuration
-    quantization_config = get_quantization_config()
-
     # Load model and tokenizer
     model, tokenizer = load_model_and_tokenizer(
-        args.base_model, args.model_path,
-        quantization_config, args.use_flash_attention
+        args.base_model, args.model_path, args
     )
 
     if args.input_csv:
