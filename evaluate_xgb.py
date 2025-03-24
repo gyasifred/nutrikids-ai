@@ -109,13 +109,24 @@ def evaluate_xgb_model(
     y_pred = model.predict(X_test)
     y_pred_proba = model.predict_proba(X_test)
     
-    # Evaluation metrics
+    # Evaluation metrics with zero_division handling
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
-        'precision': precision_score(y_test, y_pred, average='weighted'),
-        'recall': recall_score(y_test, y_pred, average='weighted'),
-        'f1_score': f1_score(y_test, y_pred, average='weighted')
+        'precision': precision_score(y_test, y_pred, average='weighted', zero_division=1),
+        'recall': recall_score(y_test, y_pred, average='weighted', zero_division=1),
+        'f1_score': f1_score(y_test, y_pred, average='weighted', zero_division=1)
     }
+    
+    # Log class distribution to help diagnose the issue
+    unique_true_labels = np.unique(y_test)
+    unique_pred_labels = np.unique(y_pred)
+    logging.info(f"Unique true labels: {unique_true_labels}")
+    logging.info(f"Unique predicted labels: {unique_pred_labels}")
+    
+    # Check if there are any missing classes in predictions
+    missing_classes = set(unique_true_labels) - set(unique_pred_labels)
+    if missing_classes:
+        logging.warning(f"Missing predicted classes: {missing_classes}")
     
     # Try computing ROC AUC if binary classification
     try:
@@ -207,13 +218,13 @@ def main():
                         help='Path to the CSV test data file')
     
     # Optional arguments
-    parser.add_argument('--model_name', type=str, default='xgboost', 
+    parser.add_argument('--model_name', type=str, default='xgb_model', 
                         help='Name of the model for file naming')
     parser.add_argument('--text_column', type=str, default='txt', 
                         help='Name of the column containing text data')
     parser.add_argument('--label_column', type=str, default='label', 
                         help='Name of the column containing labels')
-    parser.add_argument('--id_column', type=str, default='DEID', 
+    parser.add_argument('--id_column', type=str, default='id', 
                         help='Name of the column containing unique identifiers')
     parser.add_argument('--output_dir', type=str, default='xgb_evaluation', 
                         help='Directory to save evaluation results')
