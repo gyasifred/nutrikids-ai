@@ -511,7 +511,7 @@ def train_textcnn(
 
     return model, tokenizer, label_encoder, metrics
 
-def predict_batch(model, tokenizer, texts):
+def predict_batch(model, tokenizer, texts,threshold):
     """
     Make batch predictions using the trained model.
 
@@ -541,14 +541,13 @@ def predict_batch(model, tokenizer, texts):
         # Handle binary classification (single output)
         if outputs.shape[1] == 1:
             probs = torch.cat([1 - outputs, outputs], dim=1)
-            preds = (outputs > 0.5).long()
+            preds = (outputs > threshold).long()
         # Handle multi-class classification
         else:
             probs = torch.softmax(outputs, dim=1)
             _, preds = torch.max(outputs, 1)
 
     return preds.cpu().numpy().flatten(), probs.cpu().numpy()
-
 
 def load_model_artifacts(model_dir):
     """
