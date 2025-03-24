@@ -551,32 +551,40 @@ def predict_batch(model, tokenizer, texts):
 
 
 def load_model_artifacts(model_dir):
-    """Load the model, tokenizer, and label encoder from the model directory."""
+    """
+    Load the model, tokenizer, and label encoder (if available) from the model directory.
+    Handles cases where label_encoder doesn't exist or labels are already numeric.
+    """
     # Load model state dict
     model_path = os.path.join(model_dir, "nutrikidaitextcnn_model.pt")
     model_state_dict = torch.load(model_path, map_location=torch.device('cpu'))
-
+    
     # Load the tokenizer using joblib
     tokenizer_path = os.path.join(model_dir, "tokenizer.joblib")
     tokenizer = joblib.load(tokenizer_path)
-
-    # Load the label encoder using joblib
+    
+    # Try to load the label encoder, but don't fail if it doesn't exist
+    label_encoder = None
     label_encoder_path = os.path.join(model_dir, "label_encoder.joblib")
-    label_encoder = joblib.load(label_encoder_path)
-
+    if os.path.exists(label_encoder_path):
+        try:
+            label_encoder = joblib.load(label_encoder_path)
+        except Exception as e:
+            print(f"Warning: Failed to load label encoder: {e}")
+            print("Continuing without label encoder. Will handle numeric labels directly.")
+    
     # Try to load best config from various possible filenames
     config = None
-    config_filenames = ["best_config.joblib",
-                        "model_config.joblib", "config.joblib"]
+    config_filenames = ["best_config.joblib", "model_config.joblib", "config.joblib"]
     for filename in config_filenames:
         try:
             config_path = os.path.join(model_dir, filename)
             if os.path.exists(config_path):
                 config = joblib.load(config_path)
                 break
-        except KeyError:
+        except Exception:
             continue
-
+    
     if config is None:
         config = {
             "embed_dim": 100,
@@ -585,23 +593,36 @@ def load_model_artifacts(model_dir):
             "dropout_rate": 0.5,
             "max_vocab_size": 10000
         }
-
+    
+    # Get the number of output classes from the model state dict
+    # This is useful when label_encoder doesn't exist
+    try:
+        # Extract number of classes from the fc2 layer's weights
+        for key in model_state_dict:
+            if key.endswith("fc2.weight"):
+                num_classes = model_state_dict[key].size(0)
+                config["num_classes"] = num_classes
+                break
+    except Exception:
+        # Default to 2 classes if we can't determine from model
+        config["num_classes"] = 2
+    
     vocab_size = tokenizer.vocab_size_
-
     model = TextCNN(
         vocab_size=vocab_size,
         embed_dim=config.get("embed_dim", 100),
         num_filters=config.get("num_filters", 100),
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
-        dropout_rate=config.get("dropout_rate", 0.5)
+        dropout_rate=config.get("dropout_rate", 0.5),
+        num_classes=config.get("num_classes", 2)
     )
-
+    
     # Load state dict
     model.load_state_dict(model_state_dict)
     model.eval()
-
+    
     return model, tokenizer, label_encoder, config
-
+    
 
 def generate_integrated_gradients(model, tokenizer,
                                   texts, output_dir,
