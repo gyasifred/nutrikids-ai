@@ -512,75 +512,71 @@ def load_tabfnartifacts(model_dir: str, model_name: str):
 
 def load_xgbartifacts(model_dir: str, model_name: str):
     """ 
-    Load all model artifacts (model, label encoder, pipeline)
+    Load all model artifacts (model, label encoder, pipeline, feature names)
     from the given directory.
-
+    
     Args:
         model_dir (str): Path to the directory containing model artifacts.
         model_name (str): Name of the model.
-
+    
     Returns:
-        model, label_encoder, pipeline, feature_names
+        tuple: (model, label_encoder, pipeline, feature_names)
     """
-
     # Define the file patterns to match the latest files
     model_pattern = os.path.join(
-        model_dir, f"{model_name}_nutrikidai_model.json")
+        model_dir, f"{model_name}_xgb_model.json")
     label_encoder_pattern = os.path.join(
-        model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
+        model_dir, f"{model_name}_xgb_label_encoder_*.joblib")
     pipeline_pattern = os.path.join(
-        model_dir, f"{model_name}_nutrikidai_pipeline.joblib")
+        model_dir, f"{model_name}_xgb_pipeline.joblib")
+    
     # List the files that match the patterns
     model_files = glob.glob(model_pattern)
     label_encoder_files = glob.glob(label_encoder_pattern)
     pipeline_files = glob.glob(pipeline_pattern)
-
-    # Debugging prints to check the found files
+    
+    # Logging found files
     logging.info(f"Found model files: {model_files}")
     logging.info(f"Found Label Encoder files: {label_encoder_files}")
     logging.info(f"Found pipeline files: {pipeline_files}")
-
-    # Ensure that there are files found for each pattern
+    
+    # Validate file existence
     if not model_files:
-        raise ValueError(
-            f"No model files found matching pattern: {model_pattern}")
+        raise ValueError(f"No model files found matching pattern: {model_pattern}")
     if not pipeline_files:
-        raise ValueError(
-            f"No pipeline files found matching pattern: {pipeline_pattern}")
-
+        raise ValueError(f"No pipeline files found matching pattern: {pipeline_pattern}")
+    
+    # Load XGBoost model
     logging.info(f"Loading model from {model_dir}...")
     model = xgb.XGBClassifier()
-    model.load_model(model_pattern)
+    model.load_model(model_files[0])
     
-    # Get the latest label encoder file if exists
+    # Load label encoder if exists
     label_encoder = None
-    if label_encoder_files:  # Only try to load if files exist
+    if label_encoder_files:
         label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
         logging.info(f"Loading label encoder from {label_encoder_path}...")
         label_encoder = joblib.load(label_encoder_path)
     else:
-        logging.info("No label encoder found. Assuming binary labels.")
-
-    # Get the latest pipeline file
+        logging.info("No label encoder found. Assuming binary or numeric labels.")
+    
+    # Load pipeline
     pipeline_path = max(pipeline_files, key=os.path.getmtime)
     logging.info(f"Loading pipeline from {pipeline_path}...")
     pipeline = joblib.load(pipeline_path)
-
-    # Get feature names from pipeline
+    
+    # Extract feature names
     feature_names = None
     try:
-        vectorizer = pipeline.named_steps.get(
-            'vectorizer')  # Update name if different
+        vectorizer = pipeline.named_steps.get('vectorizer')
         if vectorizer and hasattr(vectorizer, 'get_feature_names_out'):
-            feature_names = vectorizer.get_feature_names_out().tolist()
-            logging.info(
-                f"Extracted {len(feature_names)} feature names from pipeline")
+            feature_names = vectorizer.get_feature_names_out()
+            logging.info(f"Extracted {len(feature_names)} feature names from pipeline")
         else:
-            logging.warning(
-                "Could not find vectorizer or get_feature_names_out method")
+            logging.warning("Could not find vectorizer or get_feature_names_out method")
     except Exception as e:
         logging.warning(f"Error extracting feature names: {str(e)}")
-
+    
     return model, label_encoder, pipeline, feature_names
 
 
