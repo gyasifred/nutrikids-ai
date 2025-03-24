@@ -12,6 +12,13 @@ from utils import process_csv
 from models.xgboost import get_scaling_config_and_tree_method
 
 
+def compute_scale_pos_weight(y):
+    """Compute scale_pos_weight for handling class imbalance."""
+    num_neg = (y == 0).sum()
+    num_pos = (y == 1).sum()
+    return num_neg / num_pos if num_pos > 0 else 1
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Train an XGBoost model.')
     parser.add_argument('--data_file', type=str, required=True,
@@ -56,8 +63,7 @@ def parse_arguments():
     parser.add_argument('--subsample', type=float, default=0.8,
                         help='Subsample ratio of the training instances')
     parser.add_argument('--colsample_bytree', type=float, default=0.8,
-                        help='Subsample ratio of columns when constructing\
-                              each tree')
+                        help='Subsample ratio of columns when constructing each tree')
     
     return parser.parse_args()
 
@@ -234,6 +240,12 @@ def train_xgboost_model(X_train, y_train, params):
     Returns:
         The trained XGBoost model
     """
+    # Compute scale_pos_weight to handle class imbalance
+    scale_pos_weight = compute_scale_pos_weight(y_train)
+    
+    # Update params with computed scale_pos_weight
+    params['scale_pos_weight'] = scale_pos_weight
+    
     # Create a DMatrix for XGBoost (no need to call ray.get() anymore)
     dtrain = xgb.DMatrix(X_train, label=y_train)
     
@@ -246,7 +258,7 @@ def train_xgboost_model(X_train, y_train, params):
         verbose_eval=10  # Print evaluation metrics every 10 rounds
     )
     
-    return model
+    return model, scale_pos_weight
 
 
 def main():
@@ -349,8 +361,6 @@ def main():
             joblib.dump(best_params, default_params_path)
             logger.info(f"Saved default hyperparameters to {default_params_path}")
         
-        logger.info(f"Training with parameters: {best_params}")
-        
         # Extract features and labels from processed data
         logger.info("Preparing data for model training...")
         X_train = processed_df[feature_columns]
@@ -365,19 +375,34 @@ def main():
         label_counts = y_train.value_counts()
         logger.info(f"Final label distribution before training: {label_counts}")
         
+        # Compute scale_pos_weight 
+        scale_pos_weight = compute_scale_pos_weight(y_train)
+        logger.info(f"Computed scale_pos_weight: {scale_pos_weight}")
+        
+        # Log parameters before training
+        final_params = best_params.copy()
+        final_params['scale_pos_weight'] = scale_pos_weight
+        logger.info(f"Final training parameters: {final_params}")
+        
         # Train model using Ray - pass data directly without ray.put()
         logger.info("Starting model training in Ray...")
-        model_ref = train_xgboost_model.remote(X_train, y_train, best_params)
+        model_ref = train_xgboost_model.remote(X_train, y_train, final_params)
         
         # Get trained model
         logger.info("Waiting for model training to complete...")
-        model = ray.get(model_ref)
+        model, used_scale_pos_weight = ray.get(model_ref)
         
         # Save model
         model_path = os.path.join(args.model_dir,
                                   f"{args.model_name}_nutrikidai_model.json")
         model.save_model(model_path)
         logger.info(f"Model saved to {model_path}")
+        
+        # Save scale_pos_weight for potential later use
+        scale_weight_path = os.path.join(args.model_dir,
+                                         f"{args.model_name}_scale_pos_weight.joblib")
+        joblib.dump(used_scale_pos_weight, scale_weight_path)
+        logger.info(f"scale_pos_weight saved to {scale_weight_path}")
         
         logger.info("Training completed successfully.")
         
