@@ -218,7 +218,7 @@ def main():
                         help='Path to the CSV test data file')
     
     # Optional arguments
-    parser.add_argument('--model_name', type=str, default='xgb_model', 
+    parser.add_argument('--model_name', type=str, default='xgboost', 
                         help='Name of the model for file naming')
     parser.add_argument('--text_column', type=str, default='txt', 
                         help='Name of the column containing text data')
