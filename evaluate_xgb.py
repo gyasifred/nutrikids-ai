@@ -84,7 +84,8 @@ def evaluate_xgb_model(
     y_test, 
     feature_names=None, 
     output_dir='xgb_evaluation', 
-    model_name='xgb_model'
+    model_name='xgb_model',
+    id_series=None
 ):
     """
     Comprehensive model evaluation with multiple metrics and visualizations.
@@ -96,6 +97,7 @@ def evaluate_xgb_model(
         feature_names: Optional list of feature names
         output_dir: Directory to save evaluation results
         model_name: Name of the model for file naming
+        id_series: Optional series of IDs for the test data
     
     Returns:
         dict: Comprehensive evaluation metrics
@@ -164,6 +166,17 @@ def evaluate_xgb_model(
         plt.savefig(roc_path)
         plt.close()
     
+    # Prepare predictions DataFrame
+    if id_series is not None:
+        predictions_df = pd.DataFrame({
+            'id': id_series,
+            'true_label': y_test,
+            'predicted_label': y_pred
+        })
+        predictions_path = os.path.join(output_dir, 'predictions.csv')
+        predictions_df.to_csv(predictions_path, index=False)
+        logging.info(f"Predictions saved to {predictions_path}")
+    
     # Save results
     results = {
         'metrics': metrics,
@@ -200,6 +213,8 @@ def main():
                         help='Name of the column containing text data')
     parser.add_argument('--label_column', type=str, default='label', 
                         help='Name of the column containing labels')
+    parser.add_argument('--id_column', type=str, default='id', 
+                        help='Name of the column containing unique identifiers')
     parser.add_argument('--output_dir', type=str, default='xgb_evaluation', 
                         help='Directory to save evaluation results')
     
@@ -242,7 +257,8 @@ def main():
         y_test=y_test,
         feature_names=feature_names,
         output_dir=args.output_dir,
-        model_name=args.model_name
+        model_name=args.model_name,
+        id_series=df[args.id_column] if args.id_column in df.columns else None
     )
     
     logging.info("Evaluation completed successfully!")
