@@ -1,310 +1,251 @@
 #!/usr/bin/env python3
 """
-XGBoost Evaluation Script: Evaluates a trained XGBoost model on a test dataset.
-Generates and saves comprehensive evaluation metrics and visualizations.
+XGBoost Model Evaluation Script: Comprehensive model evaluation with flexible label handling.
 """
 
-import json
 import os
+import glob
+import json
+import logging
 import argparse
 import numpy as np
 import pandas as pd
 import joblib
-import logging
+import xgboost as xgb
+from datetime import datetime
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, classification_report,
-    average_precision_score
+    accuracy_score, 
+    precision_score, 
+    recall_score, 
+    f1_score, 
+    confusion_matrix, 
+    classification_report,
+    roc_auc_score,
+    roc_curve,
+    precision_recall_curve
 )
-from utils import (
-    load_xgbartifacts, ensure_xgbfeatures_match,
-    plot_confusion_matrix, plot_roc_curve,
-    plot_precision_recall_curve,
-    plot_feature_importance
+import matplotlib.pyplot as plt
+import seaborn as sns 
+from utils import load_xgbartifacts
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+
+def handle_labels(y_test, label_encoder=None):
+    """
+    Handle label transformation for test data.
+    
+    Args:
+        y_test (pd.Series): Label series to be transformed
+        label_encoder (LabelEncoder, optional): Existing label encoder
+    
+    Returns:
+        tuple: Transformed labels and label mapping (if created)
+    """
+    # Case 1: Labels are already numeric
+    if pd.api.types.is_numeric_dtype(y_test):
+        return y_test.values, None
+
+    # Case 2: Label encoder provided
+    if label_encoder is not None:
+        try:
+            # Check if test labels match encoder classes
+            unique_test_labels = y_test.unique()
+            if set(unique_test_labels).issubset(set(label_encoder.classes_)):
+                return label_encoder.transform(y_test), None
+            else:
+                logging.warning("Test labels do not match trained encoder classes")
+        except Exception as e:
+            logging.error(f"Error using provided label encoder: {e}")
+
+    # Case 3: No label encoder or mismatch - create a new one
+    temp_encoder = LabelEncoder()
+    y_transformed = temp_encoder.fit_transform(y_test)
+    
+    # Create mapping for reference
+    mapping = {
+        "original_labels": list(map(str, temp_encoder.classes_)),
+        "encoded_labels": list(range(len(temp_encoder.classes_)))
+    }
+    
+    logging.info(f"Created new label mapping with {len(mapping['original_labels'])} classes")
+    return y_transformed, mapping
+
+
+def evaluate_xgb_model(
+    model, 
+    X_test, 
+    y_test, 
+    feature_names=None, 
+    output_dir='xgb_evaluation', 
+    model_name='xgb_model'
+):
+    """
+    Comprehensive model evaluation with multiple metrics and visualizations.
+    
+    Args:
+        model: Trained XGBoost model
+        X_test: Test features
+        y_test: Test labels
+        feature_names: Optional list of feature names
+        output_dir: Directory to save evaluation results
+        model_name: Name of the model for file naming
+    
+    Returns:
+        dict: Comprehensive evaluation metrics
+    """
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)
+    
+    # Evaluation metrics
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred, average='weighted'),
+        'recall': recall_score(y_test, y_pred, average='weighted'),
+        'f1_score': f1_score(y_test, y_pred, average='weighted')
+    }
+    
+    # Try computing ROC AUC if binary classification
+    try:
+        if len(np.unique(y_test)) == 2:
+            metrics['roc_auc'] = roc_auc_score(y_test, y_pred_proba[:, 1])
+    except Exception as e:
+        logging.warning(f"Could not compute ROC AUC: {e}")
+    
+    # Confusion Matrix
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title(f'{model_name} Confusion Matrix')
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    cm_path = os.path.join(output_dir, f'{model_name}_confusion_matrix.png')
+    plt.savefig(cm_path)
+    plt.close()
+    
+    # Classification Report
+    class_report = classification_report(y_test, y_pred, output_dict=True)
+    
+    # Feature Importance (if available)
+    if feature_names is not None:
+        plt.figure(figsize=(12, 8))
+        feature_importance = model.feature_importances_
+        sorted_idx = np.argsort(feature_importance)
+        pos = np.arange(sorted_idx.shape[0]) + .5
+        plt.barh(pos, feature_importance[sorted_idx], align='center')
+        plt.yticks(pos, [feature_names[i] for i in sorted_idx])
+        plt.xlabel('Feature Importance')
+        plt.title(f'{model_name} Feature Importance')
+        importance_path = os.path.join(output_dir, f'{model_name}_feature_importance.png')
+        plt.savefig(importance_path, bbox_inches='tight')
+        plt.close()
+    
+    # ROC Curve (for binary classification)
+    if len(np.unique(y_test)) == 2:
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba[:, 1])
+        plt.figure(figsize=(10, 8))
+        plt.plot(fpr, tpr, color='blue', label='ROC curve')
+        plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random Classifier')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title(f'{model_name} ROC Curve')
+        plt.legend(loc="lower right")
+        roc_path = os.path.join(output_dir, f'{model_name}_roc_curve.png')
+        plt.savefig(roc_path)
+        plt.close()
+    
+    # Save results
+    results = {
+        'metrics': metrics,
+        'confusion_matrix': cm.tolist(),
+        'classification_report': class_report,
+        'confusion_matrix_path': cm_path
+    }
+    
+    # Save evaluation results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_path = os.path.join(output_dir, f'{model_name}_evaluation_{timestamp}.json')
+    with open(results_path, 'w') as f:
+        json.dump(results, f, indent=4, default=str)
+    
+    logging.info(f"Evaluation results saved to {results_path}")
+    
+    return results
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Evaluate a trained XGBoost model')
-
-    # Required parameters
-    parser.add_argument('--model_name', type=str,
-                        default="xgboost", help='Name of the model')
-    parser.add_argument('--data_file', type=str, required=True,
+    # Argument parsing
+    parser = argparse.ArgumentParser(description='XGBoost Model Evaluation Script')
+    
+    # Required arguments
+    parser.add_argument('--model_path', type=str, required=True, 
+                        help='Path to the directory containing model artifacts')
+    parser.add_argument('--data_file', type=str, required=True, 
                         help='Path to the CSV test data file')
-    parser.add_argument('--text_column', type=str, default="txt",
+    
+    # Optional arguments
+    parser.add_argument('--model_name', type=str, default='xgb_model', 
+                        help='Name of the model for file naming')
+    parser.add_argument('--text_column', type=str, default='txt', 
                         help='Name of the column containing text data')
-    parser.add_argument('--label_column', type=str, default="label",
+    parser.add_argument('--label_column', type=str, default='label', 
                         help='Name of the column containing labels')
-    parser.add_argument('--id_column', type=str, default="DEID",
-                        help='Name of the column containing IDs')
-
-    # Optional parameters
-    parser.add_argument('--model_dir', type=str, default='./xgboost',
-                        help='Directory containing model artifacts')
-    parser.add_argument('--output_dir', type=str, default='./xgboost_ouput',
+    parser.add_argument('--output_dir', type=str, default='xgb_evaluation', 
                         help='Directory to save evaluation results')
-    parser.add_argument('--num_shap_samples', type=int, default=100,
-                        help='Number of samples for SHAP explanation')
-    parser.add_argument('--top_n_features', type=int,
-                        default=20, help='Number of top features to plot')
-    parser.add_argument('--debug', action='store_true',
-                        help='Enable extra debug logging')
-
+    
+    # Parse arguments
     args = parser.parse_args()
-
-    # Ensure output directory exists
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Set up logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(os.path.join(
-                args.output_dir, 'evaluation.log')),
-            logging.StreamHandler()
-        ]
+    
+    # Load model artifacts
+    model, label_encoder, pipeline, feature_names = load_xgbartifacts(
+        args.model_path, args.model_name)
+    
+    # Load and preprocess test data
+    logging.info(f"Loading test data from {args.data_file}...")
+    df = pd.read_csv(args.data_file)
+    
+    # Transform features
+    X_test = pipeline.transform(df[args.text_column])
+    
+    # Handle labels
+    y_test, label_mapping = handle_labels(df[args.label_column], label_encoder)
+    
+    # If a new label mapping was created, save it
+    if label_mapping:
+        mapping_filename = os.path.join(
+            args.output_dir, 
+            f"{args.model_name}_label_mapping.json"
+        )
+        with open(mapping_filename, 'w') as f:
+            json.dump(label_mapping, f, indent=2)
+        logging.info(f"Label mapping saved to {mapping_filename}")
+    
+    # Ensure X_test is in correct format
+    if hasattr(X_test, 'toarray'):
+        X_test = X_test.toarray()
+    
+    # Evaluate model
+    logging.info("Starting model evaluation...")
+    results = evaluate_xgb_model(
+        model=model,
+        X_test=X_test,
+        y_test=y_test,
+        feature_names=feature_names,
+        output_dir=args.output_dir,
+        model_name=args.model_name
     )
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting model evaluation with arguments: {args}")
-
-    try:
-        # Load artifacts: model, label encoder, pipeline, and feature names
-        xgb_model, label_encoder, pipeline, feature_names = load_xgbartifacts(
-            args.model_dir, args.model_name)
-
-        # Process the test data
-        logger.info(f"Loading test data from {args.data_file}...")
-        df = pd.read_csv(args.data_file)
-
-        # Verify required columns exist
-        required_columns = [args.text_column, args.label_column]
-        missing_columns = [
-            col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(
-                f"Missing required columns in test data: {missing_columns}.\
-                      Available columns: {list(df.columns)}")
-
-        logger.info("Applying pipeline to transform text data...")
-        X_test = pipeline.transform(df[args.text_column])
-
-        # Ensure features match the training data
-        X_test_aligned = ensure_xgbfeatures_match(X_test, feature_names)
-
-        # Log shape information for debugging
-        logger.info(
-            f"Original test data shape:\
-            {X_test.shape if hasattr(X_test, 'shape') else 'unknown'}")
-        logger.info(f"Aligned test data shape: {X_test_aligned.shape}")
-        logger.info(
-            f"Feature names count:\
-                {len(feature_names) if feature_names else 'unknown'}")
-
-        # Get labels
-        y_test = df[args.label_column].values
-        logger.info(f"Test data labels: {np.unique(y_test)}")
-        logger.info(f"Label encoder classes: {label_encoder.classes_}")
-
-        # Map labels if necessary (for example,
-        #  converting 'yes'/'no' to numeric values)
-        if hasattr(y_test, 'dtype') and y_test.dtype == object:
-            y_test = label_encoder.transform(y_test)
-
-        # Generate predictions
-        logger.info("Generating predictions...")
-        y_pred_proba = xgb_model.predict_proba(
-            X_test_aligned)[:, 1]
-        y_pred = xgb_model.predict(X_test_aligned)
-
-        # --- Evaluation Metrics ---
-        logger.info("Calculating evaluation metrics...")
-        accuracy = accuracy_score(y_test, y_pred)
-        precision = precision_score(
-            y_test, y_pred, average='binary', zero_division=0)
-        recall = recall_score(
-            y_test, y_pred, average='binary', zero_division=0)
-        f1 = f1_score(y_test, y_pred, average='binary', zero_division=0)
-
-        # Calculate ROC AUC and average precision
-        try:
-            auc = roc_auc_score(y_test, y_pred_proba)
-            avg_precision = average_precision_score(y_test, y_pred_proba)
-        except Exception as e:
-            logger.warning(
-                f"Error calculating AUC or average precision: {str(e)}")
-            auc = 0.0
-            avg_precision = 0.0
-
-        # Print classification report
-        logger.info("\nClassification Report:")
-        
-        # Fix for classification report with numeric labels
-        class_names = None
-        if hasattr(label_encoder, 'classes_'):
-            # Convert numeric labels to strings if needed
-            class_names = [str(cls) for cls in label_encoder.classes_]
-        
-        # Generate classification report with appropriate target names
-        cls_report = classification_report(
-            y_test, y_pred, target_names=class_names, zero_division=0)
-        logger.info("\n" + cls_report)
-
-        # Log metrics
-        logger.info(f"\nAccuracy: {accuracy:.4f}")
-        logger.info(f"Precision: {precision:.4f}")
-        logger.info(f"Recall: {recall:.4f}")
-        logger.info(f"F1 Score: {f1:.4f}")
-        logger.info(f"AUC-ROC: {auc:.4f}")
-        logger.info(f"Average Precision: {avg_precision:.4f}")
-
-        # Plot confusion matrix
-        cm_plot_path = os.path.join(
-            args.output_dir, f"{args.model_name}_confusion_matrix.png")
-        cm = plot_confusion_matrix(y_test, y_pred, cm_plot_path)
-        logger.info(f"Confusion matrix saved to {cm_plot_path}")
-
-        # Plot ROC curve
-        try:
-            roc_plot_path = os.path.join(
-                args.output_dir, f"{args.model_name}_roc_curve.png")
-            fpr, tpr, _ = plot_roc_curve(y_test, y_pred_proba, roc_plot_path)
-            logger.info(f"ROC curve saved to {roc_plot_path}")
-        except Exception as e:
-            logger.warning(f"Error plotting ROC curve: {str(e)}")
-
-        # Plot precision-recall curve
-        try:
-            pr_plot_path = os.path.join(
-                args.output_dir,
-                f"{args.model_name}_precision_recall_curve.png")
-            precision_curve, recall_curve, _ = plot_precision_recall_curve(
-                y_test, y_pred_proba, pr_plot_path)
-            logger.info(f"Precision-recall curve saved to {pr_plot_path}")
-        except Exception as e:
-            logger.warning(f"Error plotting precision-recall curve: {str(e)}")
-        # --- Feature Importance (if available) ---
-        try:
-            logger.info("Extracting feature importance...")
-            if hasattr(xgb_model, 'feature_importances_'):
-                importance = xgb_model.feature_importances_
-                feature_plot_path = os.path.join(
-                    args.output_dir,
-                    f"{args.model_name}_feature_importance.png")
-                plot_feature_importance(
-                    feature_names,
-                    importance,
-                    args.top_n_features,
-                    feature_plot_path
-                )
-                logger.info(
-                    f"Feature importance plot saved to {feature_plot_path}")
-            elif hasattr(xgb_model, 'get_score'):
-                # Get feature importance scores
-                try:
-                    score_dict = xgb_model.get_score(importance_type='gain')
-
-                    if score_dict and feature_names:
-                        # Parse feature indices from score_dict keys
-                        #  and map to actual feature names
-                        importance = []
-                        selected_feature_names = []
-
-                        for feat_key, score in score_dict.items():
-                            # XGBoost feature keys are in format "f123"
-                            #  where 123 is the index
-                            if feat_key.startswith('f'):
-                                try:
-                                    feat_idx = int(feat_key[1:])
-                                    if feat_idx < len(feature_names):
-                                        importance.append(score)
-                                        selected_feature_names.append(
-                                            feature_names[feat_idx])
-                                except KeyError:
-                                    logger.warning(
-                                        f"Could not parse feature \
-                                        index from {feat_key}")
-
-                        if importance and selected_feature_names:
-                            feature_plot_path = os.path.join(
-                                args.output_dir,
-                                f"{args.model_name}_feature_importance.png")
-                            plot_feature_importance(
-                                selected_feature_names,
-                                importance,
-                                args.top_n_features,
-                                feature_plot_path
-                            )
-                            logger.info(
-                                f"Feature importance plot\
-                                    saved to {feature_plot_path}")
-                    else:
-                        logger.warning(
-                            "No feature importance scores found \
-                                  no feature names available")
-                except Exception as e:
-                    logger.warning(f"Error getting feature scores: {str(e)}")
-            else:
-                logger.warning(
-                    "Model does not support feature importance extraction")
-        except Exception as e:
-            logger.warning(f"Could not plot feature importance: {str(e)}")
-
-        # Save evaluation results
-        results = {
-            'accuracy': float(accuracy),
-            'precision': float(precision),
-            'recall': float(recall),
-            'f1': float(f1),
-            'auc': float(auc),
-            'avg_precision': float(avg_precision),
-            'confusion_matrix': cm.tolist(),
-            'classification_report': cls_report,
-            'fpr': fpr.tolist() if 'fpr' in locals() and len(fpr) > 0 else [],
-            'tpr': tpr.tolist() if 'tpr' in locals() and len(tpr) > 0 else [],
-            'precision_curve': precision_curve.tolist()
-            if 'precision_curve' in locals() and len(precision_curve) > 0 else [],
-            'recall_curve': recall_curve.tolist()
-            if 'recall_curve' in locals() and len(recall_curve) > 0 else []
-        }
-
-        # Save as JSON for better readability
-        results_json_path = os.path.join(
-            args.output_dir,
-            f"{args.model_name}_results.json")
-        with open(results_json_path, 'w') as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"Evaluation results (JSON) saved to {results_json_path}")
-
-        # Also save as joblib for backward compatibility
-        results_joblib_path = os.path.join(
-            args.output_dir, f"{args.model_name}_results.joblib")
-        joblib.dump(results, results_joblib_path)
-        logger.info(
-            f"Evaluation results (joblib) saved to {results_joblib_path}")
-
-        # Save predictions (optional)
-        predictions_df = pd.DataFrame({
-            args.id_column: df[args.id_column]
-            if args.id_column in df.columns else np.arange(len(y_test)),
-            'true_label': y_test,
-            'pred_label': y_pred,
-            'pred_probability': y_pred_proba
-        })
-        predictions_path = os.path.join(
-            args.output_dir, f"{args.model_name}_predictions.csv")
-        predictions_df.to_csv(predictions_path, index=False)
-        logger.info(f"Predictions saved to {predictions_path}")
-
-        logger.info("Evaluation completed successfully!")
-
-    except Exception as e:
-        logger.error(f"Error during evaluation: {str(e)}", exc_info=True)
-        raise
-
+    
+    logging.info("Evaluation completed successfully!")
 
 if __name__ == "__main__":
     main()
