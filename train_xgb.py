@@ -64,6 +64,7 @@ def parse_arguments():
                         help='Subsample ratio of the training instances')
     parser.add_argument('--colsample_bytree', type=float, default=0.8,
                         help='Subsample ratio of columns when constructing each tree')
+    parser.add_argument('--num_boost_round', type=int, default= 100, help="Number of boost round")
     
     return parser.parse_args()
 
@@ -253,7 +254,6 @@ def train_xgboost_model(X_train, y_train, params):
     model = xgb.train(
         params=params,
         dtrain=dtrain,
-        num_boost_round=100,  # You may want to make this configurable
         evals=[(dtrain, "train")],
         verbose_eval=10  # Print evaluation metrics every 10 rounds
     )
@@ -353,7 +353,8 @@ def main():
                 "max_depth": args.max_depth,
                 "min_child_weight": args.min_child_weight,
                 "subsample": args.subsample,
-                "colsample_bytree": args.colsample_bytree
+                "colsample_bytree": args.colsample_bytree,
+                "num_boost_round": args.num_boost_round
             }
             default_params_path = os.path.join(
                 args.model_dir,
