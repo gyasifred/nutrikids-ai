@@ -9,6 +9,7 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
@@ -17,6 +18,47 @@ from sklearn.metrics import (
     classification_report
 )
 from models.text_cnn import predict_batch, load_model_artifacts
+
+
+def process_labels(labels, label_encoder=None):
+    """
+    Process labels that could be either numeric or text.
+    If label_encoder is provided, use it to transform labels.
+    If not, handle numeric labels directly.
+
+    Args:
+        labels: List of labels that could be numeric or text
+        label_encoder: Optional LabelEncoder to use
+
+    Returns:
+        Tuple of (processed_labels, label_encoder or None, unique_classes)
+    """
+    # Check if all labels are numeric (integers or floats)
+    is_numeric = all(isinstance(label, (int, float, np.integer, np.floating)) or
+                     (isinstance(label, str) and label.strip().isdigit())
+                     for label in labels)
+
+    if is_numeric:
+        # Convert string numbers to integers if needed
+        numeric_labels = [int(float(label)) if isinstance(label, str) else int(label)
+                          for label in labels]
+        # Get unique classes in sorted order
+        unique_classes = sorted(set(numeric_labels))
+        # Create a mapping for class indices
+        label_map = {val: idx for idx, val in enumerate(unique_classes)}
+        # Map original labels to indices
+        y_true = np.array([label_map[label] for label in numeric_labels])
+        return y_true, None, np.array(unique_classes)
+    else:
+        # Handle text labels
+        if label_encoder is None:
+            label_encoder = LabelEncoder()
+            y_true = label_encoder.fit_transform(labels)
+        else:
+            # Use existing label encoder
+            y_true = label_encoder.transform(labels)
+
+        return y_true, label_encoder, label_encoder.classes_
 
 
 def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
@@ -178,10 +220,10 @@ def generate_class_distribution(y_true, y_pred, classes, output_dir):
     """Generate and save class distribution plots."""
     # Convert classes to strings for plotting and counting
     str_classes = [str(c) for c in classes]
-    
+
     # Create mapping from index to string class label
     class_mapping = {i: str_classes[i] for i in range(len(str_classes))}
-    
+
     # Actual label distribution
     plt.figure(figsize=(10, 6))
     # Convert numpy arrays to scalar values if needed
@@ -273,14 +315,10 @@ def main():
     model, tokenizer, label_encoder, config = load_model_artifacts(
         args.model_dir)
 
-    # Convert string labels to integers if they're not already integers
-    if isinstance(test_labels[0], (int, float, np.integer, np.floating)):
-        unique_labels = np.unique(test_labels)
-        label_map = {val: idx for idx, val in enumerate(unique_labels)}
-        y_true = np.array([label_map[label] for label in test_labels])
-        label_encoder.classes_ = unique_labels
-    else:
-        y_true = label_encoder.transform(test_labels)
+    # Process labels based on whether they're numeric or not
+    # and whether a label_encoder is available
+    y_true, label_encoder, unique_classes = process_labels(
+        test_labels, label_encoder)
 
     # Make predictions
     print(f"Making predictions on {len(test_texts)} texts...")
@@ -289,8 +327,7 @@ def main():
 
     for i in range(0, len(test_texts), args.batch_size):
         batch_texts = test_texts[i:i+args.batch_size]
-        batch_preds, batch_probs = predict_batch(
-            model, tokenizer, batch_texts)
+        batch_preds, batch_probs = predict_batch(model, tokenizer, batch_texts)
         if isinstance(batch_preds, torch.Tensor):
             batch_preds = batch_preds.cpu().numpy().tolist()
         if isinstance(batch_probs, torch.Tensor):
@@ -304,10 +341,10 @@ def main():
 
     # Generate classification report
     print("Generating classification report...")
-    str_classes = [str(c) for c in label_encoder.classes_]
+    str_classes = [str(c) for c in unique_classes]
     report = classification_report(
         y_true, y_pred, target_names=str_classes, output_dict=True)
-    
+
     print("Classification Report:")
     for class_label, metrics in report.items():
         if isinstance(metrics, dict):  # For individual classes
@@ -317,37 +354,39 @@ def main():
         else:  # For accuracy, macro avg, and weighted avg
             print(f"{class_label}: {metrics:.4f}")
 
-    with open(os.path.join(args.output_dir,
-                           'classification_report.json'), 'w') as f:
+    with open(os.path.join(args.output_dir, 'classification_report.json'), 'w') as f:
         json.dump(report, f, indent=4)
 
     # Generate confusion matrix
     print("Generating confusion matrix...")
-    generate_confusion_matrix(
-        y_true, y_pred, label_encoder.classes_, args.output_dir)
+    generate_confusion_matrix(y_true, y_pred, unique_classes, args.output_dir)
 
     # Generate ROC curve
     print("Generating ROC curve...")
-    generate_roc_curve(
-        y_true, y_proba, label_encoder.classes_, args.output_dir)
+    generate_roc_curve(y_true, y_proba, unique_classes, args.output_dir)
+
     # Generate precision-recall curve
     print("Generating precision-recall curve...")
-    generate_precision_recall_curve(
-        y_true, y_proba, label_encoder.classes_, args.output_dir)
+    generate_precision_recall_curve(y_true, y_proba, unique_classes,
+                                    args.output_dir)
+
     # Generate class distribution
     print("Generating class distribution plots...")
-    generate_class_distribution(
-        y_true, y_pred, label_encoder.classes_, args.output_dir)
+    generate_class_distribution(y_true, y_pred, unique_classes,
+                                args.output_dir)
 
     print("Saving predictions...")
     pred_df = test_df[[args.id_column]].copy()
     pred_df["true_label"] = test_labels
-    
-    if isinstance(test_labels[0], (int, float, np.integer, np.floating)):
-        pred_df["predicted_label"] = [label_encoder.classes_[idx] for idx in y_pred]
-    else:
-        pred_df["predicted_label"] = label_encoder.inverse_transform(y_pred)
 
+    # Map predictions back to original label format
+    if label_encoder is not None:
+        pred_df["predicted_label"] = label_encoder.inverse_transform(y_pred)
+    else:
+        # If no label encoder, map from indices to original class values
+        pred_df["predicted_label"] = [unique_classes[idx] for idx in y_pred]
+
+    # Add probability columns for each class
     for i, class_name in enumerate(str_classes):
         pred_df[f'prob_{class_name}'] = y_proba[:, i]
 
