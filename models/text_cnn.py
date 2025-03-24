@@ -613,8 +613,7 @@ def load_model_artifacts(model_dir):
         embed_dim=config.get("embed_dim", 100),
         num_filters=config.get("num_filters", 100),
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
-        dropout_rate=config.get("dropout_rate", 0.5),
-        num_classes=config.get("num_classes", 2)
+        dropout_rate=config.get("dropout_rate", 0.5)
     )
     
     # Load state dict
