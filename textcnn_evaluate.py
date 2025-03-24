@@ -327,7 +327,7 @@ def main():
 
     for i in range(0, len(test_texts), args.batch_size):
         batch_texts = test_texts[i:i+args.batch_size]
-        batch_preds, batch_probs = predict_batch(model, tokenizer, batch_texts)
+        batch_preds, batch_probs = predict_batch(model, tokenizer, batch_texts, args.threshold)
         if isinstance(batch_preds, torch.Tensor):
             batch_preds = batch_preds.cpu().numpy().tolist()
         if isinstance(batch_probs, torch.Tensor):
