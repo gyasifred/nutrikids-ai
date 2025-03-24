@@ -524,11 +524,11 @@ def load_xgbartifacts(model_dir: str, model_name: str):
     """
     # Define the file patterns to match the latest files
     model_pattern = os.path.join(
-        model_dir, f"{model_name}_xgb_model.json")
+        model_dir, f"{model_name}_nutrikidai_model.json")
     label_encoder_pattern = os.path.join(
-        model_dir, f"{model_name}_xgb_label_encoder_*.joblib")
+        model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
     pipeline_pattern = os.path.join(
-        model_dir, f"{model_name}_xgb_pipeline.joblib")
+        model_dir, f"{model_name}_nutrikidai_pipeline.joblib")
     
     # List the files that match the patterns
     model_files = glob.glob(model_pattern)
