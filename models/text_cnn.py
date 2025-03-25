@@ -314,7 +314,7 @@ def train_textcnn(
     config: Dict,
     num_epochs: int,
     pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
-    provided_label_encoder: Optional[LabelEncoder] = None
+    provided_label_encoder: Optional[LabelEncoder] = None,
     pos_weight = config.get('pos_weight', None)
 ):
     """
