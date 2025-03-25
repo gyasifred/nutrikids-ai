@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, default='CNN')
     parser.add_argument('--num_samples', type=int, default=20)
     parser.add_argument('--max_epochs', type=int, default=30)
-    parser.add_argument('--grace_period', type=int, default=5)
+    parser.add_argument('--grace_period', type=int, default=10)
     
     return parser.parse_args()
 
@@ -180,7 +180,7 @@ def main():
     tuner = tune.Tuner(
         train_textcnn_with_resources,
         tune_config=tune.TuneConfig(
-            metric="val_loss",
+            metric="val_accuracy",
             mode="min",
             scheduler=ASHAScheduler(
                 max_t=args.max_epochs,
