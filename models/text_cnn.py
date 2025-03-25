@@ -219,13 +219,13 @@ class TextCNN(nn.Module):
         # Adjusted fully connected layers
         fc_input_size = num_filters * len(kernel_sizes)
         self.fc1 = nn.Linear(fc_input_size, 200)
-        self.fc2 = nn.Linear(200, 1)  # Ensure single output neuron
+        self.fc2 = nn.Linear(200, 1)  # Single output neuron
         
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        """Forward pass with consistent output shape."""
+        """Forward pass with sigmoid activation."""
         x = self.embedding(x)
         x = x.permute(0, 2, 1)
         
@@ -237,7 +237,8 @@ class TextCNN(nn.Module):
         x = self.dropout(self.relu(self.fc1(x)))
         x = self.fc2(x)
         
-        return x  
+        # Add sigmoid activation here
+        return torch.sigmoid(x)
 
 ###################
 # one epoch
@@ -260,21 +261,21 @@ def train_one_epoch(
         outputs = model(batch_x)
         batch_y = batch_y.float().view(-1, 1)
         
-        loss = criterion(outputs, batch_y)  # Use passed-in criterion
+        # Directly use BCELoss
+        loss = criterion(outputs, batch_y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
 
-        # Apply sigmoid for predictions
-        probs = torch.sigmoid(outputs)
-        preds = (probs > 0.5).float().cpu().detach().numpy()
+        # Predictions based on sigmoid output
+        preds = (outputs > 0.5).float().cpu().detach().numpy()
         all_preds.extend(preds)
         all_labels.extend(batch_y.cpu().numpy())
 
     avg_loss = total_loss / len(train_loader)
     accuracy = accuracy_score(all_labels, all_preds)
     return avg_loss, accuracy
-
+    
 def evaluate_model(
     model: nn.Module,
     val_loader: DataLoader,
