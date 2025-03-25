@@ -318,24 +318,34 @@ def train_textcnn(
     config: Dict,
     num_epochs: int,
     pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
-    provided_label_encoder: Optional[LabelEncoder] = None
+    provided_label_encoder = None
 ):
     """
     End-to-end training function with flexible label handling and class weighting.
     """
     pos_weight = config.get('pos_weight', None)
-    if pos_weight is not None:
-        pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    else:
-        criterion = nn.BCEWithLogitsLoss()
-    
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Add your existing label processing logic
+    train_labels, label_encoder = process_labels(train_labels)
+    val_labels, _ = process_labels(val_labels) if label_encoder is None else (
+        label_encoder.transform(val_labels), None)
+    
+    # Use provided or calculated pos_weight
+    if pos_weight is None:
+        pos_weight = calculate_class_weights(train_labels)
+    
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
+    
     tokenizer = TextTokenizer(
         max_vocab_size=config.get("max_vocab_size", 20000),
         min_frequency=config.get("min_frequency", 2),
         max_length=config.get("max_length", None)
     )
+    
+    # Apply pretrained embeddings if provided
+    if pretrained_embeddings_dict:
+        tokenizer.load_pretrained_embeddings(pretrained_embeddings_dict)
     
     X_train_seq = tokenizer.fit_transform(train_texts)
     X_val_seq = tokenizer.transform(val_texts)
@@ -351,6 +361,11 @@ def train_textcnn(
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
         dropout_rate=config.get("dropout_rate", 0.5),
     ).to(device)
+    
+    # Freeze embeddings if specified
+    if config.get('freeze_embeddings', False):
+        for param in model.embedding.parameters():
+            param.requires_grad = False
     
     optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
     
@@ -380,6 +395,7 @@ def train_textcnn(
             best_model_state = model.state_dict().copy()
             print(f"New best model with validation F1-score: {val_f1:.4f}")
     
+    # Load the best model state if a best model was found
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
     
