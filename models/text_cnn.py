@@ -335,7 +335,7 @@ def train_textcnn(
         label_encoder: Fitted LabelEncoder or None if numeric labels.
         metrics: Dictionary with training metrics.
     """
-     pos_weight = config.get('pos_weight', None)
+    pos_weight = config.get('pos_weight', None)
     # Use BCEWithLogitsLoss with pos_weight if provided
     if pos_weight is not None:
         pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
