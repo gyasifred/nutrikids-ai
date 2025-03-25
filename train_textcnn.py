@@ -38,39 +38,13 @@ def parse_args():
                         help='Weight multiplier for positive class (default: 2.0)')
     return parser.parse_args()
 
-
 def calculate_class_weights(labels, positive_weight=2.0):
-    """
-    Calculate class weights to handle class imbalance.
-    
-    Args:
-        labels (array-like): Array of labels
-        positive_weight (float): Multiplier for the positive class weight
-    
-    Returns:
-        torch.Tensor: Tensor of class weights
-    """
-    # Count occurrences of each class
-    unique_labels, counts = np.unique(labels, return_counts=True)
-    
-    # Calculate base weights (inverse of class frequency)
-    weights = 1.0 / counts
-    
-    # Find the index of the positive class (typically 1)
-    pos_index = np.where(unique_labels == 1)[0][0]
-    
-    # Multiply positive class weight by the specified multiplier
-    weights[pos_index] *= positive_weight
-    
-    # Normalize weights
-    weights = weights / weights.min()
-    
-    print("Class Weights:")
-    for label, weight in zip(unique_labels, weights):
-        print(f"  Label {label}: {weight:.2f}")
-    
-    return torch.FloatTensor(weights)
-
+    """Calculate pos_weight for BCEWithLogitsLoss"""
+    counts = np.bincount(labels)
+    num_neg = counts[0]
+    num_pos = counts[1]
+    pos_weight = (num_neg / num_pos) * positive_weight
+    return torch.tensor(pos_weight, dtype=torch.float
 
 def main():
     # Parse command line arguments
