@@ -239,6 +239,9 @@ class TextCNN(nn.Module):
         
         return x  
 
+###################
+# one epoch
+################
 def train_one_epoch(
     model: nn.Module,
     train_loader: DataLoader,
@@ -246,9 +249,6 @@ def train_one_epoch(
     optimizer,
     device: str
 ) -> Tuple[float, float]:
-    """
-    Train the model for one epoch with robust loss handling.
-    """
     model.train()
     total_loss = 0.0
     all_preds, all_labels = [], []
@@ -257,26 +257,17 @@ def train_one_epoch(
         batch_x, batch_y = batch_x.to(device), batch_y.to(device)
         optimizer.zero_grad()
         
-        # Get model outputs
         outputs = model(batch_x)
-        
-        # Ensure labels are float and shaped correctly
         batch_y = batch_y.float().view(-1, 1)
         
-        # Option 1: Use BCEWithLogitsLoss (recommended)
-        criterion = nn.BCEWithLogitsLoss()
-        loss = criterion(outputs, batch_y)
-        
-        # Alternatively, if using custom BCE loss:
-        # outputs = torch.sigmoid(outputs)  # Add sigmoid if not in model
-        # loss = F.binary_cross_entropy(outputs, batch_y, reduction='mean')
-        
+        loss = criterion(outputs, batch_y)  # Use passed-in criterion
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
 
-        # Calculate predictions
-        preds = (outputs > 0.5).float().cpu().detach().numpy()
+        # Apply sigmoid for predictions
+        probs = torch.sigmoid(outputs)
+        preds = (probs > 0.5).float().cpu().detach().numpy()
         all_preds.extend(preds)
         all_labels.extend(batch_y.cpu().numpy())
 
@@ -290,18 +281,6 @@ def evaluate_model(
     criterion,
     device: str
 ) -> Tuple[float, float]:
-    """
-    Evaluate the model on the validation set.
-
-    Args:
-        model: The neural network model.
-        val_loader: DataLoader for validation data.
-        criterion: Loss function.
-        device: Device string ('cuda' or 'cpu').
-
-    Returns:
-        Tuple of (validation loss, validation accuracy).
-    """
     model.eval()
     all_preds, all_labels = [], []
     total_loss = 0.0
@@ -310,20 +289,20 @@ def evaluate_model(
         for batch_x, batch_y in val_loader:
             batch_x, batch_y = batch_x.to(device), batch_y.to(device)
             outputs = model(batch_x)
-            
-            # Ensure outputs and labels are compatible
             batch_y = batch_y.float().view(-1, 1)
             loss = criterion(outputs, batch_y)
-            
             total_loss += loss.item()
 
-            preds = (outputs > 0.5).float().cpu().numpy()
+            # Apply sigmoid for predictions
+            probs = torch.sigmoid(outputs)
+            preds = (probs > 0.5).float().cpu().numpy()
             all_preds.extend(preds)
             all_labels.extend(batch_y.cpu().numpy())
 
     avg_loss = total_loss / len(val_loader)
     accuracy = accuracy_score(all_labels, all_preds)
     return avg_loss, accuracy
+
 # =========================
 # Training and Saving Function
 # =========================
@@ -336,6 +315,7 @@ def train_textcnn(
     num_epochs: int,
     pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
     provided_label_encoder: Optional[LabelEncoder] = None
+    pos_weight = config.get('pos_weight', None)
 ):
     """
     End-to-end training function with flexible label handling and class weighting.
@@ -356,6 +336,14 @@ def train_textcnn(
         label_encoder: Fitted LabelEncoder or None if numeric labels.
         metrics: Dictionary with training metrics.
     """
+    # Use BCEWithLogitsLoss with pos_weight if provided
+    if pos_weight is not None:
+        pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        print(f"Using pos_weight: {pos_weight.cpu().item():.2f}")
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+        
     # Label processing (same as before)
     if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
         train_encoded_labels = train_labels
