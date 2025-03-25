@@ -8,7 +8,7 @@ from ray import tune
 from ray.tune.schedulers import ASHAScheduler
 import ray
 import torch
-from utils import  process_labels
+from utils import process_labels
 from models.text_cnn import train_textcnn, TextTokenizer
 
 
@@ -181,7 +181,7 @@ def main():
         train_textcnn_with_resources,
         tune_config=tune.TuneConfig(
             metric="val_accuracy",
-            mode="min",
+            mode="max",  # We want to maximize val_accuracy
             scheduler=ASHAScheduler(
                 max_t=args.max_epochs,
                 grace_period=args.grace_period,
@@ -196,20 +196,24 @@ def main():
     print("Starting hyperparameter tuning...")
     results = tuner.fit()
 
-    # Get and print best results
-    best_result = results.get_best_result(metric="val_loss", mode="min")
+    # Get and print best results based on val_accuracy
+    best_result = results.get_best_result(metric="val_accuracy", mode="max")
     print(f"Best trial config: {best_result.config}")
-    print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final validation accuracy: {best_result.metrics['val_accuracy']}")
     print(f"Best trial final training accuracy: {best_result.metrics['train_accuracy']}")
+    print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final training loss: {best_result.metrics['train_loss']}")
+
+    # Apply the best config (using the best configuration directly for further training or testing)
+    best_config = best_result.config
+    print(f"Applying best configuration: {best_config}")
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Save the best config using joblib
     best_config_path = os.path.join(args.output_dir, "best_config.joblib")
-    joblib.dump(best_result.config, best_config_path)
+    joblib.dump(best_config, best_config_path)
     print(f"Best configuration saved to {best_config_path}")
     
     # Save label encoder if it was used
