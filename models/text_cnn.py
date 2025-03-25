@@ -11,7 +11,7 @@ import torch.optim as optim
 from typing import List, Dict, Union, Optional, Tuple
 from collections import Counter
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
