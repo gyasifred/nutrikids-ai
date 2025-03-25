@@ -199,19 +199,6 @@ class TextCNN(nn.Module):
         pretrained_embeddings=None,
         freeze_embeddings=False
     ):
-        """
-        Text CNN model with support for pre-trained embeddings.
-
-        Args:
-            vocab_size: Size of vocabulary
-            embed_dim: Dimension of embeddings
-            num_filters: Number of filters for each kernel size
-            kernel_sizes: List of kernel sizes for convolutions
-            dropout_rate: Dropout rate
-            pretrained_embeddings: Pre-trained embedding matrix (numpy array)
-            freeze_embeddings: Whether to freeze the embedding \
-            layer during training
-        """
         super(TextCNN, self).__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)
@@ -219,7 +206,6 @@ class TextCNN(nn.Module):
         if pretrained_embeddings is not None:
             self.embedding.weight.data.copy_(
                 torch.from_numpy(pretrained_embeddings))
-
             if freeze_embeddings:
                 self.embedding.weight.requires_grad = False
 
@@ -229,23 +215,29 @@ class TextCNN(nn.Module):
         ])
 
         self.pool = nn.AdaptiveMaxPool1d(1)
-        self.fc1 = nn.Linear(num_filters * len(kernel_sizes), 200)
-        self.fc2 = nn.Linear(200, 1)
+        
+        # Adjusted fully connected layers
+        fc_input_size = num_filters * len(kernel_sizes)
+        self.fc1 = nn.Linear(fc_input_size, 200)
+        self.fc2 = nn.Linear(200, 1)  # Ensure single output neuron
+        
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        """Forward pass."""
+        """Forward pass with consistent output shape."""
         x = self.embedding(x)
         x = x.permute(0, 2, 1)
+        
+        # Convolution and pooling
         x = [self.pool(conv(x)).squeeze(-1) for conv in self.convs]
         x = torch.cat(x, dim=1)
+        
+        # Fully connected layers
         x = self.dropout(self.relu(self.fc1(x)))
         x = self.fc2(x)
-        x = self.sigmoid(x)
-        return x
-
+        
+        return x  
 
 def train_one_epoch(
     model: nn.Module,
@@ -255,17 +247,7 @@ def train_one_epoch(
     device: str
 ) -> Tuple[float, float]:
     """
-    Train the model for one epoch.
-
-    Args:
-        model: The neural network model.
-        train_loader: DataLoader for training data.
-        criterion: Loss function.
-        optimizer: Optimizer.
-        device: Device string ('cuda' or 'cpu').
-
-    Returns:
-        Tuple of (average training loss, training accuracy) for the epoch.
+    Train the model for one epoch with robust loss handling.
     """
     model.train()
     total_loss = 0.0
@@ -275,19 +257,25 @@ def train_one_epoch(
         batch_x, batch_y = batch_x.to(device), batch_y.to(device)
         optimizer.zero_grad()
         
-        # Ensure outputs and labels are compatible
+        # Get model outputs
         outputs = model(batch_x)
+        
+        # Ensure labels are float and shaped correctly
         batch_y = batch_y.float().view(-1, 1)
         
-        # Ensure output and label shapes match exactly
-        outputs = outputs.view_as(batch_y)
-        
+        # Option 1: Use BCEWithLogitsLoss (recommended)
+        criterion = nn.BCEWithLogitsLoss()
         loss = criterion(outputs, batch_y)
+        
+        # Alternatively, if using custom BCE loss:
+        # outputs = torch.sigmoid(outputs)  # Add sigmoid if not in model
+        # loss = F.binary_cross_entropy(outputs, batch_y, reduction='mean')
+        
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
 
-        # Calculate accuracy
+        # Calculate predictions
         preds = (outputs > 0.5).float().cpu().detach().numpy()
         all_preds.extend(preds)
         all_labels.extend(batch_y.cpu().numpy())
@@ -295,7 +283,6 @@ def train_one_epoch(
     avg_loss = total_loss / len(train_loader)
     accuracy = accuracy_score(all_labels, all_preds)
     return avg_loss, accuracy
-
 
 def evaluate_model(
     model: nn.Module,
