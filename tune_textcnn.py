@@ -58,7 +58,7 @@ def calculate_class_weights(labels, positive_weight=2.0):
     num_neg = counts[0]
     num_pos = counts[1]
     pos_weight = (num_neg / num_pos) * positive_weight
-    return torch.tensor(pos_weight, dtype=torch.float
+    return torch.tensor(pos_weight, dtype=torch.float)
                         
 def main():
     # Parse command line arguments
