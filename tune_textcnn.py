@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import joblib
+import numpy as np
 import pandas as pd
 import argparse
 from ray import tune
@@ -110,6 +111,40 @@ def main():
         "max_epochs": args.max_epochs
     })
 
+    def calculate_class_weights(labels, positive_weight=2.0):
+        """
+        Calculate class weights to handle class imbalance.
+        
+        Args:
+            labels (array-like): Array of labels
+            positive_weight (float): Multiplier for the positive class weight
+        
+        Returns:
+            torch.Tensor: Tensor of class weights
+        """
+        # Count occurrences of each class
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        
+        # Calculate base weights (inverse of class frequency)
+        weights = 1.0 / counts
+        
+        # Find the index of the positive class (typically 1)
+        pos_index = np.where(unique_labels == 1)[0][0]
+        
+        # Multiply positive class weight by the specified multiplier
+        weights[pos_index] *= positive_weight
+        
+        # Normalize weights
+        weights = weights / weights.min()
+        
+        print("Class Weights:")
+        for label, weight in zip(unique_labels, weights):
+            print(f"  Label {label}: {weight:.2f}")
+        
+        return torch.FloatTensor(weights)
+    
+    class_weights = calculate_class_weights(train_labels, args.positive_weight)
+
     # Define trainable function for Ray that retrieves data from object store
     def train_func(config):
         # Retrieve data from Ray's object store
@@ -129,6 +164,7 @@ def main():
         model, tokenizer, trained_label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
             full_config, fixed_args["max_epochs"], pretrained_embeddings_dict,
+            class_weights=class_weights,
             provided_label_encoder=label_encoder
         )
 
@@ -139,7 +175,9 @@ def main():
             "train_accuracy": metrics["train_accuracy"][-1],
             "train_loss": metrics["train_loss"][-1]
         })
-
+    # Calculate class weights
+  
+    
     # Hyperparameter space for Ray Tune
     param_space = {
         "embed_dim": tune.choice([50, 100, 150, 200, 250, 300, 350, 400, 450, 500]),
@@ -174,7 +212,7 @@ def main():
             ),
             num_samples=args.num_samples
         ),
-        param_space=param_space
+        param_space=param_space,
     )
 
     # Run hyperparameter search
