@@ -314,8 +314,7 @@ def train_textcnn(
     config: Dict,
     num_epochs: int,
     pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
-    provided_label_encoder: Optional[LabelEncoder] = None,
-    pos_weight = config.get('pos_weight', None)
+    provided_label_encoder: Optional[LabelEncoder] = None
 ):
     """
     End-to-end training function with flexible label handling and class weighting.
@@ -336,6 +335,7 @@ def train_textcnn(
         label_encoder: Fitted LabelEncoder or None if numeric labels.
         metrics: Dictionary with training metrics.
     """
+     pos_weight = config.get('pos_weight', None)
     # Use BCEWithLogitsLoss with pos_weight if provided
     if pos_weight is not None:
         pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
