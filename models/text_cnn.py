@@ -247,9 +247,6 @@ class TextCNN(nn.Module):
         return x
 
 
-# =========================
-# Training and Evaluation Functions
-# =========================
 def train_one_epoch(
     model: nn.Module,
     train_loader: DataLoader,
@@ -277,8 +274,11 @@ def train_one_epoch(
     for batch_x, batch_y in train_loader:
         batch_x, batch_y = batch_x.to(device), batch_y.to(device)
         optimizer.zero_grad()
+        
+        # Key change: modify loss computation to match model output
         outputs = model(batch_x)
-        loss = criterion(outputs, batch_y.unsqueeze(1))
+        loss = criterion(outputs.squeeze(), batch_y.float())
+        
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -319,7 +319,9 @@ def evaluate_model(
         for batch_x, batch_y in val_loader:
             batch_x, batch_y = batch_x.to(device), batch_y.to(device)
             outputs = model(batch_x)
-            loss = criterion(outputs, batch_y.unsqueeze(1))
+            
+            # Key change: modify loss computation to match model output
+            loss = criterion(outputs.squeeze(), batch_y.float())
             total_loss += loss.item()
 
             preds = (outputs > 0.5).float().cpu().numpy()
@@ -329,7 +331,6 @@ def evaluate_model(
     avg_loss = total_loss / len(val_loader)
     accuracy = accuracy_score(all_labels, all_preds)
     return avg_loss, accuracy
-
 
 # =========================
 # Training and Saving Function
