@@ -6,12 +6,13 @@ import os
 import joblib
 import json
 import argparse
+import numpy as np
 from models.text_cnn import train_textcnn, TextTokenizer
-from utils import  process_labels
+from utils import process_labels
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Train TextCNN with best hyperparameters')
+        description='Train TextCNN with best hyperparameters and class weights')
     parser.add_argument('--train_data', type=str, required=True, 
                         help='Path to training CSV file')
     parser.add_argument('--val_data', type=str, required=True, 
@@ -33,12 +34,48 @@ def parse_args():
                         help='Path to pretrained word embeddings file (default: None)')
     parser.add_argument('--freeze_embeddings', action='store_true',
                         help='Whether to freeze embeddings during training (default: False)')
+    parser.add_argument('--positive_weight', type=float, default=2.0,
+                        help='Weight multiplier for positive class (default: 2.0)')
     return parser.parse_args()
+
+
+def calculate_class_weights(labels, positive_weight=2.0):
+    """
+    Calculate class weights to handle class imbalance.
+    
+    Args:
+        labels (array-like): Array of labels
+        positive_weight (float): Multiplier for the positive class weight
+    
+    Returns:
+        torch.Tensor: Tensor of class weights
+    """
+    # Count occurrences of each class
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    
+    # Calculate base weights (inverse of class frequency)
+    weights = 1.0 / counts
+    
+    # Find the index of the positive class (typically 1)
+    pos_index = np.where(unique_labels == 1)[0][0]
+    
+    # Multiply positive class weight by the specified multiplier
+    weights[pos_index] *= positive_weight
+    
+    # Normalize weights
+    weights = weights / weights.min()
+    
+    print("Class Weights:")
+    for label, weight in zip(unique_labels, weights):
+        print(f"  Label {label}: {weight:.2f}")
+    
+    return torch.FloatTensor(weights)
 
 
 def main():
     # Parse command line arguments
     args = parse_args()
+    
     # Load data
     print(f"Loading Training Data from {args.train_data}...")
     train_df = pd.read_csv(args.train_data)
@@ -50,6 +87,7 @@ def main():
     train_labels_raw = train_df[args.label_column].tolist()
     val_texts = val_df[args.text_column].tolist()
     val_labels_raw = val_df[args.label_column].tolist()
+    
     # Process labels
     train_labels, label_encoder = process_labels(train_labels_raw)
     val_labels, _ = process_labels(val_labels_raw) if label_encoder is None else (
@@ -58,22 +96,30 @@ def main():
     print(f"Training data: {len(train_texts)} examples")
     print(f"Validation data: {len(val_texts)} examples")
     print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
+    
+    # Calculate class weights
+    class_weights = calculate_class_weights(train_labels, args.positive_weight)
+    
     # Load best config
     best_config_path = os.path.join(args.config_dir, "best_config.joblib")
     print(f"Loading best configuration from {best_config_path}...")
     best_config = joblib.load(best_config_path)
     print(f"Best configuration: {best_config}")
+    
     # Load pretrained embeddings if provided
     pretrained_embeddings_dict = None
     if args.pretrained_embeddings:
-        print(f"Loading pretrained embeddings from\
-              {args.pretrained_embeddings}...")
+        print(f"Loading pretrained embeddings from {args.pretrained_embeddings}...")
         pretrained_embeddings_dict = TextTokenizer.load_pretrained_embeddings(
             args.pretrained_embeddings)
-        print(f"Loaded {len(pretrained_embeddings_dict)}\
-               pretrained word vectors")
+        print(f"Loaded {len(pretrained_embeddings_dict)} pretrained word vectors")
+    
     # Add freeze_embeddings parameter to config
     best_config['freeze_embeddings'] = args.freeze_embeddings
+    
+    # Add class weights to config
+    best_config['class_weights'] = class_weights
+    
     # Train final model with best configuration
     print("Training final model with best configuration...")
     final_model, final_tokenizer, final_label_encoder, final_metrics = train_textcnn(
@@ -81,16 +127,20 @@ def main():
         best_config, num_epochs=args.epochs,
         pretrained_embeddings_dict=pretrained_embeddings_dict
     )
+    
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+    
     # Save final model, tokenizer, and label encoder
     torch.save(final_model.state_dict(), os.path.join(
         args.output_dir, "nutrikidaitextcnn_model.pt"))
+    
     # Save tokenizer, label encoder, and training metrics using joblib
     joblib.dump(final_tokenizer,
                 os.path.join(args.output_dir, "tokenizer.joblib"))
     joblib.dump(final_label_encoder,
                 os.path.join(args.output_dir, "label_encoder.joblib"))
+    
     metrics_path = os.path.join(args.output_dir, "training_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(final_metrics, f, indent=4)
@@ -102,7 +152,8 @@ def main():
         "num_filters": best_config.get("num_filters", 100),
         "kernel_sizes": best_config.get("kernel_sizes", [3, 4, 5]),
         "dropout_rate": best_config.get("dropout_rate", 0.5),
-        "freeze_embeddings": best_config.get("freeze_embeddings", False)
+        "freeze_embeddings": best_config.get("freeze_embeddings", False),
+        "positive_weight": args.positive_weight
     }
     joblib.dump(model_config, os.path.join(args.output_dir,
                                            "model_config.joblib"))
@@ -138,8 +189,7 @@ def main():
         # Save the plots
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, "training_curves.png"))
-        print(f"Training curves saved to\
-               {os.path.join(args.output_dir, 'training_curves.png')}")
+        print(f"Training curves saved to {os.path.join(args.output_dir, 'training_curves.png')}")
     except Exception as e:
         print(f"Could not generate training curves: {e}")
 
