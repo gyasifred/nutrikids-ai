@@ -279,6 +279,9 @@ def train_one_epoch(
         outputs = model(batch_x)
         batch_y = batch_y.float().view(-1, 1)
         
+        # Ensure output and label shapes match exactly
+        outputs = outputs.view_as(batch_y)
+        
         loss = criterion(outputs, batch_y)
         loss.backward()
         optimizer.step()
