@@ -319,190 +319,68 @@ def train_textcnn(
 ):
     """
     End-to-end training function with flexible label handling and class weighting.
-
-    Args:
-        train_texts: Training texts.
-        train_labels: Training labels as either numeric (0/1) or text ('yes'/'no').
-        val_texts: Validation texts.
-        val_labels: Validation labels as either numeric (0/1) or text ('yes'/'no').
-        config: Dictionary with hyperparameters.
-        num_epochs: Number of training epochs.
-        pretrained_embeddings_dict: Dictionary of pretrained word embeddings.
-        provided_label_encoder: Pre-fitted label encoder (optional).
-
-    Returns:
-        model: Trained TextCNN model.
-        tokenizer: Fitted TextTokenizer.
-        label_encoder: Fitted LabelEncoder or None if numeric labels.
-        metrics: Dictionary with training metrics.
     """
     pos_weight = config.get('pos_weight', None)
-    # Use BCEWithLogitsLoss with pos_weight if provided
     if pos_weight is not None:
         pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        print(f"Using pos_weight: {pos_weight.cpu().item():.2f}")
     else:
         criterion = nn.BCEWithLogitsLoss()
-        
-    # Label processing (same as before)
-    if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
-        train_encoded_labels = train_labels
-        val_encoded_labels = val_labels
-        label_encoder = provided_label_encoder
-    elif isinstance(train_labels, np.ndarray) and provided_label_encoder is None:
-        train_encoded_labels = train_labels
-        val_encoded_labels = val_labels
-        label_encoder = None
-    else:
-        # Process labels based on type
-        is_numeric = all(isinstance(label, (int, float)) or 
-                        (isinstance(label, str) and label.strip().isdigit()) 
-                        for label in train_labels)
-        
-        if is_numeric:
-            # Convert string numbers to integers if needed
-            train_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
-                                            for label in train_labels])
-            val_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
-                                          for label in val_labels])
-            label_encoder = None
-        else:
-            # Use provided encoder or create a new one for text labels
-            if provided_label_encoder is not None:
-                label_encoder = provided_label_encoder
-                train_encoded_labels = label_encoder.transform(train_labels)
-                val_encoded_labels = label_encoder.transform(val_labels)
-            else:
-                # Create and fit a new label encoder
-                label_encoder = LabelEncoder()
-                train_encoded_labels = label_encoder.fit_transform(train_labels)
-                val_encoded_labels = label_encoder.transform(val_labels)
-                
-                # Ensure 'yes' or 'positive' maps to 1 if present
-                positive_terms = ['yes', 'positive', 'true', '1']
-                for pos_term in positive_terms:
-                    if pos_term in train_labels or pos_term.capitalize() in train_labels:
-                        try:
-                            pos_idx = next(i for i, label in enumerate(train_labels) 
-                                          if str(label).lower() == pos_term)
-                            pos_encoded = train_encoded_labels[pos_idx]
-                            if pos_encoded != 1:
-                                train_encoded_labels = 1 - train_encoded_labels
-                                val_encoded_labels = 1 - val_encoded_labels
-                            break
-                        except StopIteration:
-                            continue
-
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
-    print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
-
     tokenizer = TextTokenizer(
         max_vocab_size=config.get("max_vocab_size", 20000),
         min_frequency=config.get("min_frequency", 2),
         max_length=config.get("max_length", None)
     )
-
+    
     X_train_seq = tokenizer.fit_transform(train_texts)
     X_val_seq = tokenizer.transform(val_texts)
-
-    train_dataset = TextCNNDataset(X_train_seq, train_encoded_labels)
-    val_dataset = TextCNNDataset(X_val_seq, val_encoded_labels)
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.get("batch_size", 32),
-        shuffle=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config.get("batch_size", 32)
-    )
-
-    # Prepare pretrained embedding matrix if provided
-    pretrained_embedding_matrix = None
-    if pretrained_embeddings_dict is not None:
-        pretrained_embedding_matrix = tokenizer.get_embedding_matrix(
-            config.get("embed_dim", 100),
-            pretrained_embeddings_dict
-        )
-
+    train_dataset = TextCNNDataset(X_train_seq, train_labels)
+    val_dataset = TextCNNDataset(X_val_seq, val_labels)
+    train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32), shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
+    
     model = TextCNN(
         vocab_size=tokenizer.vocab_size_,
         embed_dim=config.get("embed_dim", 100),
         num_filters=config.get("num_filters", 100),
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
         dropout_rate=config.get("dropout_rate", 0.5),
-        pretrained_embeddings=pretrained_embedding_matrix,
-        freeze_embeddings=config.get("freeze_embeddings", False)
     ).to(device)
-
-    # Handle class weights
-    class_weights = config.get('class_weights', None)
     
-    # Convert class weights to tensor if provided
-    if class_weights is not None:
-        # Ensure class_weights is a tensor on the correct device
-        class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
-        # Use weighted binary cross-entropy loss
-        criterion = nn.BCELoss(weight=class_weights)
-        print("Using weighted BCE Loss with class weights:", class_weights.cpu().numpy())
-    else:
-        # Default to standard binary cross-entropy loss
-        criterion = nn.BCELoss()
-
     optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
-
-    metrics = {
-        "train_loss": [],
-        "train_accuracy": [],
-        "val_loss": [],
-        "val_accuracy": []
-    }
-
-    best_val_loss = float('inf')
+    
+    metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
+    best_f1_score = 0.0
     best_model_state = None
-
+    
     for epoch in range(num_epochs):
-        train_loss, train_accuracy = train_one_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            device
-        )
-        val_loss, val_accuracy = evaluate_model(
-            model,
-            val_loader,
-            criterion,
-            device
-        )
-
+        train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_accuracy, val_f1 = evaluate_model(model, val_loader, criterion, device, return_f1=True)
+        
         metrics["train_loss"].append(train_loss)
         metrics["train_accuracy"].append(train_accuracy)
         metrics["val_loss"].append(val_loss)
         metrics["val_accuracy"].append(val_accuracy)
-
+        metrics["val_f1"].append(val_f1)
+        
         print(
             f"Epoch {epoch+1}/{num_epochs} - "
-            f"Train Loss: {train_loss:.4f}, "
-            f"Train Accuracy: {train_accuracy:.4f}, "
-            f"Val Loss: {val_loss:.4f}, "
-            f"Val Accuracy: {val_accuracy:.4f}"
+            f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, "
+            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1: {val_f1:.4f}"
         )
-
-        # Save best model state in memory based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        
+        # Save best model state based on validation F1-score
+        if val_f1 > best_f1_score:
+            best_f1_score = val_f1
             best_model_state = model.state_dict().copy()
-            print(f"New best model with validation loss: {val_loss:.4f}")
-
-    # Load the best model state
+            print(f"New best model with validation F1-score: {val_f1:.4f}")
+    
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-
-    return model, tokenizer, label_encoder, metrics
+    
+    return model, tokenizer, metrics
     
 def predict_batch(model, tokenizer, texts,threshold):
     """
