@@ -307,9 +307,6 @@ def evaluate_model(
 
     return avg_loss, accuracy, f1
 
-# =========================
-# Training and Saving Function
-# =========================
 def train_textcnn(
     train_texts: List[str],
     train_labels: List[Union[str, int, float]],
@@ -318,87 +315,71 @@ def train_textcnn(
     config: Dict,
     num_epochs: int,
     pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
-    provided_label_encoder = None
+    provided_label_encoder: Optional[LabelEncoder] = None
 ):
     """
     End-to-end training function with flexible label handling and class weighting.
     """
     pos_weight = config.get('pos_weight', None)
+    if pos_weight is not None:
+        pos_weight = torch.tensor(pos_weight, dtype=torch.float).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Add your existing label processing logic
-    train_labels, label_encoder = process_labels(train_labels)
-    val_labels, _ = process_labels(val_labels) if label_encoder is None else (
-        label_encoder.transform(val_labels), None)
-    
-    # Use provided or calculated pos_weight
-    if pos_weight is None:
-        pos_weight = calculate_class_weights(train_labels)
-    
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
-    
     tokenizer = TextTokenizer(
         max_vocab_size=config.get("max_vocab_size", 20000),
         min_frequency=config.get("min_frequency", 2),
         max_length=config.get("max_length", None)
     )
-    
-    # Apply pretrained embeddings if provided
-    if pretrained_embeddings_dict:
-        tokenizer.load_pretrained_embeddings(pretrained_embeddings_dict)
-    
+
     X_train_seq = tokenizer.fit_transform(train_texts)
     X_val_seq = tokenizer.transform(val_texts)
     train_dataset = TextCNNDataset(X_train_seq, train_labels)
     val_dataset = TextCNNDataset(X_val_seq, val_labels)
     train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32), shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
-    
+
     model = TextCNN(
-        vocab_size=tokenizer.vocab_size_,
+        vocab_size=tokenizer.vocabsize,
         embed_dim=config.get("embed_dim", 100),
         num_filters=config.get("num_filters", 100),
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
         dropout_rate=config.get("dropout_rate", 0.5),
     ).to(device)
-    
-    # Freeze embeddings if specified
-    if config.get('freeze_embeddings', False):
-        for param in model.embedding.parameters():
-            param.requires_grad = False
-    
+
     optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
-    
+
     metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
     best_f1_score = 0.0
     best_model_state = None
-    
+
     for epoch in range(num_epochs):
         train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_accuracy, val_f1 = evaluate_model(model, val_loader, criterion, device, return_f1=True)
-        
+
         metrics["train_loss"].append(train_loss)
         metrics["train_accuracy"].append(train_accuracy)
         metrics["val_loss"].append(val_loss)
         metrics["val_accuracy"].append(val_accuracy)
         metrics["val_f1"].append(val_f1)
-        
+
         print(
             f"Epoch {epoch+1}/{num_epochs} - "
             f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, "
             f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1: {val_f1:.4f}"
         )
-        
+
         # Save best model state based on validation F1-score
         if val_f1 > best_f1_score:
             best_f1_score = val_f1
             best_model_state = model.state_dict().copy()
             print(f"New best model with validation F1-score: {val_f1:.4f}")
-    
-    # Load the best model state if a best model was found
+
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-    
+
     return model, tokenizer, metrics
     
 def predict_batch(model, tokenizer, texts,threshold):
