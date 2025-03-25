@@ -345,7 +345,7 @@ def train_textcnn(
     provided_label_encoder: Optional[LabelEncoder] = None
 ):
     """
-    End-to-end training function with flexible label handling.
+    End-to-end training function with flexible label handling and class weighting.
 
     Args:
         train_texts: Training texts.
@@ -363,14 +363,12 @@ def train_textcnn(
         label_encoder: Fitted LabelEncoder or None if numeric labels.
         metrics: Dictionary with training metrics.
     """
-    # Check if we already have processed labels and encoder
+    # Label processing (same as before)
     if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
-        # Labels are already processed
         train_encoded_labels = train_labels
         val_encoded_labels = val_labels
         label_encoder = provided_label_encoder
     elif isinstance(train_labels, np.ndarray) and provided_label_encoder is None:
-        # Numeric labels, no encoder needed
         train_encoded_labels = train_labels
         val_encoded_labels = val_labels
         label_encoder = None
@@ -458,7 +456,20 @@ def train_textcnn(
         freeze_embeddings=config.get("freeze_embeddings", False)
     ).to(device)
 
-    criterion = nn.BCELoss()
+    # Handle class weights
+    class_weights = config.get('class_weights', None)
+    
+    # Convert class weights to tensor if provided
+    if class_weights is not None:
+        # Ensure class_weights is a tensor on the correct device
+        class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
+        # Use weighted binary cross-entropy loss
+        criterion = nn.BCELoss(weight=class_weights)
+        print("Using weighted BCE Loss with class weights:", class_weights.cpu().numpy())
+    else:
+        # Default to standard binary cross-entropy loss
+        criterion = nn.BCELoss()
+
     optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
 
     metrics = {
@@ -510,7 +521,7 @@ def train_textcnn(
         model.load_state_dict(best_model_state)
 
     return model, tokenizer, label_encoder, metrics
-
+    
 def predict_batch(model, tokenizer, texts,threshold):
     """
     Make batch predictions using the trained model.
