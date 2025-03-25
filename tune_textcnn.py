@@ -52,6 +52,37 @@ def parse_args():
     return parser.parse_args()
 
 
+def calculate_class_weights(labels, positive_weight=2.0):
+    """
+    Calculate class weights to handle class imbalance.
+    
+    Args:
+        labels (array-like): Array of labels
+        positive_weight (float): Multiplier for the positive class weight
+    
+    Returns:
+        torch.Tensor: Tensor of class weights
+    """
+    # Count occurrences of each class
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    
+    # Calculate base weights (inverse of class frequency)
+    weights = 1.0 / counts
+    
+    # Find the index of the positive class (typically 1)
+    pos_index = np.where(unique_labels == 1)[0][0]
+    
+    # Multiply positive class weight by the specified multiplier
+    weights[pos_index] *= positive_weight
+    
+    # Normalize weights
+    weights = weights / weights.min()
+    
+    print("Class Weights:")
+    for label, weight in zip(unique_labels, weights):
+        print(f"  Label {label}: {weight:.2f}")
+    
+    return torch.FloatTensor(weights)
 
 
 def main():
@@ -92,6 +123,9 @@ def main():
         ray.shutdown()
     ray.init(ignore_reinit_error=True)
     
+    # Calculate class weights
+    class_weights = calculate_class_weights(train_labels, args.positive_weight)
+
     # Put the large objects in Ray's object store
     train_texts_ref = ray.put(train_texts)
     train_labels_ref = ray.put(train_labels)
@@ -99,6 +133,7 @@ def main():
     val_labels_ref = ray.put(val_labels)
     embeddings_ref = ray.put(pretrained_embeddings_dict)
     label_encoder_ref = ray.put(label_encoder)
+    class_weights_ref = ray.put(class_weights)
     
     # Store fixed args in Ray's object store too
     fixed_args_ref = ray.put({
@@ -113,40 +148,6 @@ def main():
         "max_epochs": args.max_epochs
     })
 
-    def calculate_class_weights(labels, positive_weight=2.0):
-        """
-        Calculate class weights to handle class imbalance.
-        
-        Args:
-            labels (array-like): Array of labels
-            positive_weight (float): Multiplier for the positive class weight
-        
-        Returns:
-            torch.Tensor: Tensor of class weights
-        """
-        # Count occurrences of each class
-        unique_labels, counts = np.unique(labels, return_counts=True)
-        
-        # Calculate base weights (inverse of class frequency)
-        weights = 1.0 / counts
-        
-        # Find the index of the positive class (typically 1)
-        pos_index = np.where(unique_labels == 1)[0][0]
-        
-        # Multiply positive class weight by the specified multiplier
-        weights[pos_index] *= positive_weight
-        
-        # Normalize weights
-        weights = weights / weights.min()
-        
-        print("Class Weights:")
-        for label, weight in zip(unique_labels, weights):
-            print(f"  Label {label}: {weight:.2f}")
-        
-        return torch.FloatTensor(weights)
-    
-    class_weights = calculate_class_weights(train_labels, args.positive_weight)
-
     # Define trainable function for Ray that retrieves data from object store
     def train_func(config):
         # Retrieve data from Ray's object store
@@ -156,17 +157,18 @@ def main():
         val_labels = ray.get(val_labels_ref)
         pretrained_embeddings_dict = ray.get(embeddings_ref)
         label_encoder = ray.get(label_encoder_ref)
+        class_weights = ray.get(class_weights_ref)
         fixed_args = ray.get(fixed_args_ref)
         
         # Merge provided args with tunable config
         full_config = fixed_args.copy()
         full_config.update(config)
 
-        # Train model
+        # Train model - Pass class_weights as a parameter in the full_config
+        full_config['class_weights'] = class_weights
         model, tokenizer, trained_label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
             full_config, fixed_args["max_epochs"], pretrained_embeddings_dict,
-            class_weights=class_weights,
             provided_label_encoder=label_encoder
         )
 
@@ -177,8 +179,6 @@ def main():
             "train_accuracy": metrics["train_accuracy"][-1],
             "train_loss": metrics["train_loss"][-1]
         })
-    # Calculate class weights
-  
     
     # Hyperparameter space for Ray Tune
     param_space = {
