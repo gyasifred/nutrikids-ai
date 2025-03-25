@@ -39,7 +39,9 @@ def parse_args():
     parser.add_argument('--embedding_dim', type=int, default=100)
     parser.add_argument('--pretrained_embeddings', 
                         type=lambda x: None if x.lower() == 'none' else str(x),
-                        default=None)
+                        default=None) 
+    parser.add_argument('--positive_weight', type=float, default=2.0,
+                        help='Weight multiplier for positive class (default: 2.0)')
     
     # Ray Tune parameters
     parser.add_argument('--output_dir', type=str, default='CNN')
