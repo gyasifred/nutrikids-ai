@@ -342,7 +342,7 @@ def train_textcnn(
     val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
 
     model = TextCNN(
-        vocab_size=tokenizer.vocabsize,
+        vocab_size=tokenizer.vocab_size_,
         embed_dim=config.get("embed_dim", 100),
         num_filters=config.get("num_filters", 100),
         kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
