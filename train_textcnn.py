@@ -62,17 +62,8 @@ def main():
     val_texts = val_df[args.text_column].tolist()
     val_labels_raw = val_df[args.label_column].tolist()
     
-    # Process labels
-    train_labels, label_encoder = process_labels(train_labels_raw)
-    val_labels, _ = process_labels(val_labels_raw) if label_encoder is None else (
-        label_encoder.transform(val_labels_raw), None)
-
-    print(f"Training data: {len(train_texts)} examples")
-    print(f"Validation data: {len(val_texts)} examples")
-    print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
-    
     # Calculate class weights
-    class_weights = calculate_class_weights(train_labels, args.positive_weight)
+    class_weights = calculate_class_weights(train_labels_raw, args.positive_weight)
     
     # Load best config
     best_config_path = os.path.join(args.config_dir, "best_config.joblib")
@@ -96,8 +87,8 @@ def main():
     
     # Train final model with best configuration
     print("Training final model with best configuration...")
-    final_model, final_tokenizer, final_label_encoder, final_metrics = train_textcnn(
-        train_texts, train_labels, val_texts, val_labels,
+    final_model, final_tokenizer, final_metrics = train_textcnn(
+        train_texts, train_labels_raw, val_texts, val_labels_raw,
         best_config, num_epochs=args.epochs,
         pretrained_embeddings_dict=pretrained_embeddings_dict
     )
@@ -109,15 +100,13 @@ def main():
     torch.save(final_model.state_dict(), os.path.join(
         args.output_dir, "nutrikidaitextcnn_model.pt"))
     
-    # Save tokenizer, label encoder, and training metrics using joblib
+    # Save tokenizer and training metrics using joblib
     joblib.dump(final_tokenizer,
                 os.path.join(args.output_dir, "tokenizer.joblib"))
-    joblib.dump(final_label_encoder,
-                os.path.join(args.output_dir, "label_encoder.joblib"))
     
     metrics_path = os.path.join(args.output_dir, "training_metrics.json")
     with open(metrics_path, "w") as f:
-        json.dump(final_metrics, f, indent=4)
+        json.dump({k: [float(x) for x in v] for k, v in final_metrics.items()}, f, indent=4)
    
     # Save model configuration
     model_config = {
