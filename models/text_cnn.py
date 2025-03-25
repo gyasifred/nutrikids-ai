@@ -280,8 +280,9 @@ def evaluate_model(
     model: nn.Module,
     val_loader: DataLoader,
     criterion,
-    device: str
-) -> Tuple[float, float]:
+    device: str,
+    return_f1: bool = True 
+) -> Tuple[float, float, float]:
     model.eval()
     all_preds, all_labels = [], []
     total_loss = 0.0
@@ -302,7 +303,9 @@ def evaluate_model(
 
     avg_loss = total_loss / len(val_loader)
     accuracy = accuracy_score(all_labels, all_preds)
-    return avg_loss, accuracy
+    f1 = f1_score(all_labels, all_preds)
+
+    return avg_loss, accuracy, f1
 
 # =========================
 # Training and Saving Function
