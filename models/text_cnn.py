@@ -336,8 +336,60 @@ def train_textcnn(
 
     X_train_seq = tokenizer.fit_transform(train_texts)
     X_val_seq = tokenizer.transform(val_texts)
-    train_dataset = TextCNNDataset(X_train_seq, train_labels)
-    val_dataset = TextCNNDataset(X_val_seq, val_labels)
+    
+    # Label processing
+    if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
+        # Labels are already processed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = provided_label_encoder
+    elif isinstance(train_labels, np.ndarray) and provided_label_encoder is None:
+        # Numeric labels, no encoder needed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = None
+    else:
+        # Process labels based on type
+        is_numeric = all(isinstance(label, (int, float)) or 
+                        (isinstance(label, str) and label.strip().isdigit()) 
+                        for label in train_labels)
+        
+        if is_numeric:
+            # Convert string numbers to integers if needed
+            train_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                            for label in train_labels])
+            val_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                          for label in val_labels])
+            label_encoder = None
+        else:
+            # Use provided encoder or create a new one for text labels
+            if provided_label_encoder is not None:
+                label_encoder = provided_label_encoder
+                train_encoded_labels = label_encoder.transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+            else:
+                # Create and fit a new label encoder
+                label_encoder = LabelEncoder()
+                train_encoded_labels = label_encoder.fit_transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+                
+                # Ensure 'yes' or 'positive' maps to 1 if present
+                positive_terms = ['yes', 'positive', 'true', '1']
+                for pos_term in positive_terms:
+                    if pos_term in train_labels or pos_term.capitalize() in train_labels:
+                        try:
+                            pos_idx = next(i for i, label in enumerate(train_labels) 
+                                          if str(label).lower() == pos_term)
+                            pos_encoded = train_encoded_labels[pos_idx]
+                            if pos_encoded != 1:
+                                train_encoded_labels = 1 - train_encoded_labels
+                                val_encoded_labels = 1 - val_encoded_labels
+                            break
+                        except StopIteration:
+                            continue
+
+    train_dataset = TextCNNDataset(X_train_seq, train_encoded_labels)
+    val_dataset = TextCNNDataset(X_val_seq, val_encoded_labels)
     train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32), shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
 
@@ -380,7 +432,7 @@ def train_textcnn(
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
 
-    return model, tokenizer, metrics
+    return model, tokenizer, label_encoder, metrics
     
 def predict_batch(model, tokenizer, texts,threshold):
     """
