@@ -275,47 +275,45 @@ def process_csv(
 
 def process_labels(labels: List[Union[str, int, float]]) -> Tuple[np.ndarray, Optional[LabelEncoder]]:
     """
-    Process labels that could be either numeric (0/1) or text (yes/no).
+    Process labels that could be numeric categories or text categories.
     
     Args:
         labels: List of labels that could be numeric or text
-        
+    
     Returns:
         Tuple of (processed_labels, label_encoder or None)
     """
-    # Check if all labels are numeric (integers or floats)
-    is_numeric = all(isinstance(label, (int, float)) or 
-                    (isinstance(label, str) and label.strip().isdigit()) 
-                    for label in labels)
+    # Convert labels to a consistent type for processing
+    labels = [str(label).strip() for label in labels]
     
-    if is_numeric:
-        # Convert string numbers to integers if needed
-        numeric_labels = [int(label) if isinstance(label, str) else int(label) 
-                         for label in labels]
-        # Ensure labels are binary (0 or 1)
-        if not all(label in [0, 1] for label in numeric_labels):
-            raise ValueError("Numeric labels must be binary (0 or 1)")
+    # Check if labels are already numeric
+    def is_numeric_category(label_list):
+        return all(label.isdigit() for label in label_list)
+    
+    # If all labels are digit strings, convert to integers
+    if is_numeric_category(labels):
+        numeric_labels = [int(label) for label in labels]
         return np.array(numeric_labels), None
-    else:
-        # Handle text labels
-        label_encoder = LabelEncoder()
-        encoded_labels = label_encoder.fit_transform(labels)
-        
-        # Ensure 'yes' or 'positive' maps to 1 if present
-        positive_terms = ['yes', 'positive', 'true', '1']
-        for pos_term in positive_terms:
-            if pos_term in labels or pos_term.capitalize() in labels:
-                try:
-                    pos_idx = next(i for i, label in enumerate(labels) 
-                                  if str(label).lower() == pos_term)
-                    pos_encoded = encoded_labels[pos_idx]
-                    if pos_encoded != 1:
-                        encoded_labels = 1 - encoded_labels  # Flip the encoding
-                    break
-                except StopIteration:
-                    continue
-                
-        return encoded_labels, label_encoder
+    
+    # If labels are text/mixed, use LabelEncoder
+    label_encoder = LabelEncoder()
+    encoded_labels = label_encoder.fit_transform(labels)
+    
+    # Attempt to ensure 'positive' labels map to 1
+    positive_terms = ['yes', 'positive', 'true', '1']
+    for pos_term in positive_terms:
+        try:
+            pos_idx = next(i for i, label in enumerate(labels) 
+                           if str(label).lower() == pos_term)
+            pos_encoded = encoded_labels[pos_idx]
+            if pos_encoded != 1:
+                encoded_labels = 1 - encoded_labels  # Flip the encoding
+            break
+        except StopIteration:
+            continue
+    
+    return encoded_labels, label_encoder
+
 
 def plot_confusion_matrix(y_true, y_pred, output_path):
     """Plot and save confusion matrix."""
@@ -451,62 +449,52 @@ def get_api_key(env_variable):
 
 
 def load_tabfnartifacts(model_dir: str, model_name: str):
-    """ 
-    Load all model artifacts (model,
-    feature dict, pipeline) from the given directory.
-
+    """
+    Load all model artifacts (model, feature dict, pipeline) from the given directory.
+    
     Args:
         model_dir (str): Path to the directory containing model artifacts.
-
+        model_name (str): Base name for model artifacts
+    
     Returns:
-        model, feature_dict, pipeline
+        Tuple of (model, label_encoder, pipeline)
     """
     # Define the file patterns to match the latest .joblib files
-    model_pattern = os.path.join(model_dir,
-                                 f"{model_name}_nutrikidai_model.joblib")
+    model_pattern = os.path.join(model_dir, f"{model_name}_nutrikidai_model.joblib")
     label_encoder_pattern = os.path.join(
         model_dir, f"{model_name}_nutrikidai_classifier_label_encoder_*.joblib")
-    pipeline_pattern = os.path.join(model_dir,
-                                    f"{model_name}_nutrikidai_pipeline.joblib")
-
+    pipeline_pattern = os.path.join(model_dir, f"{model_name}_nutrikidai_pipeline.joblib")
+    
     # List the files that match the patterns
     model_files = glob.glob(model_pattern)
     label_encoder_files = glob.glob(label_encoder_pattern)
     pipeline_files = glob.glob(pipeline_pattern)
-
-    # Debugging prints to check the found files
-    print(f"Found model files: {model_files}")
-    print(f"Found Label Encoder files: {label_encoder_files}")
-    print(f"Found pipeline files: {pipeline_files}")
-
-    # Ensure that there are files found for each pattern
+    
+    # Ensure that there are files found for the model and pipeline
     if not model_files:
-        raise ValueError(f"No model files found matching pattern:\
-                          {model_pattern}")
+        raise ValueError(f"No model files found matching pattern: {model_pattern}")
     if not pipeline_files:
-        raise ValueError(f"No pipeline files found matching pattern:\
-                          {pipeline_pattern}")
-
-    # Get the latest model file by sorting the files
-    # based on the modification time
+        raise ValueError(f"No pipeline files found matching pattern: {pipeline_pattern}")
+    
+    # Get the latest model file by sorting based on modification time
     model_path = max(model_files, key=os.path.getmtime)
     print(f"Loading model from {model_path}...")
     model = joblib.load(model_path)
-
+    
     # Get the latest label encoder file if exists
     label_encoder = None
-    if label_encoder_files:  # Only try to load if files exist
+    if label_encoder_files:
         label_encoder_path = max(label_encoder_files, key=os.path.getmtime)
-        print(f"Loading label Encoder from {label_encoder_path}...")
+        print(f"Loading Label Encoder from {label_encoder_path}...")
         label_encoder = joblib.load(label_encoder_path)
     else:
-        print("No label encoder found. Assuming binary labels.")
-
+        print("No label encoder found. Assuming numeric or binary labels.")
+    
     # Get the latest pipeline file
     pipeline_path = max(pipeline_files, key=os.path.getmtime)
     print(f"Loading pipeline from {pipeline_path}...")
     pipeline = joblib.load(pipeline_path)
-
+    
     return model, label_encoder, pipeline
 
 

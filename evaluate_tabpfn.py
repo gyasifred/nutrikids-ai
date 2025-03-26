@@ -12,7 +12,7 @@ import numpy as np
 from datetime import datetime
 from models.tabpfn import evaluate_model
 from utils import load_tabfnartifacts
-from sklearn.preprocessing import LabelEncoder
+from utils import process_labels, detect_label_type
 
 
 def convert_to_serializable(obj):
@@ -50,6 +50,9 @@ def main():
 
     args = parser.parse_args()
 
+    # Ensure output directory exists
+    os.makedirs(args.output_dir, exist_ok=True)
+
     # Load artifacts
     model, label_encoder, pipeline = load_tabfnartifacts(
         args.model_path, args.model_name)
@@ -58,47 +61,21 @@ def main():
     print(f"Processing test data from {args.data_file}...")
     df = pd.read_csv(args.data_file)
     X_test = pipeline.transform(df[args.text_column])
-    y_test = df[args.label_column]
 
-    # Handle label transformation correctly
+    # Detect and process labels 
+    test_labels = df[args.label_column].tolist()
+    label_type = detect_label_type(test_labels)
+    print(f"Detected label type: {label_type}")
+
+    # Process labels
     if label_encoder is not None:
-        unique_labels = y_test.unique()
-        expected_classes = label_encoder.classes_
-
-        print(f"Test data labels: {unique_labels}")
-        print(f"Label encoder classes: {expected_classes}")
-
-        # Handling mismatched labels (e.g., "yes"/"no" vs. 0/1)
-        if set(unique_labels) != set(expected_classes):
-            if set(unique_labels) == {"yes", "no"} and set(expected_classes) == {0, 1}:
-                print("Converting string labels to numeric format...")
-                y_test = y_test.map({'yes': 1, 'no': 0})
-            else:
-                print("WARNING: Test data labels do not match trained encoder classes.")
-                print("Fitting a temporary label encoder for evaluation...")
-
-                # Create a temporary mapping
-                temp_encoder = LabelEncoder()
-                temp_encoder.fit(y_test)
-                y_test = temp_encoder.transform(y_test)
-
-                # Save mapping for reference
-                mapping_filename = os.path.join(
-                    args.output_dir,
-                    f"temp_label_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-
-                mapping_data = {
-                    "original_encoder_classes": list(map(str, expected_classes)),
-                    "test_data_mapping": {str(k): str(v) for k, v in zip(temp_encoder.classes_, range(len(temp_encoder.classes_)))}
-                }
-
-                with open(mapping_filename, 'w') as f:
-                    json.dump(mapping_data, f, indent=2)
-
-                print(f"Label mapping saved to: {mapping_filename}")
-
-        else:
-            y_test = label_encoder.transform(y_test)
+        # If label encoder exists (for text categories), use it
+        y_test = label_encoder.transform(test_labels)
+        print(f"Transforming labels using saved label encoder. Classes: {label_encoder.classes_}")
+    else:
+        # If no label encoder, direct processing (for numeric or already numeric labels)
+        y_test, _ = process_labels(test_labels)
+        print("No label encoder used. Labels processed directly.")
 
     # Ensure X_test is a DataFrame
     if hasattr(X_test, 'toarray'):
@@ -117,6 +94,9 @@ def main():
         model_name=args.model_name,
         label_encoder=label_encoder
     )
+
+    # Add label type to results for reference
+    results['label_type'] = label_type
 
     # Convert results to JSON-safe format
     results_serializable = {key: convert_to_serializable(value) for key, value in results.items()}
