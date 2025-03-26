@@ -37,7 +37,7 @@ def batch_process_csv(
     """
     Process CSV data in batches to avoid memory issues.
     Handles various label types appropriately.
-    
+
     Parameters:
       - file_path: Path to the CSV file containing the data
       - text_column: Name of the column containing text to analyze
@@ -51,7 +51,7 @@ def batch_process_csv(
       - vectorization_mode: 'count' for CountVectorizer, 'tfidf' for TF-IDF Vectorizer
       - ngram_range: Tuple (min_n, max_n) for n-gram range
       - save_path: Directory path to save the text preprocessing pipeline
-      
+
     Returns:
       - data_generator: Generator yielding batches of processed data
       - feature_dict: Dictionary mapping feature indices to names
@@ -62,45 +62,48 @@ def batch_process_csv(
     try:
         # Sample a small chunk to verify columns exist
         sample_df = next(pd.read_csv(file_path,
-                                     usecols=[text_column, label_column, id_column],
+                                     usecols=[text_column,
+                                              label_column, id_column],
                                      chunksize=5))
         required_columns = [text_column, label_column, id_column]
-        missing_columns = [col for col in required_columns if col not in sample_df.columns]
-        
+        missing_columns = [
+            col for col in required_columns if col not in sample_df.columns]
+
         if missing_columns:
             print(f"Available columns: {list(sample_df.columns)}")
             raise ValueError(f"Missing required columns: {missing_columns}")
-        
+
         # Validate ngram_range input
         if not isinstance(ngram_range, tuple) or len(ngram_range) != 2 or ngram_range[0] > ngram_range[1]:
-            raise ValueError(f"Invalid ngram_range: {ngram_range}. Must be a tuple (min_n, max_n) where min_n <= max_n.")
-        
+            raise ValueError(
+                f"Invalid ngram_range: {ngram_range}. Must be a tuple (min_n, max_n) where min_n <= max_n.")
+
     except Exception as e:
         print(f"Error validating CSV file: {str(e)}")
         raise
-    
+
     # First pass: count total rows and collect all labels
     print("First pass: counting rows and collecting labels...")
     total_rows = 0
     all_labels = []
-    
+
     try:
         for chunk in pd.read_csv(file_path, chunksize=batch_size, usecols=[text_column, label_column, id_column]):
             total_rows += len(chunk)
             all_labels.extend(chunk[label_column].tolist())
-    
+
         print(f"Total rows: {total_rows}, Total labels: {len(all_labels)}")
     except Exception as e:
         print(f"Error during first pass: {str(e)}")
         raise
-    
+
     # Detect label type
     label_type = detect_label_type(all_labels)
     print(f"Detected label type: {label_type}")
-    
+
     # Process labels
     processed_labels, label_encoder = process_labels(all_labels)
-    
+
     # Prepare to save label encoder if needed
     encoder_filename = None
     if label_encoder is not None:
@@ -110,13 +113,15 @@ def batch_process_csv(
             f'{model_name}_nutrikidai_classifier_label_encoder_{timestamp}.joblib'
         )
         joblib.dump(label_encoder, encoder_filename)
-        print(f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
-    
+        print(
+            f"Label encoder saved to '{encoder_filename}'. Classes: {label_encoder.classes_}")
+
     # Second pass: create and fit the text processing pipeline on a sample
     print("Second pass: Creating text processing pipeline...")
-    sample_size = min(10000, total_rows)  # Use at most 10k samples to fit vectorizer
+    # Use at most 10k samples to fit vectorizer
+    sample_size = min(10000, total_rows)
     sample_df = pd.DataFrame()
-    
+
     # Collect sample data
     remaining = sample_size
     for chunk in pd.read_csv(file_path, chunksize=min(batch_size, sample_size)):
@@ -126,7 +131,7 @@ def batch_process_csv(
         remaining -= len(chunk)
         if remaining <= 0:
             break
-    
+
     # Build preprocessing steps
     preprocessing_steps = []
     preprocessing_steps.append(('preprocessor', ClinicalTextPreprocessor()))
@@ -134,36 +139,41 @@ def batch_process_csv(
         preprocessing_steps.append(('stopword_remover', StopWordsRemover()))
     if apply_stemming:
         preprocessing_steps.append(('stemmer', TextStemmer()))
-    
+
     # Configure the appropriate vectorizer based on mode
     if vectorization_mode == 'count':
-        vectorizer = CountVectorizer(max_features=max_features, ngram_range=ngram_range)
-        pipeline_filename = os.path.join(save_path, f'{model_name}_nutrikidai_pipeline.joblib')
+        vectorizer = CountVectorizer(
+            max_features=max_features, ngram_range=ngram_range)
+        pipeline_filename = os.path.join(
+            save_path, f'{model_name}_nutrikidai_pipeline.joblib')
     elif vectorization_mode == 'tfidf':
-        vectorizer = TfidfVectorizer(max_features=max_features, ngram_range=ngram_range)
-        pipeline_filename = os.path.join(save_path, f'{model_name}_nutrikidai_pipeline.joblib')
+        vectorizer = TfidfVectorizer(
+            max_features=max_features, ngram_range=ngram_range)
+        pipeline_filename = os.path.join(
+            save_path, f'{model_name}_nutrikidai_pipeline.joblib')
     else:
-        raise ValueError("Invalid vectorization_mode. Choose from 'count' or 'tfidf'.")
-    
+        raise ValueError(
+            "Invalid vectorization_mode. Choose from 'count' or 'tfidf'.")
+
     # Add vectorizer to pipeline
     preprocessing_steps.append(('vectorizer', vectorizer))
     pipeline = Pipeline(preprocessing_steps)
-    
+
     # Fit pipeline on sample data
     pipeline.fit(sample_df[text_column].fillna(''))
-    
+
     # Get feature names
     feature_names = pipeline.named_steps['vectorizer'].get_feature_names_out()
     feature_dict = {i: name for i, name in enumerate(feature_names)}
-    
+
     # Save the pipeline
     os.makedirs(save_path, exist_ok=True)
     joblib.dump(pipeline, pipeline_filename)
     print(f"{vectorization_mode.capitalize()} vectorizer pipeline with n-grams {ngram_range} saved to '{pipeline_filename}'.")
-    
+
     # Third pass: process data in batches and train
     print("Third pass: Processing data in batches for training...")
-    
+
     # We'll use a generator to yield batches of processed data
     def data_generator():
         for chunk in pd.read_csv(file_path, chunksize=batch_size):
@@ -171,37 +181,74 @@ def batch_process_csv(
                 # Process text
                 X_text = chunk[text_column].fillna('')
                 X_processed = pipeline.transform(X_text)
-                
+
                 # Convert sparse matrix to dense array to fix memory management issue
-                X_dense = pd.DataFrame(X_processed.toarray(), index=chunk.index, columns=feature_names)
-                
+                X_dense = pd.DataFrame(X_processed.toarray(
+                ), index=chunk.index, columns=feature_names)
+
                 # Get labels for this chunk
                 y = chunk[label_column]
-                
+
                 # Process labels (this will return the integer-encoded labels)
                 y_processed, _ = process_labels(y)
-                
+
                 # Create complete DataFrame with features and label for this batch
-                complete_df = pd.concat([X_dense, pd.DataFrame({label_column: y_processed}, index=chunk.index)], axis=1)
-                
+                complete_df = pd.concat([X_dense, pd.DataFrame(
+                    {label_column: y_processed}, index=chunk.index)], axis=1)
+
                 # Add ID column if available
                 if id_column and id_column in chunk.columns:
                     complete_df[id_column] = chunk[id_column]
-                
+
                 yield X_dense, complete_df, y_processed, pipeline, feature_dict, label_encoder
-                
+
             except Exception as e:
                 print(f"Error processing batch: {str(e)}")
                 continue
-    
+
     return data_generator, feature_dict, label_encoder, label_type
 
 
 def main():
     parser = argparse.ArgumentParser(
         description='Train a TabPFN classifier on text data with batch processing')
-    # [Rest of the main function remains the same as in the original script]
-    # ... [Previous argument parsing code]
+    # Data parameters
+    parser.add_argument('--data_file', type=str, required=True,
+                        help='Path to the CSV data file')
+    parser.add_argument('--text_column', type=str, default="txt",
+                        help='Column containing text data')
+    parser.add_argument('--label_column', type=str, default="label",
+                        help='Column containing labels')
+    parser.add_argument('--id_column', type=str, default="DEID",
+                        help='Column containing IDs')
+    parser.add_argument('--batch_size', type=int, default=1000,
+                        help='Number of rows to process at once')
+    parser.add_argument('--max_train_samples', type=int, default=10000,
+                        help='Maximum number of samples to use for training')
+
+    # Text processing parameters
+    parser.add_argument('--max_features', type=int, default=10000,
+                        help='Max number of features to extract')
+    parser.add_argument('--remove_stop_words', action='store_true',
+                        default=False, help='Remove stop words')
+    parser.add_argument('--apply_stemming', action='store_true',
+                        default=False, help='Apply stemming')
+    parser.add_argument('--vectorization_mode', type=str, default='tfidf',
+                        choices=['count', 'tfidf'], help='Vectorization mode')
+    parser.add_argument('--ngram_min', type=int, default=1,
+                        help='Minimum n-gram size')
+    parser.add_argument('--ngram_max', type=int, default=1,
+                        help='Maximum n-gram size')
+
+    # Model parameters
+    parser.add_argument('--device', type=str, default='cpu',
+                        choices=['cpu', 'cuda'], help='Device to use')
+    parser.add_argument('--model_name', type=str, default="tabpfn",
+                        help='Name of the type of Model being trained')
+
+    # Output parameters
+    parser.add_argument('--model_dir', type=str, default='TABPFN',
+                        help='Directory to save all models and artifacts')
 
     args = parser.parse_args()
 
@@ -234,13 +281,13 @@ def main():
         f"{args.model_name}_nutrikidai_classifier_feature_dict_{timestamp}.joblib")
     joblib.dump(feature_dict, feature_dict_path)
     print(f"Feature dictionary saved to: {feature_dict_path}")
-    
+
     # Collect training data up to max_train_samples
     print(f"Collecting up to {args.max_train_samples} samples for training...")
     X_train_batches = []
     y_train_batches = []
     samples_collected = 0
-    
+
     # The data_generator now yields (X_dense, complete_df, y, pipeline, feature_dict, label_encoder)
     for X_batch, complete_batch, y_batch, _, _, _ in data_generator():
         batch_size = len(X_batch)
@@ -253,13 +300,14 @@ def main():
             samples_needed = args.max_train_samples - samples_collected
             if samples_needed > 0:
                 X_train_batches.append(X_batch.iloc[:samples_needed])
-                y_train_batches.append(y_batch[:samples_needed])  
+                y_train_batches.append(y_batch[:samples_needed])
                 samples_collected += samples_needed
             break
-    
+
     X_train = pd.concat(X_train_batches) if X_train_batches else pd.DataFrame()
-    y_train = np.concatenate(y_train_batches) if y_train_batches else np.array([])
-    
+    y_train = np.concatenate(
+        y_train_batches) if y_train_batches else np.array([])
+
     print(f"Collected {len(X_train)} samples for training")
     print(f"Label type: {label_type}")
 

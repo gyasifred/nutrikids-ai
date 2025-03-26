@@ -609,3 +609,37 @@ def ensure_xgbfeatures_match(X_test, feature_names):
     logging.info(
         f"Feature alignment complete. Matrix shape: {aligned_df.shape}")
     return aligned_df.values
+
+
+def detect_label_type(labels):
+    """
+    Detect the type of labels: numeric categories, binary, or text categories.
+    
+    Args:
+        labels: List or Series of labels
+    
+    Returns:
+        str: 'numeric_category', 'binary', or 'text_category'
+    """
+    # Convert to strings for consistent processing
+    labels_str = [str(label).strip().lower() for label in labels]
+    
+    # Check for numeric categories
+    if all(label.isdigit() for label in labels_str):
+        unique_numeric_labels = set(int(label) for label in labels_str)
+        return 'numeric_category' if len(unique_numeric_labels) > 2 else 'binary'
+    
+    # Check for binary text labels
+    binary_sets = [
+        {'yes', 'no'}, 
+        {'true', 'false'}, 
+        {'positive', 'negative'}, 
+        {'1', '0'}, 
+        {'y', 'n'}
+    ]
+    
+    if any(set(labels_str).issubset(binary_set) for binary_set in binary_sets):
+        return 'binary'
+    
+    # If not numeric and not binary, assume text category
+    return 'text_category'
