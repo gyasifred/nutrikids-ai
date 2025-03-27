@@ -198,12 +198,13 @@ def main():
     results = tuner.fit()
 
     # Get and print best results based on val_accuracy
-    best_result = results.get_best_result(metric="val_accuracy", mode="max")
+    best_result = results.get_best_result(metric="val_f1", mode="max")
     print(f"Best trial config: {best_result.config}")
     print(f"Best trial final validation accuracy: {best_result.metrics['val_accuracy']}")
     print(f"Best trial final training accuracy: {best_result.metrics['train_accuracy']}")
     print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final training loss: {best_result.metrics['train_loss']}")
+    print(f"Best trial final validation f1: {best_result.metrics['val_f1']}")
 
     # Apply the best config (using the best configuration directly for further training or testing)
     best_config = best_result.config
