@@ -377,19 +377,19 @@ def prepare_datasets(train_data_path, val_data_path, tokenizer, note_col, label_
 config = {
   "model_name": "unsloth/Llama-3.2-1B-bnb-4bit",
   "train_data": "data/train_data.csv",
-  "val_data":"/val_data.csv",
+  "val_data":"data/val_data.csv",
   "text_column": "txt",
   "label_column": "label",
   # Output arguments
-  "output_dir": "./llm",
-  "model_output": "./llm_models",
+  "output_dir": "./meta",
+  "model_output": "./llama3_2",
 
   # Training arguments
   "batch_size": 2,
   "gradient_accumulation": 4,
   "learning_rate": 2e-4,
   "max_seq_length": 2048,
-  "epochs": 10,
+  "epochs": 30,
 
   # LoRA parameters
   "lora_r": 8,
