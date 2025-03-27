@@ -27,7 +27,7 @@ def parse_args():
                         help='Name of the label column in CSV (default: label)')
     
     # Tokenizer parameters
-    parser.add_argument('--max_vocab_size', type=int, default=20000)
+    parser.add_argument('--max_vocab_size', type=int, default=8000)
     parser.add_argument('--min_frequency', type=int, default=2)
     parser.add_argument('--pad_token', type=str, default='<PAD>')
     parser.add_argument('--unk_token', type=str, default='<UNK>')
@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument('--pretrained_embeddings', 
                         type=lambda x: None if x.lower() == 'none' else str(x),
                         default=None) 
-    parser.add_argument('--positive_weight', type=float, default=2.0,
+    parser.add_argument('--positive_weight', type=float, default=1.0,
                         help='Weight multiplier for positive class (default: 2.0)')
     
     # Ray Tune parameters
@@ -52,7 +52,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def calculate_class_weights(labels, positive_weight=2.0):
+def calculate_class_weights(labels, positive_weight=1.0):
     """Calculate pos_weight for BCEWithLogitsLoss"""
     counts = np.bincount(labels)
     num_neg = counts[0]
@@ -152,7 +152,8 @@ def main():
             "val_loss": metrics["val_loss"][-1],
             "val_accuracy": metrics["val_accuracy"][-1],
             "train_accuracy": metrics["train_accuracy"][-1],
-            "train_loss": metrics["train_loss"][-1]
+            "train_loss": metrics["train_loss"][-1],
+            "val_f1": metrics['val_f1'][-1]
         })
     
     # Hyperparameter space for Ray Tune
@@ -162,7 +163,7 @@ def main():
         "dropout_rate": tune.uniform(0.2, 0.6),
         "lr": tune.loguniform(1e-4, 1e-3),
         "batch_size": tune.choice([16, 32, 64]),
-        "max_vocab_size": tune.choice([5000, 10000, 15000, 20000, 30000]),
+        "max_vocab_size": tune.choice([3000,5000,8000,10000, 15000]),
         "kernel_sizes": tune.choice([[3, 4, 5], [2, 3, 4], [4, 5, 6], [2, 3, 4]])
     }
 
@@ -180,8 +181,8 @@ def main():
     tuner = tune.Tuner(
         train_textcnn_with_resources,
         tune_config=tune.TuneConfig(
-            metric="val_accuracy",
-            mode="max",  # We want to maximize val_accuracy
+            metric="val_f1",
+            mode="max", 
             scheduler=ASHAScheduler(
                 max_t=args.max_epochs,
                 grace_period=args.grace_period,
