@@ -19,8 +19,8 @@ TEST_CSV="data/test.csv"
 TEXT_COLUMN="txt"
 LABEL_COLUMN="label"
 ID_COLUMN="DEID"
-EXAMPLES_DATA=""         # Optional few-shot examples CSV
-FEW_SHOT_COUNT=0         # Zero-shot evaluation by default
+EXAMPLES_DATA="data/test_bal.csv"         # Optional few-shot examples CSV
+FEW_SHOT_COUNT=2         # Zero-shot evaluation by default
 BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 
 # Evaluation parameters
@@ -33,10 +33,10 @@ THRESHOLD=0.5
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
-  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
-  "unsloth/gemma-2-9b-it-bnb-4bit"
-  "meta-llama/meta-Llama-3.1-8B-Instruct"
-  "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+  # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
+  # "unsloth/gemma-2-9b-it-bnb-4bit"
+  "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
+  # "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
 )
 
 # Adapter model path: if provided, it will be used in post-evaluation.
