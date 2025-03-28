@@ -7,6 +7,8 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
+from trl import SFTTrainer
+import torch.nn.functional as F
 from typing import List, Dict, Optional, Any
 from sklearn.metrics import (
     accuracy_score,
@@ -601,3 +603,74 @@ def extract_malnutrition_decision(response):
             explanation = explanation_parts[0].strip()
 
     return decision, explanation
+
+
+class WeightedSFTTrainer(SFTTrainer):
+    """
+    Custom SFTTrainer that supports weighted loss for imbalanced classes.
+    This is particularly useful for scenarios where false positives
+    should be penalized more heavily than false negatives.
+    """
+    def __init__(self, pos_weight=3.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pos_weight = pos_weight
+        print(f"Using custom weighted loss with positive weight: {pos_weight}")
+        
+    def compute_loss(self, model, inputs, return_outputs=False):
+        """
+        Override compute_loss to implement weighted loss for imbalanced classes.
+        This specifically penalizes false positive predictions more heavily.
+        
+        Args:
+            model: The model being trained
+            inputs: The inputs to the model
+            return_outputs: Whether to return the model outputs along with the loss
+            
+        Returns:
+            The computed loss or a tuple of (loss, outputs) if return_outputs is True
+        """
+        # Get standard outputs from the model
+        outputs = model(**inputs)
+        
+        # Default loss from the model
+        loss = outputs.loss
+        
+        # If logits are available (UNSLOTH_RETURN_LOGITS=1 should be set)
+        if hasattr(outputs, 'logits') and outputs.logits is not None:
+            logits = outputs.logits
+            
+            # Get target labels
+            labels = inputs["labels"]
+            
+            # Create mask for valid positions (non-padding)
+            valid_mask = (labels != -100)
+            
+            if valid_mask.any():  # Only proceed if we have valid positions
+                # Extract logits and labels for valid positions
+                valid_logits = logits[valid_mask]
+                valid_labels = labels[valid_mask]
+                
+                # For binary classification with higher penalty for false positives:
+                if valid_logits.size(-1) > 1:  # Check if we have multiple output classes
+                    # Create a weight tensor that's higher for positive samples
+                    weights = torch.ones_like(valid_labels, dtype=torch.float)
+                    
+                    # Apply weights to positive examples (assuming 1 is the positive class)
+                    # Higher weight means the model gets penalized more for missing these
+                    is_positive = (valid_labels == 1)
+                    weights[is_positive] = self.pos_weight
+                    
+                    # Compute weighted cross-entropy loss
+                    log_probs = F.log_softmax(valid_logits, dim=-1)
+                    
+                    # Get one-hot encoded labels
+                    one_hot_labels = F.one_hot(valid_labels, num_classes=logits.size(-1))
+                    
+                    # Calculate weighted negative log likelihood
+                    weighted_nll = -torch.sum(weights.unsqueeze(-1) * one_hot_labels * log_probs)
+                    weighted_loss = weighted_nll / torch.sum(weights)
+                    
+                    # Replace the original loss with our weighted loss
+                    loss = weighted_loss
+        
+        return (loss, outputs) if return_outputs else loss
