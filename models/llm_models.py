@@ -616,7 +616,7 @@ class WeightedSFTTrainer(SFTTrainer):
         self.pos_weight = pos_weight
         print(f"Using custom weighted loss with positive weight: {pos_weight}")
         
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
         Override compute_loss to implement weighted loss for imbalanced classes.
         This specifically penalizes false positive predictions more heavily.
@@ -625,6 +625,7 @@ class WeightedSFTTrainer(SFTTrainer):
             model: The model being trained
             inputs: The inputs to the model
             return_outputs: Whether to return the model outputs along with the loss
+            kwargs: Additional keyword arguments passed by Unsloth
             
         Returns:
             The computed loss or a tuple of (loss, outputs) if return_outputs is True
