@@ -61,7 +61,7 @@ def parse_arguments():
                         # help="Maximum number of training steps")
     parser.add_argument("--max_seq_length", type=int, default=1024,
                         help="Maximum sequence length for tokenization")
-    parser.add_argument("--epochs", type=int, default=10,
+    parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
 
     # LoRA parameters
