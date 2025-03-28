@@ -51,10 +51,10 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
-  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
-  "unsloth/gemma-2-9b-it-bnb-4bit"
-  "meta-llama/meta-Llama-3.1-8B-Instruct"
-  "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+  # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
+  # "unsloth/gemma-2-9b-it-bnb-4bit"
+  "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
+  # "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
 )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS"
 
@@ -287,18 +287,18 @@ mkdir -p "$LLM_BASE_DIR"
 #   --max_epochs "$MAX_EPOCHS" \
 #   --grace_period "$GRACE_PERIOD"
 
-echo "==================== Step 2: TextCNN Training ===================="
-# Run the CNN training script with the tuned config
-./train_textcnn.py \
-  --train_data "$TRAIN_DATA" \
-  --val_data "$VAL_DATA" \
-  --text_column "$TEXT_COLUMN" \
-  --label_column "$LABEL_COLUMN" \
-  --config_dir "$CNN_OUTPUT_DIR" \
-  --output_dir "$CNN_OUTPUT_DIR" \
-  --epochs "$EPOCHS" \
-  --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
-  $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
+# echo "==================== Step 2: TextCNN Training ===================="
+# # Run the CNN training script with the tuned config
+# ./train_textcnn.py \
+#   --train_data "$TRAIN_DATA" \
+#   --val_data "$VAL_DATA" \
+#   --text_column "$TEXT_COLUMN" \
+#   --label_column "$LABEL_COLUMN" \
+#   --config_dir "$CNN_OUTPUT_DIR" \
+#   --output_dir "$CNN_OUTPUT_DIR" \
+#   --epochs "$EPOCHS" \
+#   --pretrained_embeddings "$PRETRAINED_EMBEDDINGS" \
+#   $( [[ "$FREEZE_EMBEDDINGS" == true && "$PRETRAINED_EMBEDDINGS" != "None" ]] && echo "--freeze_embeddings" )
 
 # echo "==================== Step 3: XGBoost Tuning ===================="
 # # Run the XGBoost tuning script with correct parameter names
@@ -357,44 +357,44 @@ echo "==================== Step 2: TextCNN Training ===================="
 #   $( [[ "$APPLY_STEMMING" == true ]] && echo "--apply_stemming" ) \
 #   --model_dir "$TABPFN_OUTPUT_DIR" 
 
-# echo "==================== Step 6: LLM Fine-tuning ===================="
-# # Fine-tune LLMs with different directories for each model
-# for MODEL in "${LLM_MODELS[@]}"; do
-#   # Extract model name for directory
-#   MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
-#   MODEL_OUTPUT_DIR="${LLM_BASE_DIR}/${MODEL_SHORT_NAME}"
+echo "==================== Step 6: LLM Fine-tuning ===================="
+# Fine-tune LLMs with different directories for each model
+for MODEL in "${LLM_MODELS[@]}"; do
+  # Extract model name for directory
+  MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
+  MODEL_OUTPUT_DIR="${LLM_BASE_DIR}/${MODEL_SHORT_NAME}"
   
-#   echo "Training $MODEL_SHORT_NAME with output directory $MODEL_OUTPUT_DIR"
+  echo "Training $MODEL_SHORT_NAME with output directory $MODEL_OUTPUT_DIR"
   
-#   # Create model-specific output directory
-#   mkdir -p "$MODEL_OUTPUT_DIR"
+  # Create model-specific output directory
+  mkdir -p "$MODEL_OUTPUT_DIR"
   
-#   # Determine if model should be loaded in 4-bit (default) or 8-bit
-#   if [[ "$MODEL" == *"4bit"* ]]; then
-#     BIT_FLAG="--load_in_4bit"
-#   else
-#     BIT_FLAG="--load_in_8bit"
-#   fi
+  # Determine if model should be loaded in 4-bit (default) or 8-bit
+  if [[ "$MODEL" == *"4bit"* ]]; then
+    BIT_FLAG="--load_in_4bit"
+  else
+    BIT_FLAG="--load_in_8bit"
+  fi
   
-#   ./finetune_llm.py \
-#     --model_name "$MODEL" \
-#     --train_data "$TRAIN_DATA" \
-#     --val_data "$VAL_DATA" \
-#     --text_column "$TEXT_COLUMN" \
-#     --label_column "$LABEL_COLUMN" \
-#     --output_dir "$MODEL_OUTPUT_DIR" \
-#     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-#     --batch_size 16 \
-#     --gradient_accumulation 4 \
-#     --learning_rate 2e-4 \
-#     --max_steps 500 \
-#     --max_seq_length 2048 \
-#     --epochs 50 \
-#     --lora_r 8 \
-#     --lora_alpha 32 \
-#     --seed 42 \
-#     --use_flash_attention \
-#     $BIT_FLAG
-# done
+  ./finetune_llm.py \
+    --model_name "$MODEL" \
+    --train_data "$TRAIN_DATA" \
+    --val_data "$VAL_DATA" \
+    --text_column "$TEXT_COLUMN" \
+    --label_column "$LABEL_COLUMN" \
+    --output_dir "$MODEL_OUTPUT_DIR" \
+    --model_output "${MODEL_OUTPUT_DIR}/final_model" \
+    --batch_size 16 \
+    --gradient_accumulation 4 \
+    --learning_rate 2e-4 \
+    --max_steps 500 \
+    --max_seq_length 2048 \
+    --epochs 50 \
+    --lora_r 8 \
+    --lora_alpha 32 \
+    --seed 42 \
+    --use_flash_attention \
+    $BIT_FLAG
+done
 
 echo "All training tasks completed successfully!"
