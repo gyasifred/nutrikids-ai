@@ -294,7 +294,6 @@ def print_metrics_report(metrics: Dict[str, Any]):
 
     print("\n" + "="*50 + "\n")
 
-
 class MalnutritionPromptBuilder:
     """A class to manage the creation of malnutrition prompts for various scenarios."""
 
@@ -311,8 +310,7 @@ class MalnutritionPromptBuilder:
         if examples_csv_path:
             try:
                 self.examples_cache = pd.read_csv(examples_csv_path)
-                print(
-                    f"Loaded {len(self.examples_cache)} examples from {examples_csv_path}")
+                print(f"Loaded {len(self.examples_cache)} examples from {examples_csv_path}")
             except Exception as e:
                 print(f"Error loading examples: {e}")
 
@@ -409,12 +407,10 @@ class MalnutritionPromptBuilder:
         # Split examples by label
         positive_examples = self.examples_cache[
             self.examples_cache[label_col].astype(
-                str).str.lower().isin(["1", "yes", "true"])
-        ]
+                str).str.lower().isin(["1", "yes", "true"])]
         negative_examples = self.examples_cache[
             ~self.examples_cache[label_col].astype(
-                str).str.lower().isin(["1", "yes", "true"])
-        ]
+                str).str.lower().isin(["1", "yes", "true"])]
 
         # Determine how many of each to use
         num_each = num_examples // 2
@@ -504,22 +500,33 @@ malnutrition={label}
         Returns:
             str: A fully formatted prompt ready for the model
         """
-        instructions = """Read the patient's notes and determine if the patient is likely to have malnutrition."""
+        instructions = """Read the patient's notes and determine if the patient is likely to have malnutrition.
+Be sure to make a definitive classification: malnutrition=yes or malnutrition=no.
+Along with clinical criteria, consider any additional factors such as:
+1) Recent illness or surgeries
+2) Socioeconomic factors (e.g., food insecurity, poverty)
+3) Symptoms like fatigue, weakness, or poor appetite
+4) Family history of malnutrition or chronic disease
+5) Laboratory results (e.g., albumin, hemoglobin, vitamin levels)
+6) Current medications or side effects that may impact nutrition (e.g., diuretics, chemotherapy)
+7) Mental health factors (e.g., depression, eating disorders)
+8) Any signs of malabsorption (e.g., diarrhea, malabsorptive diseases) or nutritional deficiencies (e.g., anemia, edema).
+"""
 
         clinical_criteria = """
-Criteria list.
+Standard criteria for assessment of malnutrition are based on weight-for-height, BMI-for-age, and mid-upper arm circumference. 
 
-Weight is primarily affected during periods of acute undernutrition, whereas chronic undernutrition typically manifests as stunting. Severe acute undernutrition, experienced by children ages 6–60 months of age, is defined as a very low weight-for-height (less than −3 standard deviations [SD] [z scores] of the median WHO growth standards), by visible severe wasting (mid–upper arm circumference [MUAC] ≤115 mm), or by the presence of nutritional edema.
-
-Chronic undernutrition or stunting is defined by WHO as having a height-forage (or length-for-age) that is less than −2 SD (z score) of the median of the WHO international reference.
-
-Growth is the primary outcome measure of nutritional status in children. Growth should be monitored at regular intervals throughout childhood and adolescence and should also be measured every time a child presents, in any healthcare setting, for preventive, acute, or chronic care. In children less than 36 months of age, measures of growth include length-for-age, weight-for-age, head circumference-for-age, and weight-for-length. In children ages 2–20 years, standing height-for-age, weight-for-age, and body mass index (BMI)-for-age are typically collected.
-
-Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
+However, consider the following additional factors that may contribute to malnutrition:
+- Recent illness (infection, gastrointestinal issues, etc.), surgery, or trauma that can increase energy expenditure and reduce nutritional intake.
+- Socioeconomic factors such as food insecurity or poverty.
+- Symptoms like fatigue, weakness, poor appetite, and muscle wasting.
+- Family history of chronic diseases that may predispose to malnutrition (e.g., metabolic diseases).
+- Laboratory results such as low serum albumin, hemoglobin, and vitamin/mineral deficiencies.
+- Medication side effects that interfere with nutrition (e.g., medications causing nausea, poor appetite, or gastrointestinal side effects).
 """
 
         classification_table = """
-Table.
+Table for assessment:
 
 Mild Malnutrition
 Weight-for-height: −1 to −1.9 z score
@@ -540,15 +547,11 @@ Length/height-for-age: −3 z score
 Mid–upper arm circumference: Greater than or equal to −3 z score
 """
 
-        single_point_guidance = """
-On initial presentation, a child may have only a single data point for use as a criterion for the identification and diagnosis of malnutrition related to undernutrition. When this is the case, the use of z scores for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria as stated in Table below:
-"""
-
         output_format = """
-Follow this format:
+Output format:
 
-1) First provide some explanations about your decision.
-2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
+1) First, provide a definitive decision: malnutrition=yes or malnutrition=no
+2) Then, provide a clear explanation of your decision based on clinical data and any additional factors such as illness, lab results, medications, and socioeconomic factors.
 """
 
         # Format few-shot examples if provided
@@ -567,7 +570,6 @@ Now, assess the following patient:
         complete_prompt = (
             f"{instructions}\n\n"
             f"{clinical_criteria}\n"
-            f"{single_point_guidance}\n"
             f"{classification_table}\n\n"
             f"{output_format}\n\n"
             f"{few_shot_section}\n\n"
