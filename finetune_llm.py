@@ -20,7 +20,8 @@ from models.llm_models import (
     evaluate_predictions,
     plot_evaluation_metrics,
     save_metrics_to_csv,
-    print_metrics_report
+    print_metrics_report,
+    WeightedSFTTrainer  # Import the WeightedSFTTrainer from llm_models
 )
 
 
@@ -57,12 +58,14 @@ def parse_arguments():
                         help="Number of gradient accumulation steps")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    # parser.add_argument("--max_steps", type=int, default=60,
-                        # help="Maximum number of training steps")
     parser.add_argument("--max_seq_length", type=int, default=1024,
                         help="Maximum sequence length for tokenization")
     parser.add_argument("--epochs", type=int, default=30,
                         help="Number of training epochs")
+    
+    # Class weighting argument
+    parser.add_argument("--pos_weight", type=float, default=3.0,
+                        help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
@@ -290,7 +293,6 @@ def get_sft_config(args, fp16, bf16):
         "per_device_train_batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation,
         "warmup_steps": 5,
-        # "max_steps": args.max_steps,
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
@@ -431,21 +433,23 @@ def main():
     # Get SFT config with correct precision settings
     sft_config = get_sft_config(args, fp16, bf16)
 
-    # Initialize SFT trainer
+    # Initialize SFT trainer with weighted loss
     trainer_kwargs = {
         "model": model,
-        "tokenizer": tokenizer,  # Fixed this line to use tokenizer instead of processing_class
+        "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
+        "pos_weight": args.pos_weight,  # Pass the positive class weight
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    trainer = SFTTrainer(**trainer_kwargs)
+    trainer = WeightedSFTTrainer(**trainer_kwargs)  # Use the weighted trainer
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
+    print(f"Using positive class weight: {args.pos_weight}")
     trainer.train()
 
     # Save the final model
