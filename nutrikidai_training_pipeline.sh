@@ -389,7 +389,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --learning_rate 2e-4 \
     # --max_steps 500 \
     --max_seq_length 2048 \
-    --epochs 30 \
+    --epochs 5 \
     --lora_r 8 \
     --lora_alpha 32 \
     --seed 42 \
