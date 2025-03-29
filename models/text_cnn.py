@@ -463,8 +463,7 @@ def train_textcnn(
         optimizer, 
         mode='min',
         factor=0.5,
-        patience=3,
-        verbose=True
+        patience=10
     )
 
     # Tracking metrics
