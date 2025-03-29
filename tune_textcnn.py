@@ -48,6 +48,8 @@ def parse_args():
     parser.add_argument('--num_samples', type=int, default=20)
     parser.add_argument('--max_epochs', type=int, default=30)
     parser.add_argument('--grace_period', type=int, default=10)
+    parser.add_argument('--early_stopping_patience', type=int, default=5,
+                        help='Number of epochs with no improvement after which training will be stopped')
     
     return parser.parse_args()
 
@@ -120,7 +122,8 @@ def main():
         "padding": args.padding,
         "embed_dim": args.embedding_dim,
         "freeze_embeddings": False,
-        "max_epochs": args.max_epochs
+        "max_epochs": args.max_epochs,
+        "early_stopping_patience": args.early_stopping_patience
     })
 
     # Define trainable function for Ray that retrieves data from object store
@@ -148,24 +151,27 @@ def main():
             provided_label_encoder=label_encoder
         )
 
-        # Report final metrics to Ray Tune
-        tune.report({
-            "val_loss": metrics["val_loss"][-1],
-            "val_accuracy": metrics["val_accuracy"][-1],
-            "train_accuracy": metrics["train_accuracy"][-1],
-            "train_loss": metrics["train_loss"][-1],
-            "val_f1": metrics['val_f1'][-1]
-        })
+        # Report metrics after each epoch to Ray Tune
+        for epoch in range(len(metrics["val_loss"])):
+            tune.report({
+                "val_loss": metrics["val_loss"][epoch],
+                "val_accuracy": metrics["val_accuracy"][epoch],
+                "train_accuracy": metrics["train_accuracy"][epoch],
+                "train_loss": metrics["train_loss"][epoch],
+                "val_f1": metrics['val_f1'][epoch],
+                "epoch": epoch
+            })
     
-    # Hyperparameter space for Ray Tune
+    # Optimized hyperparameter space for Ray Tune
     param_space = {
-        "embed_dim": tune.choice([50, 100, 150, 200, 250, 300, 350, 400, 450, 500]),
-        "num_filters": tune.choice([50, 100, 150, 200, 250, 300, 350, 400]),
-        "dropout_rate": tune.uniform(0.2, 0.6),
-        "lr": tune.loguniform(1e-4, 1e-3),
-        "batch_size": tune.choice([16, 32, 64]),
-        "max_vocab_size": tune.choice([3000,5000,8000,10000, 15000]),
-        "kernel_sizes": tune.choice([[3, 4, 5], [2, 3, 4], [4, 5, 6], [2, 3, 4]])
+        "embed_dim": tune.choice([100, 200, 300, 400]),
+        "num_filters": tune.choice([100, 150, 200, 250, 300]),
+        "dropout_rate": tune.uniform(0.3, 0.6),  # Narrowed range for better regularization
+        "lr": tune.loguniform(5e-5, 5e-3),  # Wider range to find optimal learning rate
+        "batch_size": tune.choice([16, 32, 64, 128]),  # Added larger batch size
+        "max_vocab_size": tune.choice([8000, 10000, 15000, 20000]),  # Focus on larger vocabulary sizes
+        "kernel_sizes": tune.choice([[3, 4, 5], [2, 3, 4], [4, 5, 6], [3, 5, 7]]),  # Added new kernel combination
+        "weight_decay": tune.loguniform(1e-6, 1e-3)  # Added L2 regularization
     }
 
     # Set resources based on GPU availability
@@ -178,12 +184,12 @@ def main():
         {"gpu": gpu_per_trial, "cpu": cpu_per_trial}
     )
 
-    # Create tuner instance
+    # Create tuner instance with val_loss as the metric to minimize
     tuner = tune.Tuner(
         train_textcnn_with_resources,
         tune_config=tune.TuneConfig(
-            metric="val_f1",
-            mode="max", 
+            metric="val_loss",  # Changed from val_f1 to val_loss
+            mode="min",         # Changed from max to min
             scheduler=ASHAScheduler(
                 max_t=args.max_epochs,
                 grace_period=args.grace_period,
@@ -198,14 +204,15 @@ def main():
     print("Starting hyperparameter tuning...")
     results = tuner.fit()
 
-    # Get and print best results based on val_accuracy
-    best_result = results.get_best_result(metric="val_f1", mode="max")
+    # Get and print best results based on val_loss (min)
+    best_result = results.get_best_result(metric="val_loss", mode="min")
     print(f"Best trial config: {best_result.config}")
+    print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final validation accuracy: {best_result.metrics['val_accuracy']}")
     print(f"Best trial final training accuracy: {best_result.metrics['train_accuracy']}")
-    print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final training loss: {best_result.metrics['train_loss']}")
     print(f"Best trial final validation f1: {best_result.metrics['val_f1']}")
+    print(f"Best trial epoch: {best_result.metrics['epoch']}")
 
     # Apply the best config (using the best configuration directly for further training or testing)
     best_config = best_result.config
