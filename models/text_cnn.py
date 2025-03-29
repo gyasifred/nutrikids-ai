@@ -183,11 +183,7 @@ class TextCNNDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.data[idx], self.labels[idx]
-
-
-# =========================
-# TextCNN Model Class
-# =========================
+        
 class TextCNN(nn.Module):
     def __init__(
         self,
@@ -216,40 +212,55 @@ class TextCNN(nn.Module):
 
         self.pool = nn.AdaptiveMaxPool1d(1)
         
-        # Adjusted fully connected layers
+        # Optimized architecture with batch normalization
         fc_input_size = num_filters * len(kernel_sizes)
+        self.batch_norm1 = nn.BatchNorm1d(fc_input_size)
         self.fc1 = nn.Linear(fc_input_size, 200)
+        self.batch_norm2 = nn.BatchNorm1d(200)
         self.fc2 = nn.Linear(200, 1)  # Single output neuron
         
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        """Forward pass with sigmoid activation."""
+        """Forward pass with improved architecture."""
+        # Embedding layer
         x = self.embedding(x)
-        x = x.permute(0, 2, 1)
+        x = x.permute(0, 2, 1)  # [batch, embed_dim, seq_len]
         
-        # Convolution and pooling
-        x = [self.pool(conv(x)).squeeze(-1) for conv in self.convs]
-        x = torch.cat(x, dim=1)
+        # Convolutional layers and pooling
+        conv_results = []
+        for conv in self.convs:
+            # Apply conv and ReLU
+            conv_out = self.relu(conv(x))
+            # Pool and flatten
+            pooled = self.pool(conv_out).squeeze(-1)
+            conv_results.append(pooled)
         
-        # Fully connected layers
-        x = self.dropout(self.relu(self.fc1(x)))
+        # Concatenate all conv outputs
+        x = torch.cat(conv_results, dim=1)
+        
+        # Apply batch normalization before first FC layer
+        x = self.batch_norm1(x)
+        
+        # First FC layer with activation and dropout
+        x = self.fc1(x)
+        x = self.batch_norm2(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        
+        # Final FC layer (no activation here - we'll use BCEWithLogitsLoss)
         x = self.fc2(x)
         
-        # Add sigmoid activation here
-        return torch.sigmoid(x)
+        return x  # No sigmoid - we'll use BCEWithLogitsLoss
 
-
-###################
-# one epoch
-################
 def train_one_epoch(
     model: nn.Module,
     train_loader: DataLoader,
     criterion,
     optimizer,
-    device: str
+    device: str,
+    weight_decay: float = 0.0  # Added L2 regularization parameter
 ) -> Tuple[float, float]:
     model.train()
     total_loss = 0.0
@@ -263,9 +274,23 @@ def train_one_epoch(
         batch_y = batch_y.float().view(-1, 1)
         
         loss = criterion(outputs, batch_y)
+        
+        # Add L2 regularization manually if not using optimizer's weight_decay
+        if weight_decay > 0:
+            l2_reg = torch.tensor(0., device=device)
+            for param in model.parameters():
+                l2_reg += torch.norm(param, p=2)
+            loss += weight_decay * l2_reg
+            
         loss.backward()
+        
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
         total_loss += loss.item()
+        
+        # Use appropriate threshold for binary classification
         preds = (torch.sigmoid(outputs) > 0.5).float().cpu().detach().numpy()
         all_preds.extend(preds)
         all_labels.extend(batch_y.cpu().numpy())
@@ -273,6 +298,7 @@ def train_one_epoch(
     avg_loss = total_loss / len(train_loader)
     accuracy = accuracy_score(all_labels, all_preds)
     return avg_loss, accuracy
+    
     
 def evaluate_model(
     model: nn.Module,
@@ -299,9 +325,10 @@ def evaluate_model(
 
     avg_loss = total_loss / len(val_loader)
     accuracy = accuracy_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds) if return_f1 else 0.0
 
     return avg_loss, accuracy, f1
+
 
 def train_textcnn(
     train_texts: List[str],
@@ -314,9 +341,14 @@ def train_textcnn(
     provided_label_encoder: Optional[LabelEncoder] = None
 ):
     """
-    End-to-end training function with flexible label handling and class weighting.
+    End-to-end training function with optimized training process.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Initialize best model tracking
+    best_val_loss = float('inf')
+    patience_counter = 0
+    early_stopping_patience = config.get('early_stopping_patience', 5)
 
     # Use pos_weight for class imbalance if provided
     pos_weight = config.get('pos_weight', None)
@@ -327,12 +359,14 @@ def train_textcnn(
     else:
         criterion = nn.BCEWithLogitsLoss()
 
+    # Tokenizer setup
     tokenizer = TextTokenizer(
         max_vocab_size=config.get("max_vocab_size", 20000),
         min_frequency=config.get("min_frequency", 2),
         max_length=config.get("max_length", None)
     )
 
+    # Transform texts
     X_train_seq = tokenizer.fit_transform(train_texts)
     X_val_seq = tokenizer.transform(val_texts)
     
@@ -387,11 +421,24 @@ def train_textcnn(
                         except StopIteration:
                             continue
 
+    # Create datasets and data loaders
     train_dataset = TextCNNDataset(X_train_seq, train_encoded_labels)
     val_dataset = TextCNNDataset(X_val_seq, val_encoded_labels)
-    train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32), shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
-
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=config.get("batch_size", 32), 
+        shuffle=True,
+        pin_memory=True if device == "cuda" else False,
+        num_workers=0
+    )
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=config.get("batch_size", 32),
+        pin_memory=True if device == "cuda" else False,
+        num_workers=0
+    )
+    
+    # Initialize model
     model = TextCNN(
         vocab_size=tokenizer.vocab_size_,
         embed_dim=config.get("embed_dim", 100),
@@ -400,16 +447,55 @@ def train_textcnn(
         dropout_rate=config.get("dropout_rate", 0.5),
     ).to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
+    # Get weight decay parameter
+    weight_decay = config.get("weight_decay", 0.0)
 
+    # Initialize optimizer with weight decay
+    optimizer = optim.AdamW(
+        model.parameters(), 
+        lr=config.get("lr", 0.001),
+        weight_decay=weight_decay,
+        betas=(0.9, 0.999)
+    )
+    
+    # Learning rate scheduler for better convergence
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, 
+        mode='min',
+        factor=0.5,
+        patience=3,
+        verbose=True
+    )
+
+    # Tracking metrics
     metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
-    best_f1_score = 0.0
+    best_val_loss = float('inf')
     best_model_state = None
 
     for epoch in range(num_epochs):
-        train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_accuracy, val_f1 = evaluate_model(model, val_loader, criterion, device, return_f1=True)
+        # Train one epoch
+        train_loss, train_accuracy = train_one_epoch(
+            model, 
+            train_loader, 
+            criterion, 
+            optimizer, 
+            device,
+            weight_decay
+        )
+        
+        # Evaluate model
+        val_loss, val_accuracy, val_f1 = evaluate_model(
+            model, 
+            val_loader, 
+            criterion, 
+            device, 
+            return_f1=True
+        )
 
+        # Update learning rate based on validation loss
+        scheduler.step(val_loss)
+
+        # Track metrics
         metrics["train_loss"].append(train_loss)
         metrics["train_accuracy"].append(train_accuracy)
         metrics["val_loss"].append(val_loss)
@@ -422,17 +508,28 @@ def train_textcnn(
             f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1: {val_f1:.4f}"
         )
 
-        # Save best model state based on validation F1-score
-        if val_f1 > best_f1_score:
-            best_f1_score = val_f1
+        # Save best model state based on validation loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             best_model_state = model.state_dict().copy()
-            print(f"New best model with validation F1-score: {val_f1:.4f}")
+            patience_counter = 0
+            print(f"New best model with validation loss: {val_loss:.4f}")
+        else:
+            patience_counter += 1
+            print(f"No improvement for {patience_counter} epochs")
+            
+        # Early stopping
+        if patience_counter >= early_stopping_patience:
+            print(f"Early stopping after {epoch+1} epochs")
+            break
 
+    # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
+        print(f"Loaded best model with validation loss: {best_val_loss:.4f}")
 
     return model, tokenizer, label_encoder, metrics
-
+    
     
 def predict_batch(model, tokenizer, texts,threshold):
     """
