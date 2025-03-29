@@ -241,6 +241,170 @@ class TextCNN(nn.Module):
         return torch.sigmoid(x)
 
 
+###################
+# one epoch
+################
+def train_one_epoch(
+    model: nn.Module,
+    train_loader: DataLoader,
+    criterion,
+    optimizer,
+    device: str
+) -> Tuple[float, float]:
+    model.train()
+    total_loss = 0.0
+    all_preds, all_labels = [], []
+
+    for batch_x, batch_y in train_loader:
+        batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+        optimizer.zero_grad()
+        
+        outputs = model(batch_x)
+        batch_y = batch_y.float().view(-1, 1)
+        
+        loss = criterion(outputs, batch_y)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+        preds = (torch.sigmoid(outputs) > 0.5).float().cpu().detach().numpy()
+        all_preds.extend(preds)
+        all_labels.extend(batch_y.cpu().numpy())
+
+    avg_loss = total_loss / len(train_loader)
+    accuracy = accuracy_score(all_labels, all_preds)
+    return avg_loss, accuracy
+    
+def evaluate_model(
+    model: nn.Module,
+    val_loader: DataLoader,
+    criterion,
+    device: str,
+    return_f1: bool = True 
+) -> Tuple[float, float, float]:
+    model.eval()
+    all_preds, all_labels = [], []
+    total_loss = 0.0
+
+    with torch.no_grad():
+        for batch_x, batch_y in val_loader:
+            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+            outputs = model(batch_x)
+            batch_y = batch_y.float().view(-1, 1)
+            loss = criterion(outputs, batch_y)
+            total_loss += loss.item()
+            probs = torch.sigmoid(outputs)
+            preds = (probs > 0.5).float().cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(batch_y.cpu().numpy())
+
+    avg_loss = total_loss / len(val_loader)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds)
+
+    return avg_loss, accuracy, f1
+
+def train_textcnn(
+    train_texts: List[str],
+    train_labels: List[Union[str, int, float]],
+    val_texts: List[str],
+    val_labels: List[Union[str, int, float]],
+    config: Dict,
+    num_epochs: int,
+    pretrained_embeddings_dict: Optional[Dict[str, np.ndarray]] = None,
+    provided_label_encoder: Optional[LabelEncoder] = None
+):
+    """
+    End-to-end training function with flexible label handling and class weighting.
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Use pos_weight for class imbalance if provided
+    pos_weight = config.get('pos_weight', None)
+    if pos_weight is not None:
+        # Ensure pos_weight is on the correct device
+        pos_weight = pos_weight.to(device) if isinstance(pos_weight, torch.Tensor) else torch.tensor(pos_weight, dtype=torch.float).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+
+    tokenizer = TextTokenizer(
+        max_vocab_size=config.get("max_vocab_size", 20000),
+        min_frequency=config.get("min_frequency", 2),
+        max_length=config.get("max_length", None)
+    )
+
+    X_train_seq = tokenizer.fit_transform(train_texts)
+    X_val_seq = tokenizer.transform(val_texts)
+    
+    # Label processing
+    if isinstance(train_labels, np.ndarray) and provided_label_encoder is not None:
+        # Labels are already processed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = provided_label_encoder
+    elif isinstance(train_labels, np.ndarray) and provided_label_encoder is None:
+        # Numeric labels, no encoder needed
+        train_encoded_labels = train_labels
+        val_encoded_labels = val_labels
+        label_encoder = None
+    else:
+        # Process labels based on type
+        is_numeric = all(isinstance(label, (int, float)) or 
+                        (isinstance(label, str) and label.strip().isdigit()) 
+                        for label in train_labels)
+        
+        if is_numeric:
+            # Convert string numbers to integers if needed
+            train_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                            for label in train_labels])
+            val_encoded_labels = np.array([int(label) if isinstance(label, str) else int(label) 
+                                          for label in val_labels])
+            label_encoder = None
+        else:
+            # Use provided encoder or create a new one for text labels
+            if provided_label_encoder is not None:
+                label_encoder = provided_label_encoder
+                train_encoded_labels = label_encoder.transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+            else:
+                # Create and fit a new label encoder
+                label_encoder = LabelEncoder()
+                train_encoded_labels = label_encoder.fit_transform(train_labels)
+                val_encoded_labels = label_encoder.transform(val_labels)
+                
+                # Ensure 'yes' or 'positive' maps to 1 if present
+                positive_terms = ['yes', 'positive', 'true', '1']
+                for pos_term in positive_terms:
+                    if pos_term in train_labels or pos_term.capitalize() in train_labels:
+                        try:
+                            pos_idx = next(i for i, label in enumerate(train_labels) 
+                                          if str(label).lower() == pos_term)
+                            pos_encoded = train_encoded_labels[pos_idx]
+                            if pos_encoded != 1:
+                                train_encoded_labels = 1 - train_encoded_labels
+                                val_encoded_labels = 1 - val_encoded_labels
+                            break
+                        except StopIteration:
+                            continue
+
+    train_dataset = TextCNNDataset(X_train_seq, train_encoded_labels)
+    val_dataset = TextCNNDataset(X_val_seq, val_encoded_labels)
+    train_loader = DataLoader(train_dataset, batch_size=config.get("batch_size", 32), shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=config.get("batch_size", 32))
+
+    model = TextCNN(
+        vocab_size=tokenizer.vocab_size_,
+        embed_dim=config.get("embed_dim", 100),
+        num_filters=config.get("num_filters", 100),
+        kernel_sizes=config.get("kernel_sizes", [3, 4, 5]),
+        dropout_rate=config.get("dropout_rate", 0.5),
+    ).to(device)
+
+    optimizer = optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
+
+    metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
+    best_f1_score = 0.0
+    best_model_state = None
 
     for epoch in range(num_epochs):
         train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device)
@@ -268,6 +432,7 @@ class TextCNN(nn.Module):
         model.load_state_dict(best_model_state)
 
     return model, tokenizer, label_encoder, metrics
+
     
 def predict_batch(model, tokenizer, texts,threshold):
     """
