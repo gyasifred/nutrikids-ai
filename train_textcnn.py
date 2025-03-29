@@ -72,7 +72,8 @@ def main():
     print(f"Label type: {'text (with encoding)' if label_encoder else 'numeric (no encoding needed)'}")
     
     # Calculate class weights
-    class_weights = calculate_class_weights(train_labels, args.positive_weight)
+    pos_weight = calculate_class_weights(train_labels, args.positive_weight)
+    print(f"Using positive class weight: {pos_weight.item():.2f}")
     
     # Load best config
     best_config_path = os.path.join(args.config_dir, "best_config.joblib")
@@ -91,15 +92,16 @@ def main():
     # Add freeze_embeddings parameter to config
     best_config['freeze_embeddings'] = args.freeze_embeddings
     
-    # Add class weights to config
-    best_config['class_weights'] = class_weights
+    # Add class weights to config - Use the key 'pos_weight' to match what train_textcnn expects
+    best_config['pos_weight'] = pos_weight
     
     # Train final model with best configuration
     print("Training final model with best configuration...")
     final_model, final_tokenizer, final_label_encoder, final_metrics = train_textcnn(
         train_texts, train_labels, val_texts, val_labels,
         best_config, num_epochs=args.epochs,
-        pretrained_embeddings_dict=pretrained_embeddings_dict
+        pretrained_embeddings_dict=pretrained_embeddings_dict,
+        provided_label_encoder=label_encoder
     )
     
     # Create output directory
@@ -112,12 +114,19 @@ def main():
     # Save tokenizer, label encoder, and training metrics using joblib
     joblib.dump(final_tokenizer,
                 os.path.join(args.output_dir, "tokenizer.joblib"))
-    joblib.dump(final_label_encoder,
-                os.path.join(args.output_dir, "label_encoder.joblib"))
+    if final_label_encoder is not None:
+        joblib.dump(final_label_encoder,
+                    os.path.join(args.output_dir, "label_encoder.joblib"))
+    
+    # Convert numpy values to Python native types for JSON serialization
+    serializable_metrics = {}
+    for k, v in final_metrics.items():
+        # Handle both numpy arrays and lists of floats
+        serializable_metrics[k] = [float(val) for val in v]
     
     metrics_path = os.path.join(args.output_dir, "training_metrics.json")
     with open(metrics_path, "w") as f:
-        json.dump(final_metrics, f, indent=4)
+        json.dump(serializable_metrics, f, indent=4)
    
     # Save model configuration
     model_config = {
@@ -127,7 +136,8 @@ def main():
         "kernel_sizes": best_config.get("kernel_sizes", [3, 4, 5]),
         "dropout_rate": best_config.get("dropout_rate", 0.5),
         "freeze_embeddings": best_config.get("freeze_embeddings", False),
-        "positive_weight": args.positive_weight
+        "positive_weight": args.positive_weight,
+        "pos_weight_value": pos_weight.item()  # Store the actual weight value used
     }
     joblib.dump(model_config, os.path.join(args.output_dir,
                                            "model_config.joblib"))
@@ -138,13 +148,14 @@ def main():
     print(f"  Train Accuracy: {final_metrics['train_accuracy'][-1]:.4f}")
     print(f"  Validation Loss: {final_metrics['val_loss'][-1]:.4f}")
     print(f"  Validation Accuracy: {final_metrics['val_accuracy'][-1]:.4f}")
+    print(f"  Validation F1: {final_metrics['val_f1'][-1]:.4f}")
 
     # Plot training curves if possible
     try:
         import matplotlib.pyplot as plt
         # Plot loss curves
-        plt.figure(figsize=(12, 4))
-        plt.subplot(1, 2, 1)
+        plt.figure(figsize=(12, 8))
+        plt.subplot(2, 1, 1)
         plt.plot(final_metrics['train_loss'], label='Train Loss')
         plt.plot(final_metrics['val_loss'], label='Validation Loss')
         plt.xlabel('Epoch')
@@ -153,20 +164,20 @@ def main():
         plt.title('Training and Validation Loss')
 
         # Plot accuracy curves
-        plt.subplot(1, 2, 2)
+        plt.subplot(2, 1, 2)
         plt.plot(final_metrics['train_accuracy'], label='Train Accuracy')
         plt.plot(final_metrics['val_accuracy'], label='Validation Accuracy')
+        plt.plot(final_metrics['val_f1'], label='Validation F1 Score')
         plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
+        plt.ylabel('Score')
         plt.legend()
-        plt.title('Training and Validation Accuracy') 
+        plt.title('Training and Validation Metrics') 
         # Save the plots
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, "training_curves.png"))
         print(f"Training curves saved to {os.path.join(args.output_dir, 'training_curves.png')}")
     except Exception as e:
         print(f"Could not generate training curves: {e}")
-
 
 if __name__ == "__main__":
     main()
