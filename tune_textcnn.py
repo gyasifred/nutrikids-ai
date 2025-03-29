@@ -41,7 +41,7 @@ def parse_args():
                         type=lambda x: None if x.lower() == 'none' else str(x),
                         default=None) 
     parser.add_argument('--positive_weight', type=float, default=1.0,
-                        help='Weight multiplier for positive class (default: 2.0)')
+                        help='Weight multiplier for positive class (default: 1.0)')
     
     # Ray Tune parameters
     parser.add_argument('--output_dir', type=str, default='CNN')
@@ -139,8 +139,9 @@ def main():
         full_config = fixed_args.copy()
         full_config.update(config)
 
-        # Train model - Pass class_weights as a parameter in the full_config
-        full_config['class_weights'] = class_weights
+        # Fix: Use 'pos_weight' key instead of 'class_weights'
+        full_config['pos_weight'] = class_weights
+        
         model, tokenizer, trained_label_encoder, metrics = train_textcnn(
             train_texts, train_labels, val_texts, val_labels,
             full_config, fixed_args["max_epochs"], pretrained_embeddings_dict,
