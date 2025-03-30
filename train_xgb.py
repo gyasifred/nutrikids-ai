@@ -258,7 +258,7 @@ def train_xgboost_model(X_train, y_train, params):
         verbose_eval=10  # Print evaluation metrics every 10 rounds
     )
     
-    return model, scale_pos_weight
+    return model
 
 
 def main():
