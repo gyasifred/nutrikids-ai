@@ -512,7 +512,7 @@ def train_textcnn(
             best_val_f1 = val_f1
             best_model_state = model.state_dict().copy()
             patience_counter = 0
-            print(f"New best model with validation loss: {val_loss:.4f}")
+            print(f"New best model with validation f1: {val_f1:.4f}")
         else:
             patience_counter += 1
             print(f"No improvement for {patience_counter} epochs")
