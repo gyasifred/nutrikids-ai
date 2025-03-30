@@ -12,11 +12,11 @@ from utils import process_csv
 from models.xgboost import get_scaling_config_and_tree_method
 
 
-def compute_scale_pos_weight(y):
-    """Compute scale_pos_weight for handling class imbalance."""
-    num_neg = (y == 0).sum()
-    num_pos = (y == 1).sum()
-    return num_neg / num_pos if num_pos > 0 else 1
+# def compute_scale_pos_weight(y):
+#     """Compute scale_pos_weight for handling class imbalance."""
+#     num_neg = (y == 0).sum()
+#     num_pos = (y == 1).sum()
+#     return num_neg / num_pos if num_pos > 0 else 1
 
 
 def parse_arguments():
@@ -242,10 +242,10 @@ def train_xgboost_model(X_train, y_train, params):
         The trained XGBoost model
     """
     # Compute scale_pos_weight to handle class imbalance
-    scale_pos_weight = compute_scale_pos_weight(y_train)
+    # scale_pos_weight = compute_scale_pos_weight(y_train)
     
-    # Update params with computed scale_pos_weight
-    params['scale_pos_weight'] = scale_pos_weight
+    # # Update params with computed scale_pos_weight
+    # params['scale_pos_weight'] = scale_pos_weight
     
     # Create a DMatrix for XGBoost (no need to call ray.get() anymore)
     dtrain = xgb.DMatrix(X_train, label=y_train)
