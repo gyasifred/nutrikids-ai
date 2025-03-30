@@ -134,81 +134,81 @@ for MODEL in "${LLM_MODELS[@]}"; do
   MODEL_OUTPUT_DIR="${PRE_EVAL_DIR}/${MODEL_SHORT_NAME}"
   mkdir -p "$MODEL_OUTPUT_DIR"
 
-  echo "Pre-Evaluating Base Model: ${MODEL_SHORT_NAME}"
-  CMD="python3 evaluate_llm.py \
-    --base_model \"$MODEL\" \
-    --test_csv \"$TEST_CSV\" \
-    --text_column \"$TEXT_COLUMN\" \
-    --label_column \"$LABEL_COLUMN\" \
-    --id_column \"$ID_COLUMN\" \
-    --output_dir \"$MODEL_OUTPUT_DIR\" \
-    --few_shot_count \"$FEW_SHOT_COUNT\" \
-    --threshold \"$THRESHOLD\" \
-    --max_new_tokens \"$MAX_NEW_TOKENS\" \
-    --temperature \"$TEMPERATURE\" \
-    --batch_size \"$BATCH_SIZE\" \
-    --seed \"$SEED\" $BIT_FLAG"
+#   echo "Pre-Evaluating Base Model: ${MODEL_SHORT_NAME}"
+#   CMD="python3 evaluate_llm.py \
+#     --base_model \"$MODEL\" \
+#     --test_csv \"$TEST_CSV\" \
+#     --text_column \"$TEXT_COLUMN\" \
+#     --label_column \"$LABEL_COLUMN\" \
+#     --id_column \"$ID_COLUMN\" \
+#     --output_dir \"$MODEL_OUTPUT_DIR\" \
+#     --few_shot_count \"$FEW_SHOT_COUNT\" \
+#     --threshold \"$THRESHOLD\" \
+#     --max_new_tokens \"$MAX_NEW_TOKENS\" \
+#     --temperature \"$TEMPERATURE\" \
+#     --batch_size \"$BATCH_SIZE\" \
+#     --seed \"$SEED\" $BIT_FLAG"
   
-  # Append optional flags.
-  if [ "$BALANCED_EXAMPLES" = true ]; then
-    CMD="$CMD --balanced_examples"
-  fi
+#   # Append optional flags.
+#   if [ "$BALANCED_EXAMPLES" = true ]; then
+#     CMD="$CMD --balanced_examples"
+#   fi
   
-  if [ -n "$EXAMPLES_DATA" ]; then
-    CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
-  fi
+#   if [ -n "$EXAMPLES_DATA" ]; then
+#     CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
+#   fi
   
-  echo "Running command: $CMD"
-  eval $CMD
-done
+#   echo "Running command: $CMD"
+#   eval $CMD
+# done
 
-# # -------------------- Post-Evaluation (Base + Adapter) --------------------
-# # Only perform post-evaluation if a MODEL_PATH (adapter weights) is provided.
-# if [ -n "$MODEL_PATH" ]; then
-#   echo "==================== Starting Post-Evaluation (Base Model + Adapter) ===================="
-#   for MODEL in "${LLM_MODELS[@]}"; do
-#     # Automatically determine quantization flag based on model name.
-#     if [[ "$MODEL" == *"4bit"* ]]; then
-#       BIT_FLAG="--load_in_4bit"
-#     else
-#       BIT_FLAG="--load_in_8bit"
-#     fi
+# -------------------- Post-Evaluation (Base + Adapter) --------------------
+# Only perform post-evaluation if a MODEL_PATH (adapter weights) is provided.
+if [ -n "$MODEL_PATH" ]; then
+  echo "==================== Starting Post-Evaluation (Base Model + Adapter) ===================="
+  for MODEL in "${LLM_MODELS[@]}"; do
+    # Automatically determine quantization flag based on model name.
+    if [[ "$MODEL" == *"4bit"* ]]; then
+      BIT_FLAG="--load_in_4bit"
+    else
+      BIT_FLAG="--load_in_8bit"
+    fi
 
-#     # Extract a short model name for output directory naming.
-#     MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
-#     MODEL_OUTPUT_DIR="${POST_EVAL_DIR}/${MODEL_SHORT_NAME}"
-#     mkdir -p "$MODEL_OUTPUT_DIR"
+    # Extract a short model name for output directory naming.
+    MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
+    MODEL_OUTPUT_DIR="${POST_EVAL_DIR}/${MODEL_SHORT_NAME}"
+    mkdir -p "$MODEL_OUTPUT_DIR"
 
-#     echo "Post-Evaluating Model with Adapter: ${MODEL_SHORT_NAME}"
-#     CMD="python3 evaluate_llm.py \
-#       --base_model \"$MODEL\" \
-#       --model_path \"${MODEL_PATH}/${MODEL_SHORT_NAME}\" \
-#       --test_csv \"$TEST_CSV\" \
-#       --text_column \"$TEXT_COLUMN\" \
-#       --label_column \"$LABEL_COLUMN\" \
-#       --id_column \"$ID_COLUMN\" \
-#       --output_dir \"$MODEL_OUTPUT_DIR\" \
-#       --few_shot_count \"$FEW_SHOT_COUNT\" \
-#       --threshold \"$THRESHOLD\" \
-#       --max_new_tokens \"$MAX_NEW_TOKENS\" \
-#       --temperature \"$TEMPERATURE\" \
-#       --batch_size \"$BATCH_SIZE\" \
-#       --seed \"$SEED\" $BIT_FLAG"
+    echo "Post-Evaluating Model with Adapter: ${MODEL_SHORT_NAME}"
+    CMD="python3 evaluate_llm.py \
+      --base_model \"$MODEL\" \
+      --model_path \"${MODEL_PATH}/${MODEL_SHORT_NAME}\" \
+      --test_csv \"$TEST_CSV\" \
+      --text_column \"$TEXT_COLUMN\" \
+      --label_column \"$LABEL_COLUMN\" \
+      --id_column \"$ID_COLUMN\" \
+      --output_dir \"$MODEL_OUTPUT_DIR\" \
+      --few_shot_count \"$FEW_SHOT_COUNT\" \
+      --threshold \"$THRESHOLD\" \
+      --max_new_tokens \"$MAX_NEW_TOKENS\" \
+      --temperature \"$TEMPERATURE\" \
+      --batch_size \"$BATCH_SIZE\" \
+      --seed \"$SEED\" $BIT_FLAG"
     
-#     # Append optional flags.
-#     if [ "$BALANCED_EXAMPLES" = true ]; then
-#       CMD="$CMD --balanced_examples"
-#     fi
+    # Append optional flags.
+    if [ "$BALANCED_EXAMPLES" = true ]; then
+      CMD="$CMD --balanced_examples"
+    fi
     
-#     if [ -n "$EXAMPLES_DATA" ]; then
-#       CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
-#     fi
+    if [ -n "$EXAMPLES_DATA" ]; then
+      CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
+    fi
     
-#     echo "Running command: $CMD"
-#     eval $CMD
-#   done
-# else
-#   echo "No adapter model path provided. Skipping post-evaluation."
-# fi
+    echo "Running command: $CMD"
+    eval $CMD
+  done
+else
+  echo "No adapter model path provided. Skipping post-evaluation."
+fi
 
 echo "LLM Evaluation (Pre & Post) completed successfully!"
