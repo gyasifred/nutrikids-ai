@@ -184,6 +184,9 @@ class TextCNNDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.data[idx], self.labels[idx]
         
+# =========================
+# TextCNN Model Class
+# =========================
 class TextCNN(nn.Module):
     def __init__(
         self,
@@ -212,47 +215,28 @@ class TextCNN(nn.Module):
 
         self.pool = nn.AdaptiveMaxPool1d(1)
         
-        # Optimized architecture with batch normalization
+        # Adjusted fully connected layers
         fc_input_size = num_filters * len(kernel_sizes)
-        self.batch_norm1 = nn.BatchNorm1d(fc_input_size)
         self.fc1 = nn.Linear(fc_input_size, 200)
-        self.batch_norm2 = nn.BatchNorm1d(200)
         self.fc2 = nn.Linear(200, 1)  # Single output neuron
         
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        """Forward pass with improved architecture."""
-        # Embedding layer
+        """Forward pass with sigmoid activation."""
         x = self.embedding(x)
-        x = x.permute(0, 2, 1)  # [batch, embed_dim, seq_len]
+        x = x.permute(0, 2, 1)
         
-        # Convolutional layers and pooling
-        conv_results = []
-        for conv in self.convs:
-            # Apply conv and ReLU
-            conv_out = self.relu(conv(x))
-            # Pool and flatten
-            pooled = self.pool(conv_out).squeeze(-1)
-            conv_results.append(pooled)
+        # Convolution and pooling
+        x = [self.pool(conv(x)).squeeze(-1) for conv in self.convs]
+        x = torch.cat(x, dim=1)
         
-        # Concatenate all conv outputs
-        x = torch.cat(conv_results, dim=1)
-        
-        # Apply batch normalization before first FC layer
-        x = self.batch_norm1(x)
-        
-        # First FC layer with activation and dropout
-        x = self.fc1(x)
-        x = self.batch_norm2(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        
-        # Final FC layer (no activation here - we'll use BCEWithLogitsLoss)
+        # Fully connected layers
+        x = self.dropout(self.relu(self.fc1(x)))
         x = self.fc2(x)
-        
-        return x  # No sigmoid - we'll use BCEWithLogitsLoss
+        return x
+
 
 def train_one_epoch(
     model: nn.Module,
