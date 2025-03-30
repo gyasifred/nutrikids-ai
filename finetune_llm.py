@@ -64,7 +64,7 @@ def parse_arguments():
                         help="Number of training epochs")
     
     # Class weighting argument
-    parser.add_argument("--pos_weight", type=float, default=3.0,
+    parser.add_argument("--pos_weight", type=float, default=2.0,
                         help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
