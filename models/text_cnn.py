@@ -11,7 +11,7 @@ import torch.optim as optim
 from typing import List, Dict, Union, Optional, Tuple
 from collections import Counter
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
@@ -289,10 +289,11 @@ def evaluate_model(
     val_loader: DataLoader,
     criterion,
     device: str,
-    return_f1: bool = True 
-) -> Tuple[float, float, float]:
+    return_metrics: bool = True 
+) -> Tuple[float, float, float, float]:
     model.eval()
     all_preds, all_labels = [], []
+    all_probs = []  # Store probabilities for AUC calculation
     total_loss = 0.0
 
     with torch.no_grad():
@@ -304,14 +305,20 @@ def evaluate_model(
             total_loss += loss.item()
             probs = torch.sigmoid(outputs)
             preds = (probs > 0.5).float().cpu().numpy()
+            
+            all_probs.extend(probs.cpu().numpy())  # Store probabilities for AUC
             all_preds.extend(preds)
             all_labels.extend(batch_y.cpu().numpy())
 
     avg_loss = total_loss / len(val_loader)
-    accuracy = accuracy_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds) if return_f1 else 0.0
-
-    return avg_loss, accuracy, f1
+    
+    if return_metrics:
+        accuracy = accuracy_score(all_labels, all_preds)
+        f1 = f1_score(all_labels, all_preds)
+        auc = roc_auc_score(all_labels, all_probs)  # Calculate AUC
+        return avg_loss, accuracy, f1, auc
+    else:
+        return avg_loss, 0.0, 0.0, 0.0
 
 
 def train_textcnn(
@@ -330,7 +337,7 @@ def train_textcnn(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # Initialize best model tracking
-    best_val_f1 = 0  # F1 score is best when highest (not lowest)
+    best_val_auc = 0  # AUC score is best when highest
     patience_counter = 0
     early_stopping_patience = config.get('early_stopping_patience', 10)
 
@@ -451,7 +458,14 @@ def train_textcnn(
     )
 
     # Tracking metrics
-    metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
+    metrics = {
+        "train_loss": [], 
+        "train_accuracy": [], 
+        "val_loss": [], 
+        "val_accuracy": [], 
+        "val_f1": [],
+        "val_auc": []  # Added AUC metric
+    }
     best_model_state = None
 
     for epoch in range(num_epochs):
@@ -465,13 +479,13 @@ def train_textcnn(
             weight_decay
         )
         
-        # Evaluate model
-        val_loss, val_accuracy, val_f1 = evaluate_model(
+        # Evaluate model with AUC included
+        val_loss, val_accuracy, val_f1, val_auc = evaluate_model(
             model, 
             val_loader, 
             criterion, 
             device, 
-            return_f1=True
+            return_metrics=True
         )
 
         # Update learning rate based on validation loss
@@ -483,19 +497,21 @@ def train_textcnn(
         metrics["val_loss"].append(val_loss)
         metrics["val_accuracy"].append(val_accuracy)
         metrics["val_f1"].append(val_f1)
+        metrics["val_auc"].append(val_auc)  # Add AUC to tracked metrics
 
         print(
             f"Epoch {epoch+1}/{num_epochs} - "
             f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, "
-            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1: {val_f1:.4f}"
+            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, "
+            f"Val F1: {val_f1:.4f}, Val AUC: {val_auc:.4f}"  # Print AUC
         )
 
-        # Save best model state based on validation f1
-        if val_f1 > best_val_f1:  # Changed from < to > since higher F1 is better
-            best_val_f1 = val_f1
+        # Save best model state based on validation AUC instead of F1
+        if val_auc > best_val_auc:  
+            best_val_auc = val_auc
             best_model_state = model.state_dict().copy()
             patience_counter = 0
-            print(f"New best model with validation F1: {val_f1:.4f}")
+            print(f"New best model with validation AUC: {val_auc:.4f}")
         else:
             patience_counter += 1
             print(f"No improvement for {patience_counter} epochs")
@@ -508,10 +524,9 @@ def train_textcnn(
     # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-        print(f"Loaded best model with validation F1: {best_val_f1:.4f}")  # Changed from best_val_loss to best_val_f1
+        print(f"Loaded best model with validation AUC: {best_val_auc:.4f}")
 
-    return model, tokenizer, label_encoder, metrics
-    
+    return model, tokenizer, label_encoder, metrics    
     
 def predict_batch(model, tokenizer, texts,threshold):
     """
