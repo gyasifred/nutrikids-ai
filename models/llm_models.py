@@ -85,16 +85,12 @@ def is_bfloat16_supported():
 
 def evaluate_predictions(
     y_true: List[Any],
-    y_pred: List[Any],
-    y_prob: Optional[List[float]] = None
+    y_pred: List[Any]
 ) -> Dict[str, Any]:
     """Evaluate model predictions and return comprehensive metrics.
-
     Args:
         y_true (List[Any]): Ground truth labels (1/0 or "yes"/"no")
         y_pred (List[Any]): Predicted labels (1/0 or "yes"/"no")
-        y_prob (Optional[List[float]]): Predicted probabilities for the positive class
-
     Returns:
         Dict[str, Any]: Dictionary containing evaluation metrics
     """
@@ -103,67 +99,52 @@ def evaluate_predictions(
         if isinstance(label, str):
             return 1 if label.lower() == "yes" else 0
         return int(label)  # Assume already 0/1 if not a string
-
+    
     # Convert both y_true and y_pred to binary (0 or 1)
     y_true_binary = [convert_to_binary(label) for label in y_true]
     y_pred_binary = [convert_to_binary(label) for label in y_pred]
-
+    
     # Calculate basic metrics
     accuracy = accuracy_score(y_true_binary, y_pred_binary)
     precision = precision_score(y_true_binary, y_pred_binary)
     recall = recall_score(y_true_binary, y_pred_binary)
     f1 = f1_score(y_true_binary, y_pred_binary)
-
+    
     # Compute confusion matrix
     cm = confusion_matrix(y_true_binary, y_pred_binary)
-
+    
     # Get detailed classification report
-    cls_report = classification_report(y_true_binary, y_pred_binary, target_names=[
-                                       "no", "yes"], output_dict=True)
-
-    # ROC and PR curve metrics (if probabilities are provided)
-    auc = avg_precision = 0.0
-    fpr = tpr = precision_curve = recall_curve = []
-
-    # Ensure we have both classes and predicted probabilities for ROC/PR curves
-    if y_prob is not None and len(set(y_true_binary)) > 1:
-        auc = roc_auc_score(y_true_binary, y_prob)
-        avg_precision = average_precision_score(y_true_binary, y_prob)
-
-        # ROC curve data
-        fpr, tpr, _ = roc_curve(y_true_binary, y_prob)
-
-        # Precision-Recall curve data
-        precision_curve, recall_curve, _ = precision_recall_curve(
-            y_true_binary, y_prob)
-
+    cls_report = classification_report(y_true_binary, y_pred_binary, 
+                                      target_names=["no", "yes"], output_dict=True)
+    
+    # Create metrics dictionary with only binary classification metrics
     metrics = {
         'accuracy': float(accuracy),
         'precision': float(precision),
         'recall': float(recall),
         'f1': float(f1),
-        'auc': float(auc),
-        'avg_precision': float(avg_precision),
         'confusion_matrix': cm.tolist(),
         'classification_report': cls_report,
-        'fpr': fpr,
-        'tpr': tpr,
-        'precision_curve': precision_curve,
-        'recall_curve': recall_curve
+        # Empty placeholders to maintain compatibility with plotting function
+        'fpr': [],
+        'tpr': [],
+        'precision_curve': [],
+        'recall_curve': [],
+        'auc': 0.0,
+        'avg_precision': 0.0
     }
-
+    
     return metrics
 
 
 def plot_evaluation_metrics(metrics: Dict[str, Any], output_dir: str):
     """Create and save visualizations for evaluation metrics.
-
     Args:
         metrics (Dict[str, Any]): Dictionary containing evaluation metrics
         output_dir (str): Directory to save plots to
     """
     os.makedirs(output_dir, exist_ok=True)
-
+    
     # 1. Plot confusion matrix
     plt.figure(figsize=(8, 6))
     cm = np.array(metrics['confusion_matrix'])
@@ -176,58 +157,26 @@ def plot_evaluation_metrics(metrics: Dict[str, Any], output_dir: str):
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'))
     plt.close()
-
-    # 2. Plot ROC curve (if available)
-    if len(metrics['fpr']) > 0 and len(metrics['tpr']) > 0:
-        plt.figure(figsize=(8, 6))
-        plt.plot(metrics['fpr'], metrics['tpr'],
-                 label=f'ROC Curve (AUC = {metrics["auc"]:.3f})')
-        plt.plot([0, 1], [0, 1], 'k--', label='Random')
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('ROC Curve')
-        plt.legend(loc='lower right')
-        plt.grid(True, linestyle='--', alpha=0.6)
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
-        plt.close()
-
-    # 3. Plot Precision-Recall curve (if available)
-    if len(metrics['precision_curve']) > 0 and len(metrics['recall_curve']) > 0:
-        plt.figure(figsize=(8, 6))
-        plt.plot(metrics['recall_curve'], metrics['precision_curve'],
-                 label=f'PR Curve (AP = {metrics["avg_precision"]:.3f})')
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.title('Precision-Recall Curve')
-        plt.legend(loc='lower left')
-        plt.grid(True, linestyle='--', alpha=0.6)
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'pr_curve.png'))
-        plt.close()
-
+    
     # 4. Plot metrics summary
     plt.figure(figsize=(10, 6))
     metrics_to_plot = ['accuracy', 'precision', 'recall', 'f1']
     values = [metrics[m] for m in metrics_to_plot]
-
     colors = ['#3498db', '#2ecc71', '#f39c12', '#e74c3c']
-
     bars = plt.bar(metrics_to_plot, values, color=colors)
     plt.ylim(0, 1.0)
     plt.title('Classification Metrics Summary')
     plt.grid(True, linestyle='--', alpha=0.3, axis='y')
-
+    
     # Add value labels on top of bars
     for bar in bars:
         height = bar.get_height()
         plt.text(bar.get_x() + bar.get_width()/2., height + 0.02,
                  f'{height:.3f}', ha='center', va='bottom')
-
+    
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'metrics_summary.png'))
     plt.close()
-
 
 def save_metrics_to_csv(metrics: Dict[str, Any], output_path: str):
     """Save main evaluation metrics to CSV file.
