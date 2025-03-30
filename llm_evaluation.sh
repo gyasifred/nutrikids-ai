@@ -28,7 +28,6 @@ SEED=42
 MAX_NEW_TOKENS=1024
 TEMPERATURE=0.0
 BATCH_SIZE=16
-THRESHOLD=0.5
 
 # Model settings
 # Array of base models to evaluate
@@ -92,10 +91,6 @@ while [[ "$#" -gt 0 ]]; do
       BATCH_SIZE="$2"
       shift 2
       ;;
-    --threshold)
-      THRESHOLD="$2"
-      shift 2
-      ;;
     --model_path)
       MODEL_PATH="$2"
       shift 2
@@ -143,7 +138,6 @@ echo "==================== Starting Pre-Evaluation (Base Models Only) ==========
 #     --id_column \"$ID_COLUMN\" \
 #     --output_dir \"$MODEL_OUTPUT_DIR\" \
 #     --few_shot_count \"$FEW_SHOT_COUNT\" \
-#     --threshold \"$THRESHOLD\" \
 #     --max_new_tokens \"$MAX_NEW_TOKENS\" \
 #     --temperature \"$TEMPERATURE\" \
 #     --batch_size \"$BATCH_SIZE\" \
@@ -189,7 +183,6 @@ if [ -n "$MODEL_PATH" ]; then
       --id_column \"$ID_COLUMN\" \
       --output_dir \"$MODEL_OUTPUT_DIR\" \
       --few_shot_count \"$FEW_SHOT_COUNT\" \
-      --threshold \"$THRESHOLD\" \
       --max_new_tokens \"$MAX_NEW_TOKENS\" \
       --temperature \"$TEMPERATURE\" \
       --batch_size \"$BATCH_SIZE\" \
