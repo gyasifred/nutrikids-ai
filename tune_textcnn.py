@@ -159,6 +159,7 @@ def main():
                 "train_accuracy": metrics["train_accuracy"][epoch],
                 "train_loss": metrics["train_loss"][epoch],
                 "val_f1": metrics['val_f1'][epoch],
+                "val_auc": metrics['val_auc'][epoch],
                 "epoch": epoch
             })
     
@@ -188,8 +189,8 @@ def main():
     tuner = tune.Tuner(
         train_textcnn_with_resources,
         tune_config=tune.TuneConfig(
-            metric="val_loss",  # Changed from val_f1 to val_loss
-            mode="min",         # Changed from max to min
+            metric="val_auc", 
+            mode="max",        
             scheduler=ASHAScheduler(
                 max_t=args.max_epochs,
                 grace_period=args.grace_period,
