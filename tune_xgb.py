@@ -183,6 +183,7 @@ def main():
                 "reg_lambda": tune.loguniform(1e-4, 1e-1),
                 "max_bin": tune.randint(100, 300),
                 "num_boost_round": tune.choice([100, 150, 200, 250, 300, 350, 400, 450, 500]),
+                "scale_pos_weight": tune.choice([1,2,3])
             },
         }
         
