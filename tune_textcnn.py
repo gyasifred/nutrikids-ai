@@ -204,8 +204,8 @@ def main():
     print("Starting hyperparameter tuning...")
     results = tuner.fit()
 
-    # Get and print best results based on val_loss (min)
-    best_result = results.get_best_result(metric="val_loss", mode="min")
+    # Get and print best results based on val_f1(min)
+    best_result = results.get_best_result(metric="val_f1", mode="max")
     print(f"Best trial config: {best_result.config}")
     print(f"Best trial final validation loss: {best_result.metrics['val_loss']}")
     print(f"Best trial final validation accuracy: {best_result.metrics['val_accuracy']}")
