@@ -348,7 +348,7 @@ def train_textcnn(
     # Initialize best model tracking
     best_val_loss = float('inf')
     patience_counter = 0
-    early_stopping_patience = config.get('early_stopping_patience', 5)
+    early_stopping_patience = config.get('early_stopping_patience', 10)
 
     # Use pos_weight for class imbalance if provided
     pos_weight = config.get('pos_weight', None)
