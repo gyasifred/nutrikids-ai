@@ -391,7 +391,7 @@ def main():
         
         # Get trained model
         logger.info("Waiting for model training to complete...")
-        model, used_scale_pos_weight = ray.get(model_ref)
+        model = ray.get(model_ref)
         
         # Save model
         model_path = os.path.join(args.model_dir,
