@@ -346,7 +346,7 @@ def train_textcnn(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # Initialize best model tracking
-    best_val_loss = float('inf')
+    best_val_f1 = 0  # F1 score is best when highest (not lowest)
     patience_counter = 0
     early_stopping_patience = config.get('early_stopping_patience', 10)
 
@@ -468,7 +468,6 @@ def train_textcnn(
 
     # Tracking metrics
     metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
-    best_val_f1 = float('inf')
     best_model_state = None
 
     for epoch in range(num_epochs):
@@ -508,11 +507,11 @@ def train_textcnn(
         )
 
         # Save best model state based on validation f1
-        if val_f1 < best_val_f1:
+        if val_f1 > best_val_f1:  # Changed from < to > since higher F1 is better
             best_val_f1 = val_f1
             best_model_state = model.state_dict().copy()
             patience_counter = 0
-            print(f"New best model with validation f1: {val_f1:.4f}")
+            print(f"New best model with validation F1: {val_f1:.4f}")
         else:
             patience_counter += 1
             print(f"No improvement for {patience_counter} epochs")
@@ -525,7 +524,7 @@ def train_textcnn(
     # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-        print(f"Loaded best model with validation loss: {best_val_loss:.4f}")
+        print(f"Loaded best model with validation F1: {best_val_f1:.4f}")  # Changed from best_val_loss to best_val_f1
 
     return model, tokenizer, label_encoder, metrics
     
