@@ -130,41 +130,9 @@ def load_model_and_tokenizer(base_model, model_path, args):
         raise
 
 
-def get_probability_from_logits(logits, tokenizer):
-    """
-    Extract probability of the 'yes' answer from model logits.
-    Args:
-        logits (torch.Tensor): The output logits from the model's forward pass
-        tokenizer: The tokenizer used with the model
-    Returns:
-        float: Probability score for "yes" class (0-1)
-    """
-    try:
-        # Get token IDs for "yes" and "no"
-        yes_tokens = tokenizer("yes", add_special_tokens=False).input_ids
-        no_tokens = tokenizer("no", add_special_tokens=False).input_ids
-        
-        # Take the first token ID as representative
-        yes_token_id = yes_tokens[0] if yes_tokens else tokenizer.encode("yes")[0]
-        no_token_id = no_tokens[0] if no_tokens else tokenizer.encode("no")[0]
-        
-        # Extract the relevant logits
-        yes_logit = logits[0, yes_token_id].item()
-        no_logit = logits[0, no_token_id].item()
-        
-        # Convert to probabilities using softmax
-        probs = np.exp([yes_logit, no_logit]) / np.sum(np.exp([yes_logit, no_logit]))
-        yes_prob = probs[0]
-        return yes_prob
-    except Exception as e:
-        print(f"Error calculating probability from logits: {e}")
-        # Fallback to a default probability of 0.5 in case of errors
-        return 0.5
-
-
 def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     """
-    Process a batch of patient notes and extract predictions and probabilities.
+    Process a batch of patient notes and extract predictions based on text response.
     
     Args:
         batch_texts (list): List of patient note texts
@@ -174,61 +142,26 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
         args: Command line arguments
         
     Returns:
-        list: List of tuples (decision, explanation, probability) for each input text
+        list: List of tuples (decision, explanation) for each input text
     """
     # Explicitly use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
     batch_results = []
     
-    # First calculate probabilities for the entire batch
-    batch_probs = []
     for text in batch_texts:
-        # Prepare prompt with few-shot examples if specified
-        prompt = prompt_builder.get_inference_prompt(
-            patient_notes=text,
-            note_col=args.text_column,
-            label_col=args.label_column,
-            num_examples=args.few_shot_count,
-            balanced=args.balanced_examples
-        )
-        
-        # Prepare chat format messages
-        messages = [
-            {"role": "user", "content": prompt}
-        ]
-        
         try:
-            # Apply chat template to get input tokens and move to device
-            inputs = tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt"
-            ).to(device)
-            
-            # Get logits for the first token prediction
-            with torch.no_grad():
-                outputs = model(inputs)
-                logits = outputs.logits[:, -1, :]
-                
-                # Get probability for "yes" class
-                yes_probability = get_probability_from_logits(logits, tokenizer)
-                batch_probs.append(yes_probability)
-                
-        except Exception as e:
-            print(f"Error calculating probability: {e}")
-            batch_probs.append(0.5)  # Default probability
-    
-    # Now generate the full responses
-    for i, text in enumerate(batch_texts):
-        try:
-            prompt = prompt_builder.get_inference_prompt(
+            # Prepare prompt with few-shot examples if specified
+            prompt = prompt_builder.get_balanced_inference_prompt(
+                patient_notes=text,
+                text_col=args.text_column,
+                label_col=args.label_column,
+                num_examples=args.few_shot_count
+            ) if args.balanced_examples else prompt_builder.get_inference_prompt(
                 patient_notes=text,
                 note_col=args.text_column,
                 label_col=args.label_column,
-                num_examples=args.few_shot_count,
-                balanced=args.balanced_examples
+                num_examples=args.few_shot_count
             )
             
             # Prepare chat format messages
@@ -260,21 +193,18 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             response_tokens = output[0][input_length:]
             response = tokenizer.decode(response_tokens, skip_special_tokens=True)
             
-            # Extract decision and explanation
+            # Extract decision and explanation from text response
             decision, explanation = extract_malnutrition_decision(response)
             
-            # Get the probability from the batch_probs
-            yes_probability = batch_probs[i]
+            # Convert text decision to binary (1/0), keeping consistent with extract_malnutrition_decision
+            binary_decision = 1 if decision.lower() == "yes" else 0
             
-            # Apply threshold to convert probability to binary label (1/0)
-            binary_decision = 1 if yes_probability >= args.threshold else 0
-            
-            batch_results.append((binary_decision, explanation, yes_probability))
+            batch_results.append((binary_decision, explanation))
             
         except Exception as e:
-            print(f"Error generating response for item {i}: {e}")
+            print(f"Error generating response: {e}")
             # Return default values in case of error
-            batch_results.append((0, "Error processing text", 0.0))
+            batch_results.append((0, f"Error processing text: {str(e)}"))
     
     return batch_results
 
@@ -290,7 +220,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
         prompt_builder: MalnutritionPromptBuilder instance
         
     Returns:
-        DataFrame: Results with predictions and probabilities
+        DataFrame: Results with predictions
     """
     print(f"Loading test data from {args.test_csv}")
     # Load test data
@@ -353,13 +283,12 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             # Store results
             for i in range(len(batch_texts)):
                 try:
-                    predicted_label, explanation, probability = batch_results[i]
+                    predicted_label, explanation = batch_results[i]
                     
                     results.append({
                         "patient_id": batch_ids[i],
                         "true_label": batch_true_labels[i],
                         "predicted_label": predicted_label,
-                        "probability": probability,
                         "explanation": explanation
                     })
                 except Exception as e:
@@ -369,7 +298,6 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "patient_id": batch_ids[i],
                         "true_label": batch_true_labels[i],
                         "predicted_label": -1,
-                        "probability": 0.0,
                         "explanation": f"Error: {str(e)}"
                     })
     
@@ -441,8 +369,6 @@ def parse_arguments():
                         help="Temperature for sampling")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for processing (default: 16)")
-    parser.add_argument("--threshold", type=float, default=0.5,
-                        help="Probability threshold for binary classification (default: 0.5)")
 
     # Force precision if needed
     parser.add_argument("--force_fp16", action="store_true",
@@ -549,11 +475,11 @@ def main():
     # Evaluate model performance
     y_true = eval_df["true_label"].tolist()
     y_pred = eval_df["predicted_label"].tolist()
-    y_prob = eval_df["probability"].tolist()
 
     print("Computing evaluation metrics...")
     try:
-        metrics = evaluate_predictions(y_true, y_pred, y_prob)
+        # Only pass true and predicted labels
+        metrics = evaluate_predictions(y_true, y_pred)
     except Exception as e:
         print(f"Error computing evaluation metrics: {e}")
         raise
@@ -574,15 +500,12 @@ def main():
     except Exception as e:
         print(f"Error saving metrics to CSV: {e}")
 
-    # Save threshold used
+    # Save metrics to JSON - Remove probability-based metrics
     metrics_json = {
-        'threshold': args.threshold,
         'accuracy': float(metrics['accuracy']),
         'precision': float(metrics['precision']),
         'recall': float(metrics['recall']),
         'f1': float(metrics['f1']),
-        'auc': float(metrics['auc']),
-        'avg_precision': float(metrics['avg_precision']),
         'confusion_matrix': metrics['confusion_matrix'],
         'classification_report': metrics['classification_report']
     }
@@ -600,6 +523,7 @@ def main():
         print_metrics_report(metrics)
     
     print("Evaluation complete!")
+
 
 
 if __name__ == "__main__":
