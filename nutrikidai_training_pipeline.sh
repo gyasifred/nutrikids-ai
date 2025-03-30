@@ -384,7 +384,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --label_column "$LABEL_COLUMN" \
     --output_dir "$MODEL_OUTPUT_DIR" \
     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-    --batch_size 16 \
+    --batch_size 8 \
     --gradient_accumulation 4 \
     --learning_rate 2e-4 \
     # --max_steps 500 \
