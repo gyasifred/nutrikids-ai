@@ -376,13 +376,13 @@ def main():
         label_counts = y_train.value_counts()
         logger.info(f"Final label distribution before training: {label_counts}")
         
-        # Compute scale_pos_weight 
-        scale_pos_weight = compute_scale_pos_weight(y_train)
-        logger.info(f"Computed scale_pos_weight: {scale_pos_weight}")
+        # # Compute scale_pos_weight 
+        # scale_pos_weight = compute_scale_pos_weight(y_train)
+        # logger.info(f"Computed scale_pos_weight: {scale_pos_weight}")
         
         # Log parameters before training
         final_params = best_params.copy()
-        final_params['scale_pos_weight'] = scale_pos_weight
+        # final_params['scale_pos_weight'] = scale_pos_weight
         logger.info(f"Final training parameters: {final_params}")
         
         # Train model using Ray - pass data directly without ray.put()
@@ -399,11 +399,11 @@ def main():
         model.save_model(model_path)
         logger.info(f"Model saved to {model_path}")
         
-        # Save scale_pos_weight for potential later use
-        scale_weight_path = os.path.join(args.model_dir,
-                                         f"{args.model_name}_scale_pos_weight.joblib")
-        joblib.dump(used_scale_pos_weight, scale_weight_path)
-        logger.info(f"scale_pos_weight saved to {scale_weight_path}")
+        # # Save scale_pos_weight for potential later use
+        # scale_weight_path = os.path.join(args.model_dir,
+        #                                  f"{args.model_name}_scale_pos_weight.joblib")
+        # joblib.dump(used_scale_pos_weight, scale_weight_path)
+        # logger.info(f"scale_pos_weight saved to {scale_weight_path}")
         
         logger.info("Training completed successfully.")
         
