@@ -463,12 +463,12 @@ def train_textcnn(
         optimizer, 
         mode='min',
         factor=0.5,
-        patience=5
+        patience=3
     )
 
     # Tracking metrics
     metrics = {"train_loss": [], "train_accuracy": [], "val_loss": [], "val_accuracy": [], "val_f1": []}
-    best_val_loss = float('inf')
+    best_val_f1 = float('inf')
     best_model_state = None
 
     for epoch in range(num_epochs):
@@ -507,9 +507,9 @@ def train_textcnn(
             f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1: {val_f1:.4f}"
         )
 
-        # Save best model state based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Save best model state based on validation f1
+        if val_f1 < best_val_f1:
+            best_val_f1 = val_f1
             best_model_state = model.state_dict().copy()
             patience_counter = 0
             print(f"New best model with validation loss: {val_loss:.4f}")
