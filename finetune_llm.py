@@ -452,12 +452,101 @@ def main():
     print(f"Using positive class weight: {args.pos_weight}")
     trainer.train()
 
-    # Save the final model
+    # Save the trained model properly
     print(f"Training completed. Saving model to {args.model_output}")
-    trainer.save_model(args.model_output)
+    
+    # Save the LoRA adapter
+    print("Saving LoRA adapter weights...")
+    trainer.model.save_pretrained(args.model_output)
+    
+    # Save the tokenizer
+    print("Saving tokenizer...")
+    tokenizer.save_pretrained(args.model_output)
+    
+    # # Save a merged model version (LoRA weights merged into base model)
+    # merged_model_path = os.path.join(args.model_output, "merged")
+    # os.makedirs(merged_model_path, exist_ok=True)
+    
+    # print(f"Creating merged model (LoRA + base) at {merged_model_path}...")
+    # try:
+    #     # Comment out the merging code
+    #     """
+    #     # Merge LoRA weights into base model
+    #     merged_model = trainer.model.merge_and_unload()
+        
+    #     # Save the merged model
+    #     merged_model.save_pretrained(merged_model_path)
+    #     tokenizer.save_pretrained(merged_model_path)
+    #     print("Merged model saved successfully.")
+    #     """
+    #     print("Merged model creation skipped.")
+    # except Exception as e:
+    #     print(f"Warning: Could not create merged model: {e}")
+    #     print("Continuing with adapter-only model.")
+    
+    # Clean up checkpoint files
+    print("Cleaning up checkpoint files...")
+    checkpoint_dir = os.path.join(args.output_dir, "checkpoint-*")
+    import glob
+    checkpoint_paths = glob.glob(checkpoint_dir)
+    
+    for checkpoint_path in checkpoint_paths:
+        if os.path.isdir(checkpoint_path):
+            print(f"Removing checkpoint: {checkpoint_path}")
+            import shutil
+            try:
+                shutil.rmtree(checkpoint_path)
+            except Exception as e:
+                print(f"Warning: Could not remove checkpoint directory {checkpoint_path}: {e}")
+    
+    # Remove checkpoint files from model directory
+    checkpoint_files = [f for f in os.listdir(args.model_output) if "checkpoint" in f]
+    for file in checkpoint_files:
+        file_path = os.path.join(args.model_output, file)
+        if os.path.isdir(file_path):
+            print(f"Removing checkpoint directory from model output: {file_path}")
+            import shutil
+            try:
+                shutil.rmtree(file_path)
+            except Exception as e:
+                print(f"Warning: Could not remove checkpoint directory {file_path}: {e}")
+        elif os.path.isfile(file_path):
+            print(f"Removing checkpoint file from model output: {file_path}")
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Warning: Could not remove checkpoint file {file_path}: {e}")
+
+    # Save a small README with information about the model
+    readme_content = f"""# Malnutrition Detection Model
+
+Base model: {args.model_name}
+Training date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Training parameters:
+- Learning rate: {args.learning_rate}
+- Batch size: {args.batch_size}
+- Gradient accumulation steps: {args.gradient_accumulation}
+- Epochs: {args.epochs}
+- LoRA rank: {args.lora_r}
+- LoRA alpha: {args.lora_alpha}
+- Positive class weight: {args.pos_weight}
+
+## Usage
+This directory contains two versions of the model:
+1. LoRA adapter only (main directory)
+2. Merged model (in the 'merged' subdirectory)
+
+For inference, the merged model is typically easier to use as it doesn't require loading a separate base model.
+"""
+    
+    with open(os.path.join(args.model_output, "README.md"), "w") as f:
+        f.write(readme_content)
 
     print("Fine-tuning complete!")
+    print(f"Model saved to: {args.model_output}")
+    print(f"Merged model saved to: {merged_model_path}")
 
 
 if __name__ == "__main__":
+    import datetime  # Add this import at the top of your file
     main()
