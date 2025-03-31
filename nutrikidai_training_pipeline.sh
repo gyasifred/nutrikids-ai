@@ -56,7 +56,7 @@ LLM_MODELS=(
    "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
 )
-LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS"
+LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS_w1"
 
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
