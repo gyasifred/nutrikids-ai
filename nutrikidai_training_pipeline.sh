@@ -119,7 +119,7 @@ while [[ "$#" -gt 0 ]]; do
       CNN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/CNN"
       XGB_OUTPUT_DIR="${OUTPUT_BASE_DIR}/XGB"
       TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
-      LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS"
+      LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS_w1"
       shift 2
       ;;
     --num_samples)
