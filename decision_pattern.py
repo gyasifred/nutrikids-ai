@@ -12,7 +12,7 @@ from nltk.corpus import stopwords
 import spacy
 from collections import Counter
 import networkx as  nx
-from utility import load_and_filter_data
+from utils import load_and_filter_data
 
 # Install necessary nltk packages
 nltk.download('punkt')
@@ -488,5 +488,5 @@ def main(file_path):
 
 if __name__ == "__main__":
     # Replace with your actual file path
-    file_path = "prediction.csv"
+    file_path = "./llama_zero_shot/prediction.csv"
     results = main(file_path)
