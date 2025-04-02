@@ -96,18 +96,23 @@ def extract_decision_features(explanation_text):
     features = {}
 
     # Check for malnutrition severity mentions
-    if re.search(r'\b(?:severe|moderate|mild)[\s-]*malnutrition\b', explanation_text, re.IGNORECASE):
-        severity = re.search(r'\b(severe|moderate|mild)[\s-]*malnutrition\b', explanation_text, re.IGNORECASE).group(1).lower()
-        features['severity'] = severity
+    severity_match = re.search(r'\b(severe|moderate|mild)[\s-]*malnutrition\b', explanation_text, re.IGNORECASE)
+    if severity_match:
+        features['severity'] = severity_match.group(1).lower()
 
     # Extract values for patterns
     for feature, pattern in patterns.items():
         match = re.search(pattern, explanation_text, re.IGNORECASE)
-        if match:
-            if len(match.groups()) > 0:
-                features[feature] = match.group(1).lower()
-            else:
+        if match and match.groups():  # Check if match exists AND has groups
+            try:
+                # Try to access group 1, which is typically the value we want
+                features[feature] = match.group(1).lower() if match.group(1) else 'mentioned'
+            except IndexError:
+                # If group 1 doesn't exist but we have a match, mark as 'mentioned'
                 features[feature] = 'mentioned'
+        elif match:
+            # Match exists but no capture groups
+            features[feature] = 'mentioned'
 
     # Check for key words indicating strong decisions
     if re.search(r'\b(?:clear|clearly|definite|definitely|obvious|strong|evidence|confirms|confirmed)\b', explanation_text, re.IGNORECASE):
@@ -488,5 +493,5 @@ def main(file_path):
 
 if __name__ == "__main__":
     # Replace with your actual file path
-    file_path = "./llama_zero_shot/prediction.csv"
+    file_path = "./llama_zero_shot/predictions.csv"
     results = main(file_path)
