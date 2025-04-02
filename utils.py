@@ -650,7 +650,7 @@ def detect_label_type(labels):
     return 'text_category'
 
 
-ef load_and_filter_data(file_path):
+def load_and_filter_data(file_path):
     """
     Load the malnutrition dataset and create filtered DataFrames based on prediction correctness.
     
