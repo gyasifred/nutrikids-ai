@@ -219,9 +219,23 @@ def create_decision_flow_diagram(features_df):
     """
     Create a decision flow diagram based on frequently co-occurring features
     extracted from malnutrition assessment explanations
+    
+    Parameters:
+    -----------
+    features_df : pandas.DataFrame
+        DataFrame containing features extracted from malnutrition assessments
+        
+    Returns:
+    --------
+    G : networkx.DiGraph
+        The directed graph representing the decision flow
+    pos : dict
+        Node positions for visualization
     """
     import networkx as nx
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    import numpy as np
     
     # Extract features only for correct predictions
     correct_features = features_df[features_df['correct'] == True]
@@ -331,48 +345,153 @@ def create_decision_flow_diagram(features_df):
             if feature in [f for f, _ in no_features_sorted[:no_path_length]]:
                 G.add_edge(feature, "NO", weight=no_weight)
 
-    # Visualize the graph
-    plt.figure(figsize=(16, 12))
+    # Create the figure with a white background
+    plt.figure(figsize=(18, 14), facecolor='white')
     
     # Use a hierarchical layout for better visualization of the flow
     try:
         pos = nx.nx_pydot.graphviz_layout(G, prog='dot')
     except:
-        # Fallback to spring layout if graphviz is not available
-        pos = nx.spring_layout(G, seed=42)
+        try:
+            # Try another layout option if graphviz 'dot' fails
+            pos = nx.nx_pydot.graphviz_layout(G, prog='fdp') 
+        except:
+            # Fallback to spring layout if graphviz is not available
+            pos = nx.spring_layout(G, seed=42, k=0.5)  # Adjust k for better node separation
 
-    # Customize node appearance
-    node_colors = ['lightgreen' if node == "YES" else
-                  'lightcoral' if node == "NO" else
-                  'lightskyblue' if node == "START" else
-                  'orange' for node in G.nodes()]
+    # Create a custom colormap for nodes based on their role
+    node_types = {}
+    for node in G.nodes():
+        if node == "START":
+            node_types[node] = "start"
+        elif node == "YES":
+            node_types[node] = "yes"
+        elif node == "NO":
+            node_types[node] = "no"
+        else:
+            # Check if it's in both paths, yes path, or no path
+            if node in yes_features_set and node in no_features_set:
+                node_types[node] = "shared"
+            elif node in yes_features_set:
+                node_types[node] = "yes_feature"
+            elif node in no_features_set:
+                node_types[node] = "no_feature"
+            else:
+                node_types[node] = "other"
 
-    # Node sizes based on importance
-    node_sizes = [3000 if node in ["YES", "NO", "START"] else 2000 for node in G.nodes()]
+    node_colors = []
+    for node in G.nodes():
+        if node_types[node] == "start":
+            node_colors.append("#3498db")  # Blue
+        elif node_types[node] == "yes":
+            node_colors.append("#2ecc71")  # Green
+        elif node_types[node] == "no":
+            node_colors.append("#e74c3c")  # Red
+        elif node_types[node] == "shared":
+            node_colors.append("#f39c12")  # Orange
+        elif node_types[node] == "yes_feature":
+            node_colors.append("#a3e4d7")  # Light green
+        elif node_types[node] == "no_feature":
+            node_colors.append("#f5b7b1")  # Light red
+        else:
+            node_colors.append("#bdc3c7")  # Light gray
+
+    # Node sizes based on importance and occurrence counts
+    node_sizes = []
+    for node in G.nodes():
+        if node in ["YES", "NO", "START"]:
+            node_sizes.append(4000)
+        else:
+            # Size based on frequency in either yes or no paths
+            count = yes_feature_counts.get(node, 0) + no_feature_counts.get(node, 0)
+            # Scale from 1500 to 3000 based on count
+            max_count = max(
+                max(count for f, count in yes_feature_counts.items() if count > 0), 
+                max(count for f, count in no_feature_counts.items() if count > 0)
+            ) if yes_feature_counts and no_feature_counts else 1
+            node_sizes.append(1500 + (count / max_count) * 1500)
 
     # Get edge weights for line thickness
     edges = G.edges()
     weights = [G[u][v]['weight'] for u, v in edges]
     max_weight = max(weights) if weights else 1
-    normalized_weights = [1 + 4 * (w / max_weight) for w in weights]  # Scale between 1-5
+    
+    # Edge colors based on source and target
+    edge_colors = []
+    for u, v in edges:
+        if v == "YES":
+            edge_colors.append("#2ecc71")  # Green
+        elif v == "NO":
+            edge_colors.append("#e74c3c")  # Red
+        elif node_types.get(u) == "start":
+            edge_colors.append("#3498db")  # Blue
+        elif node_types.get(u) == "shared":
+            edge_colors.append("#f39c12")  # Orange
+        elif node_types.get(u) == "yes_feature":
+            edge_colors.append("#a3e4d7")  # Light green
+        elif node_types.get(u) == "no_feature":
+            edge_colors.append("#f5b7b1")  # Light red
+        else:
+            edge_colors.append("#95a5a6")  # Gray
 
+    # Scale line width based on weights
+    normalized_weights = [1.5 + 3.5 * (w / max_weight) for w in weights]
+    
     # Draw the network
-    nx.draw(G, pos, with_labels=True, node_color=node_colors,
-            node_size=node_sizes, font_size=10, font_weight='bold',
-            width=normalized_weights, edge_color='gray',
-            arrows=True, arrowsize=15)
+    nx.draw(G, pos, 
+            with_labels=True, 
+            node_color=node_colors,
+            node_size=node_sizes, 
+            font_size=11, 
+            font_weight='bold',
+            font_color='black',
+            width=normalized_weights, 
+            edge_color=edge_colors,
+            arrows=True, 
+            arrowsize=20,
+            connectionstyle='arc3,rad=0.1')  # Curved edges for better visibility
             
     # Add edge labels showing counts
     edge_labels = {(u, v): f"{G[u][v]['weight']}" for u, v in G.edges()}
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+    
+    # Position edge labels closer to their edges
+    label_pos = nx.draw_networkx_edge_labels(
+        G, pos, 
+        edge_labels=edge_labels, 
+        font_size=9,
+        font_weight='bold',
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
+        label_pos=0.5  # Position labels at the middle of edges
+    )
 
-    plt.title("Malnutrition Assessment Decision Flow Diagram", fontsize=18)
-    plt.tight_layout()
-    plt.savefig('malnutrition_decision_flow_diagram.png', dpi=300, bbox_inches='tight')
+    # Add a title
+    plt.title("Malnutrition Assessment Decision Flow Diagram", fontsize=20, pad=20)
+    
+    # Add a legend for node types
+    legend_elements = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#3498db", markersize=15, label='Start'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#2ecc71", markersize=15, label='Yes (Malnutrition)'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#e74c3c", markersize=15, label='No (No Malnutrition)'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#f39c12", markersize=15, label='Shared Feature'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#a3e4d7", markersize=15, label='Yes Path Feature'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#f5b7b1", markersize=15, label='No Path Feature')
+    ]
+    plt.legend(handles=legend_elements, loc='lower right', fontsize=12)
+    
+    # Add a description
+    plt.figtext(0.5, 0.01, 
+                "Node size represents feature frequency. Edge numbers show occurrence count. " +
+                "Edges show decision flow patterns.", 
+                ha='center', fontsize=12)
+
+    # Remove axis
+    plt.axis('off')
+    
+    # Handle the tight_layout warning by using bbox_inches when saving
+    plt.savefig('malnutrition_decision_flow_diagram.png', dpi=300, bbox_inches='tight', facecolor='white')
     plt.close()
 
-    return G, pos 
-
+    return G, pos
 
 def analyze_explanations(data_dict):
     """
