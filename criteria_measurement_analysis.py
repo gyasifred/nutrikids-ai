@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import  os
 import matplotlib.pyplot as plt
-from analysis_utils import (
+from utils import (
     load_and_filter_data, 
     extract_clinical_measurements,
     extract_criteria_mentions, 
