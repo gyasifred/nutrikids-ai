@@ -210,51 +210,85 @@ def visualize_explanation_elements(df):
     sns.barplot(x='frequency', y='word', hue='prediction_type', data=comparison_df)
     plt.title('Word Frequency: Correct vs Incorrect Predictions')
     plt.xlabel('Frequency')
-
-    plt.tight_layout()
     plt.savefig('explanation_word_frequencies.png')
     plt.close()
 
     return word_freq_df
 
-def create_decision_flow_diagram(features_df): 
+def create_decision_flow_diagram(features_df):
     """
     Create a decision flow diagram based on frequently co-occurring features
-    extracted from malnutrition assessment explanations.
+    extracted from malnutrition assessment explanations
     """
+    import networkx as nx
+    import matplotlib.pyplot as plt
     
     # Extract features only for correct predictions
     correct_features = features_df[features_df['correct'] == True]
 
-    # Create a directed graph
+    # Create a graph
     G = nx.DiGraph()
 
     # Add start node
     G.add_node("START")
 
-    # Key features categorized
+    # Identify key features from the extract_decision_features function
     key_features = [
-        'bmi', 'weight_height', 'muac', 'z_score', 'percentile', 'growth', 'weight_loss',
+        # Anthropometric measurements
+        'bmi', 'weight_height', 'muac', 'z_score', 
+        # Growth parameters
+        'percentile', 'growth', 'weight_loss',
+        # Lab values
         'albumin', 'prealbumin', 'hemoglobin', 'lymphocyte', 'transferrin', 'crp',
-        'vitamin', 'mineral', 'illness', 'socioeconomic', 'symptoms', 'medication',
-        'functional', 'intake', 'mental_health', 'malabsorption', 'hydration',
-        'edema', 'physical_assessment', 'malnutrition_class', 'confidence', 'severity'
+        # Vitamin and mineral markers
+        'vitamin', 'mineral',
+        # Clinical factors
+        'illness', 'socioeconomic', 'symptoms', 'medication',
+        # Functional status
+        'functional',
+        # Nutritional intake
+        'intake',
+        # Mental health
+        'mental_health',
+        # Malabsorption
+        'malabsorption',
+        # Hydration
+        'hydration',
+        # Edema
+        'edema',
+        # Physical assessment
+        'physical_assessment',
+        # Classification terms
+        'malnutrition_class',
+        # Confidence level
+        'confidence',
+        # Severity if available
+        'severity'
     ]
 
     # Count feature occurrences per outcome
     yes_predictions = correct_features[correct_features['prediction'] == 'yes']
     no_predictions = correct_features[correct_features['prediction'] == 'no']
 
-    yes_feature_counts = {feature: sum(yes_predictions[feature].notna() & (yes_predictions[feature] != 'not_mentioned'))
-                          for feature in key_features if feature in correct_features.columns}
+    yes_feature_counts = {}
+    no_feature_counts = {}
 
-    no_feature_counts = {feature: sum(no_predictions[feature].notna() & (no_predictions[feature] != 'not_mentioned'))
-                         for feature in key_features if feature in correct_features.columns}
+    for feature in key_features:
+        if feature in correct_features.columns:
+            yes_feature_counts[feature] = sum(yes_predictions[feature].notna() & 
+                                            (yes_predictions[feature] != 'not_mentioned'))
+            no_feature_counts[feature] = sum(no_predictions[feature].notna() & 
+                                           (no_predictions[feature] != 'not_mentioned'))
 
-    # Sort features by frequency and filter non-zero occurrences
-    yes_features_sorted = sorted((f, c) for f, c in yes_feature_counts.items() if c > 0, key=lambda x: x[1], reverse=True)
-    no_features_sorted = sorted((f, c) for f, c in no_feature_counts.items() if c > 0, key=lambda x: x[1], reverse=True)
+    # Sort features by frequency
+    yes_features_sorted = sorted(yes_feature_counts.items(), key=lambda x: x[1], reverse=True)
+    no_features_sorted = sorted(no_feature_counts.items(), key=lambda x: x[1], reverse=True)
 
+    # Filter to only include features that occur at least once
+    yes_features_sorted = [(f, c) for f, c in yes_features_sorted if c > 0]
+    no_features_sorted = [(f, c) for f, c in no_features_sorted if c > 0]
+
+    # Determine how many features to include in each path (up to 5 or available features)
     yes_path_length = min(5, len(yes_features_sorted))
     no_path_length = min(5, len(no_features_sorted))
 
@@ -262,45 +296,58 @@ def create_decision_flow_diagram(features_df):
     if yes_features_sorted:
         G.add_edge("START", yes_features_sorted[0][0], weight=yes_features_sorted[0][1])
         for i in range(yes_path_length - 1):
-            G.add_edge(yes_features_sorted[i][0], yes_features_sorted[i+1][0], 
-                       weight=min(yes_features_sorted[i][1], yes_features_sorted[i+1][1]))
-        G.add_edge(yes_features_sorted[yes_path_length-1][0], "YES", 
-                   weight=yes_features_sorted[yes_path_length-1][1])
+            G.add_edge(yes_features_sorted[i][0], yes_features_sorted[i+1][0],
+                      weight=min(yes_features_sorted[i][1], yes_features_sorted[i+1][1]))
+        if yes_path_length > 0:
+            G.add_edge(yes_features_sorted[yes_path_length-1][0], "YES",
+                      weight=yes_features_sorted[yes_path_length-1][1])
 
     # Add connections for "no" prediction path
     if no_features_sorted:
         G.add_edge("START", no_features_sorted[0][0], weight=no_features_sorted[0][1])
         for i in range(no_path_length - 1):
-            G.add_edge(no_features_sorted[i][0], no_features_sorted[i+1][0], 
-                       weight=min(no_features_sorted[i][1], no_features_sorted[i+1][1]))
-        G.add_edge(no_features_sorted[no_path_length-1][0], "NO", 
-                   weight=no_features_sorted[no_path_length-1][1])
+            G.add_edge(no_features_sorted[i][0], no_features_sorted[i+1][0],
+                      weight=min(no_features_sorted[i][1], no_features_sorted[i+1][1]))
+        if no_path_length > 0:
+            G.add_edge(no_features_sorted[no_path_length-1][0], "NO",
+                      weight=no_features_sorted[no_path_length-1][1])
 
-    # Add cross-connections for common features
-    common_features = set(yes_feature_counts.keys()) & set(no_feature_counts.keys())
+    # Add cross-connections between paths where appropriate
+    # Find common features between yes and no paths
+    yes_features_set = set([f for f, _ in yes_features_sorted])
+    no_features_set = set([f for f, _ in no_features_sorted])
+    common_features = yes_features_set.intersection(no_features_set)
+    
+    # Connect common features with appropriate weights
     for feature in common_features:
-        if feature in [f for f, _ in yes_features_sorted[:yes_path_length]] and \
-           feature in [f for f, _ in no_features_sorted[:no_path_length]]:
-            yes_weight, no_weight = yes_feature_counts[feature], no_feature_counts[feature]
-            if yes_weight > no_weight * 1.5:
+        yes_weight = yes_feature_counts[feature]
+        no_weight = no_feature_counts[feature]
+        
+        # Connect to the outcome with higher weight
+        if yes_weight > no_weight * 1.5:  # Significantly more common in yes predictions
+            if feature in [f for f, _ in yes_features_sorted[:yes_path_length]]:
                 G.add_edge(feature, "YES", weight=yes_weight)
-            elif no_weight > yes_weight * 1.5:
+        elif no_weight > yes_weight * 1.5:  # Significantly more common in no predictions
+            if feature in [f for f, _ in no_features_sorted[:no_path_length]]:
                 G.add_edge(feature, "NO", weight=no_weight)
 
     # Visualize the graph
     plt.figure(figsize=(16, 12))
-
+    
+    # Use a hierarchical layout for better visualization of the flow
     try:
-        pos = nx.nx_pydot.graphviz_layout(G, prog='dot')  # Hierarchical layout
-    except ImportError:
-        pos = nx.spring_layout(G, seed=42)  # Fallback if graphviz isn't available
+        pos = nx.nx_pydot.graphviz_layout(G, prog='dot')
+    except:
+        # Fallback to spring layout if graphviz is not available
+        pos = nx.spring_layout(G, seed=42)
 
-    # Set node colors
+    # Customize node appearance
     node_colors = ['lightgreen' if node == "YES" else
-                   'lightcoral' if node == "NO" else
-                   'lightskyblue' if node == "START" else 'orange'
-                   for node in G.nodes()]
+                  'lightcoral' if node == "NO" else
+                  'lightskyblue' if node == "START" else
+                  'orange' for node in G.nodes()]
 
+    # Node sizes based on importance
     node_sizes = [3000 if node in ["YES", "NO", "START"] else 2000 for node in G.nodes()]
 
     # Get edge weights for line thickness
@@ -314,17 +361,18 @@ def create_decision_flow_diagram(features_df):
             node_size=node_sizes, font_size=10, font_weight='bold',
             width=normalized_weights, edge_color='gray',
             arrows=True, arrowsize=15)
-    
-    # Add edge labels
+            
+    # Add edge labels showing counts
     edge_labels = {(u, v): f"{G[u][v]['weight']}" for u, v in G.edges()}
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
 
     plt.title("Malnutrition Assessment Decision Flow Diagram", fontsize=18)
-    plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)  # Adjust layout manually
+    plt.tight_layout()
     plt.savefig('malnutrition_decision_flow_diagram.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    return G, pos
+    return G, pos 
+
 
 def analyze_explanations(data_dict):
     """
