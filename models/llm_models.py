@@ -308,8 +308,7 @@ class MalnutritionPromptBuilder:
 
         if specific_example_indices:
             # Use specified examples
-            valid_indices = [
-                i for i in specific_example_indices if 0 <= i < len(self.examples_cache)]
+            valid_indices = [i for i in specific_example_indices if 0 <= i < len(self.examples_cache)]
             for idx in valid_indices[:num_examples]:
                 few_shot_examples.append({
                     "text": self.examples_cache.iloc[idx][note_col],
@@ -318,95 +317,13 @@ class MalnutritionPromptBuilder:
         else:
             # Randomly select examples
             num_to_select = min(num_examples, len(self.examples_cache))
-            selected_indices = random.sample(
-                range(len(self.examples_cache)), num_to_select)
+            selected_indices = random.sample(range(len(self.examples_cache)), num_to_select)
 
             for idx in selected_indices:
                 few_shot_examples.append({
                     "text": self.examples_cache.iloc[idx][note_col],
                     "label": self.examples_cache.iloc[idx][label_col]
                 })
-
-        return self.construct_malnutrition_prompt(patient_notes, few_shot_examples)
-
-    def get_balanced_inference_prompt(
-        self,
-        patient_notes: str,
-        text_col: str,
-        label_col: str,
-        num_examples: int = 4
-
-    ) -> str:
-        """Get an inference prompt with balanced few-shot examples (equal positive/negative).
-
-        Args:
-            patient_notes (str): The patient notes to analyze
-            text_col (str): Name of the text column in examples
-            label_col (str): Name of the label column in examples
-            num_examples (int): Total number of examples to include (should be even)
-
-        Returns:
-            str: A formatted prompt with balanced examples
-        """
-        if self.examples_cache is None or num_examples == 0:
-            return self.construct_malnutrition_prompt(patient_notes)
-
-        # Make num_examples even for balance
-        if num_examples % 2 != 0:
-            num_examples += 1
-
-        # Split examples by label
-        positive_examples = self.examples_cache[
-            self.examples_cache[label_col].astype(
-                str).str.lower().isin(["1", "yes", "true"])]
-        negative_examples = self.examples_cache[
-            ~self.examples_cache[label_col].astype(
-                str).str.lower().isin(["1", "yes", "true"])]
-
-        # Determine how many of each to use
-        num_each = num_examples // 2
-        num_positive = min(num_each, len(positive_examples))
-        num_negative = min(num_each, len(negative_examples))
-
-        # If one category has fewer examples, add more from the other to reach total
-        if num_positive < num_each and len(negative_examples) > num_negative:
-            extra_needed = num_each - num_positive
-            num_negative = min(num_negative + extra_needed,
-                               len(negative_examples))
-        elif num_negative < num_each and len(positive_examples) > num_positive:
-            extra_needed = num_each - num_negative
-            num_positive = min(num_positive + extra_needed,
-                               len(positive_examples))
-
-        # Select examples
-        if len(positive_examples) > 0:
-            positive_indices = random.sample(
-                range(len(positive_examples)), num_positive)
-        else:
-            positive_indices = []
-
-        if len(negative_examples) > 0:
-            negative_indices = random.sample(
-                range(len(negative_examples)), num_negative)
-        else:
-            negative_indices = []
-
-        few_shot_examples = []
-
-        for idx in positive_indices:
-            few_shot_examples.append({
-                "text": positive_examples.iloc[idx][text_col],
-                "label": positive_examples.iloc[idx][label_col]
-            })
-
-        for idx in negative_indices:
-            few_shot_examples.append({
-                "text": negative_examples.iloc[idx][text_col],
-                "label": negative_examples.iloc[idx][label_col]
-            })
-
-        # Shuffle examples to avoid label pattern
-        random.shuffle(few_shot_examples)
 
         return self.construct_malnutrition_prompt(patient_notes, few_shot_examples)
 
@@ -420,14 +337,9 @@ class MalnutritionPromptBuilder:
             str: Formatted example
         """
         patient_notes = example["text"]
-        label = "yes" if str(example["label"]).lower() in [
-            "1", "yes", "true"] else "no"
+        label = "yes" if str(example["label"]).lower() in ["1", "yes", "true"] else "no"
 
-        # Create a generic explanation based on the label
-        if label == "yes":
-            explanation = "This patient shows signs of malnutrition based on the clinical measurements and symptoms described."
-        else:
-            explanation = "This patient does not show significant signs of malnutrition based on the available measurements."
+        explanation = "This patient shows signs of malnutrition based on clinical symptoms and risk factors." if label == "yes" else "This patient does not show significant signs of malnutrition."
 
         return f"""Example:
 Patient notes: {patient_notes}
@@ -452,57 +364,23 @@ malnutrition={label}
             str: A fully formatted prompt ready for the model
         """
         instructions = """Read the patient's notes and determine if the patient is likely to have malnutrition.
-Be sure to make a definitive classification: malnutrition=yes or malnutrition=no.
-Along with clinical criteria, consider any additional factors such as:
-1) Recent illness or surgeries
-2) Socioeconomic factors (e.g., food insecurity, poverty)
-3) Symptoms like fatigue, weakness, or poor appetite
-4) Family history of malnutrition or chronic disease
-5) Laboratory results (e.g., albumin, hemoglobin, vitamin levels)
-6) Current medications or side effects that may impact nutrition (e.g., diuretics, chemotherapy)
-7) Mental health factors (e.g., depression, eating disorders)
-8) Any signs of malabsorption (e.g., diarrhea, malabsorptive diseases) or nutritional deficiencies (e.g., anemia, edema).
-"""
-
-        clinical_criteria = """
-Standard criteria for assessment of malnutrition are based on weight-for-height, BMI-for-age, and mid-upper arm circumference. 
-
-However, consider the following additional factors that may contribute to malnutrition:
-- Recent illness (infection, gastrointestinal issues, etc.), surgery, or trauma that can increase energy expenditure and reduce nutritional intake.
-- Socioeconomic factors such as food insecurity or poverty.
-- Symptoms like fatigue, weakness, poor appetite, and muscle wasting.
-- Family history of chronic diseases that may predispose to malnutrition (e.g., metabolic diseases).
-- Laboratory results such as low serum albumin, hemoglobin, and vitamin/mineral deficiencies.
-- Medication side effects that interfere with nutrition (e.g., medications causing nausea, poor appetite, or gastrointestinal side effects).
+Make a definitive classification: malnutrition=yes or malnutrition=no.
+Use the following criteria:
+1) Anthropometric measurements (BMI, weight-for-height, mid-upper arm circumference)
+2) Clinical symptoms (muscle wasting, fatigue, skin/hair changes, edema)
+3) Dietary intake (caloric/protein intake, food insecurity)
+4) Medical conditions (chronic illness, gastrointestinal disorders, infections)
+5) Additional risk factors (medications, mental health, socioeconomic status)
 """
 
         classification_table = """
-Table for assessment:
+Standard Classification:
+- malnutrition=yes: Evidence of inadequate nutrition based on weight loss, clinical signs, or dietary risk factors.
+- malnutrition=no: No significant indicators of malnutrition.
 
-Mild Malnutrition
-Weight-for-height: −1 to −1.9 z score
-BMI-for-age: −1 to −1.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
-
-Moderate Malnutrition
-Weight-for-height: −2 to −2.9 z score
-BMI-for-age: −2 to −2.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
-
-Severe Malnutrition
-Weight-for-height: −3 or greater z score
-BMI-for-age: −3 or greater z score
-Length/height-for-age: −3 z score
-Mid–upper arm circumference: Greater than or equal to −3 z score
-"""
-
-        output_format = """
-Output format:
-
-1) First, provide a definitive decision: malnutrition=yes or malnutrition=no
-2) Then, provide a clear explanation of your decision based on clinical data and any additional factors such as illness, lab results, medications, and socioeconomic factors.
+Output Format:
+malnutrition=[yes/no]
+Explanation: Provide a short reasoning based on the data.
 """
 
         # Format few-shot examples if provided
@@ -510,25 +388,37 @@ Output format:
         if few_shot_examples and len(few_shot_examples) > 0:
             few_shot_text = "\n\n".join(
                 [self.format_example(example) for example in few_shot_examples])
-            few_shot_section = f"""
-Here are some examples of how to assess malnutrition:
-
-{few_shot_text}
-
-Now, assess the following patient:
-"""
+            few_shot_section = f"\nHere are some examples:\n\n{few_shot_text}\nNow, assess the following patient:\n"
 
         complete_prompt = (
             f"{instructions}\n\n"
-            f"{clinical_criteria}\n"
             f"{classification_table}\n\n"
-            f"{output_format}\n\n"
             f"{few_shot_section}\n\n"
-            f"{patient_notes}"
+            f"Patient Notes:\n{patient_notes}"
         )
 
         return complete_prompt
 
+
+def extract_malnutrition_decision(response: str):
+    """Extract malnutrition=yes/no decision from model response.
+
+    Args:
+        response (str): Model response text
+
+    Returns:
+        Tuple[str, str]: (malnutrition decision, explanation)
+    """
+    decision_pattern = r'malnutrition=(yes|no)'
+    match = re.search(decision_pattern, response, re.IGNORECASE)
+
+    decision = "unknown"
+    if match:
+        decision = match.group(1).lower()
+
+    explanation = response.split("malnutrition=", 1)[0].strip() if match else response
+
+    return decision, explanation
 
 def extract_malnutrition_decision(response):
     """Extract malnutrition=yes/no decision from model response.
