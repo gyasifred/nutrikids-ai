@@ -27,16 +27,17 @@ BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 SEED=42
 MAX_NEW_TOKENS=1024
 TEMPERATURE=0.0
-BATCH_SIZE=16
+BATCH_SIZE=4
 
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
-   "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
+   #"unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
-)
+   "unsloth/Phi-4"
+   )
 # Adapter model path: if provided, it will be used in post-evaluation.
 MODEL_PATH="trained_models/LLM_MODELS"
 
@@ -116,45 +117,45 @@ mkdir -p "$POST_EVAL_DIR"
 
 # -------------------- Pre-Evaluation (Base Models Only) --------------------
 echo "==================== Starting Pre-Evaluation (Base Models Only) ===================="
-# for MODEL in "${LLM_MODELS[@]}"; do
-#   # Automatically determine quantization flag based on model name.
-#   if [[ "$MODEL" == *"4bit"* ]]; then
-#     BIT_FLAG="--load_in_4bit"
-#   else
-#     BIT_FLAG="--load_in_8bit"
-#   fi
+for MODEL in "${LLM_MODELS[@]}"; do
+  # Automatically determine quantization flag based on model name.
+  if [[ "$MODEL" == *"4bit"* ]]; then
+    BIT_FLAG="--load_in_4bit"
+  else
+    BIT_FLAG="--load_in_8bit"
+  fi
 
-#   # Extract a short model name for output directory naming.
-#   MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
-#   MODEL_OUTPUT_DIR="${PRE_EVAL_DIR}/${MODEL_SHORT_NAME}"
-#   mkdir -p "$MODEL_OUTPUT_DIR"
+  # Extract a short model name for output directory naming.
+  MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
+  MODEL_OUTPUT_DIR="${PRE_EVAL_DIR}/${MODEL_SHORT_NAME}"
+  mkdir -p "$MODEL_OUTPUT_DIR"
 
-#   echo "Pre-Evaluating Base Model: ${MODEL_SHORT_NAME}"
-#   CMD="python3 evaluate_llm.py \
-#     --base_model \"$MODEL\" \
-#     --test_csv \"$TEST_CSV\" \
-#     --text_column \"$TEXT_COLUMN\" \
-#     --label_column \"$LABEL_COLUMN\" \
-#     --id_column \"$ID_COLUMN\" \
-#     --output_dir \"$MODEL_OUTPUT_DIR\" \
-#     --few_shot_count \"$FEW_SHOT_COUNT\" \
-#     --max_new_tokens \"$MAX_NEW_TOKENS\" \
-#     --temperature \"$TEMPERATURE\" \
-#     --batch_size \"$BATCH_SIZE\" \
-#     --seed \"$SEED\" $BIT_FLAG"
+  echo "Pre-Evaluating Base Model: ${MODEL_SHORT_NAME}"
+  CMD="python3 evaluate_llm.py \
+    --base_model \"$MODEL\" \
+    --test_csv \"$TEST_CSV\" \
+    --text_column \"$TEXT_COLUMN\" \
+    --label_column \"$LABEL_COLUMN\" \
+    --id_column \"$ID_COLUMN\" \
+    --output_dir \"$MODEL_OUTPUT_DIR\" \
+    --few_shot_count \"$FEW_SHOT_COUNT\" \
+    --max_new_tokens \"$MAX_NEW_TOKENS\" \
+    --temperature \"$TEMPERATURE\" \
+    --batch_size \"$BATCH_SIZE\" \
+    --seed \"$SEED\" $BIT_FLAG"
   
-#   # Append optional flags.
-#   if [ "$BALANCED_EXAMPLES" = true ]; then
-#     CMD="$CMD --balanced_examples"
-#   fi
+  # Append optional flags.
+  if [ "$BALANCED_EXAMPLES" = true ]; then
+    CMD="$CMD --balanced_examples"
+  fi
   
-#   if [ -n "$EXAMPLES_DATA" ]; then
-#     CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
-#   fi
+  if [ -n "$EXAMPLES_DATA" ]; then
+    CMD="$CMD --examples_data \"$EXAMPLES_DATA\""
+  fi
   
-#   echo "Running command: $CMD"
-#   eval $CMD
-# done
+  echo "Running command: $CMD"
+  eval $CMD
+done
 
 # -------------------- Post-Evaluation (Base + Adapter) --------------------
 # Only perform post-evaluation if a MODEL_PATH (adapter weights) is provided.
