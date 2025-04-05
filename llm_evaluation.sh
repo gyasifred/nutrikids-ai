@@ -116,16 +116,16 @@ mkdir -p "$PRE_EVAL_DIR"
 mkdir -p "$POST_EVAL_DIR"
 
 # -------------------- Pre-Evaluation (Base Models Only) --------------------
-echo "==================== Starting Pre-Evaluation (Base Models Only) ===================="
-for MODEL in "${LLM_MODELS[@]}"; do
-  # Automatically determine quantization flag based on model name.
-  if [[ "$MODEL" == *"4bit"* ]]; then
-    BIT_FLAG="--load_in_4bit"
-  else
-    BIT_FLAG="--load_in_8bit"
-  fi
+# echo "==================== Starting Pre-Evaluation (Base Models Only) ===================="
+# for MODEL in "${LLM_MODELS[@]}"; do
+#   # Automatically determine quantization flag based on model name.
+#   if [[ "$MODEL" == *"4bit"* ]]; then
+#     BIT_FLAG="--load_in_4bit"
+#   else
+#     BIT_FLAG="--load_in_8bit"
+#   fi
 
-  # Extract a short model name for output directory naming.
+#   # Extract a short model name for output directory naming.
 #   MODEL_SHORT_NAME=$(echo "$MODEL" | sed 's/.*\///' | sed 's/-.*//')
 #   MODEL_OUTPUT_DIR="${PRE_EVAL_DIR}/${MODEL_SHORT_NAME}"
 #   mkdir -p "$MODEL_OUTPUT_DIR"
