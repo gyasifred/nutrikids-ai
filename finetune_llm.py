@@ -54,17 +54,15 @@ def parse_arguments():
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Per-device training batch size")
-    parser.add_argument("--gradient_accumulation", type=int, default=4,
-                        help="Number of gradient accumulation steps")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Maximum sequence length for tokenization")
-    parser.add_argument("--epochs", type=int, default=15,
+    parser.add_argument("--epochs", type=int, default=10,
                         help="Number of training epochs")
     
     # Class weighting argument
-    parser.add_argument("--pos_weight", type=float, default=3.0,
+    parser.add_argument("--pos_weight", type=float, default=1.0,
                         help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
@@ -291,7 +289,6 @@ def get_sft_config(args, fp16, bf16):
     """
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
-        "gradient_accumulation_steps": args.gradient_accumulation,
         "warmup_steps": 5,
         "learning_rate": args.learning_rate,
         "fp16": fp16,
@@ -519,7 +516,6 @@ def main():
 
     # Save a small README with information about the model
     readme_content = f"""# Malnutrition Detection Model
-
 Base model: {args.model_name}
 Training date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Training parameters:
