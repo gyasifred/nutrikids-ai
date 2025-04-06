@@ -131,9 +131,61 @@ def load_model_and_tokenizer(base_model, model_path, args):
         raise
 
 
+def get_model_max_length(model, tokenizer):
+    """
+    Get the maximum context length for the model.
+    
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        
+    Returns:
+        int: Maximum sequence length the model can handle
+    """
+    # Try to get the model's maximum context length from various attributes
+    if hasattr(model.config, "max_position_embeddings"):
+        return model.config.max_position_embeddings
+    elif hasattr(model.config, "max_sequence_length"):
+        return model.config.max_sequence_length
+    elif hasattr(tokenizer, "model_max_length"):
+        return tokenizer.model_max_length
+    else:
+        # Default safe value - common for many models
+        return 8192
+
+
+def truncate_text_to_fit(text, tokenizer, max_tokens):
+    """
+    Truncate text to fit within token limit.
+    
+    Args:
+        text (str): The text to truncate
+        tokenizer: The tokenizer
+        max_tokens (int): Maximum number of tokens allowed
+        
+    Returns:
+        str: Truncated text
+    """
+    # Tokenize the text
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    
+    # Check if truncation is needed
+    if len(tokens) <= max_tokens:
+        return text
+    
+    # Truncate to max_tokens
+    truncated_tokens = tokens[:max_tokens]
+    
+    # Decode back to text
+    truncated_text = tokenizer.decode(truncated_tokens)
+    
+    return truncated_text
+
+
 def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     """
     Process a batch of patient notes and extract predictions based on text response.
+    Automatically handles text truncation for long inputs.
     
     Args:
         batch_texts (list): List of patient note texts
@@ -148,10 +200,29 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Explicitly use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
+    # Get model's maximum sequence length
+    model_max_length = get_model_max_length(model, tokenizer)
+    
+    # Reserve tokens for prompt components and generation
+    # This includes space for the prompt template, few-shot examples, and generation
+    reserved_tokens = args.max_new_tokens + 3072  # Reserve more for prompt structure and generation
+    max_patient_note_tokens = model_max_length - reserved_tokens
+    
+    # Ensure we have a reasonable minimum text size
+    max_patient_note_tokens = max(1024, max_patient_note_tokens)
+    
     batch_results = []
     
     for text in batch_texts:
         try:
+            # First, check if we need to truncate the patient notes
+            original_token_length = len(tokenizer.encode(text, add_special_tokens=False))
+            
+            # Truncate text if needed
+            if original_token_length > max_patient_note_tokens:
+                print(f"Warning: Truncating text from {original_token_length} to {max_patient_note_tokens} tokens")
+                text = truncate_text_to_fit(text, tokenizer, max_patient_note_tokens)
+            
             # Prepare prompt with few-shot examples if specified
             prompt = prompt_builder.get_balanced_inference_prompt(
                 patient_notes=text,
@@ -164,6 +235,51 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 label_col=args.label_column,
                 num_examples=args.few_shot_count
             )
+            
+            # Check full prompt length to verify it will fit
+            full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+            if full_prompt_length + args.max_new_tokens > model_max_length:
+                # If still too long, try reducing few-shot examples or further truncation
+                if args.few_shot_count > 0:
+                    # Try with fewer examples
+                    reduced_examples = max(0, args.few_shot_count - 1)
+                    print(f"Warning: Prompt too long ({full_prompt_length} tokens). Reducing examples from {args.few_shot_count} to {reduced_examples}")
+                    
+                    prompt = prompt_builder.get_balanced_inference_prompt(
+                        patient_notes=text,
+                        text_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=reduced_examples
+                    ) if args.balanced_examples else prompt_builder.get_inference_prompt(
+                        patient_notes=text,
+                        note_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=reduced_examples
+                    )
+                    
+                    # Re-check length
+                    full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+                
+                # If still too long, we need more aggressive truncation
+                if full_prompt_length + args.max_new_tokens > model_max_length:
+                    # Calculate how much we need to reduce
+                    needed_reduction = (full_prompt_length + args.max_new_tokens) - model_max_length + 100  # Add buffer
+                    new_max_tokens = max(512, max_patient_note_tokens - needed_reduction)
+                    print(f"Warning: Further truncating text to {new_max_tokens} tokens")
+                    text = truncate_text_to_fit(text, tokenizer, new_max_tokens)
+                    
+                    # Regenerate prompt with more aggressive truncation
+                    prompt = prompt_builder.get_balanced_inference_prompt(
+                        patient_notes=text,
+                        text_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=0  # Force zero-shot when we're really tight on space
+                    ) if args.balanced_examples else prompt_builder.get_inference_prompt(
+                        patient_notes=text,
+                        note_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=0
+                    )
             
             # Prepare chat format messages
             messages = [
@@ -178,11 +294,18 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 return_tensors="pt"
             ).to(device)
             
+            # Double-check that the input is not too long
+            if inputs.shape[1] + args.max_new_tokens > model_max_length:
+                print(f"Warning: Final input still too long: {inputs.shape[1]} tokens. Reducing max_new_tokens.")
+                adjusted_max_new_tokens = max(256, model_max_length - inputs.shape[1] - 50)  # Keep some buffer
+            else:
+                adjusted_max_new_tokens = args.max_new_tokens
+            
             # Generate the full response
             with torch.no_grad():
                 output = model.generate(
                     input_ids=inputs,
-                    max_new_tokens=args.max_new_tokens,
+                    max_new_tokens=adjusted_max_new_tokens,
                     temperature=args.temperature,
                     do_sample=args.temperature > 0,
                     use_cache=True,
@@ -203,7 +326,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             batch_results.append((binary_decision, explanation))
             
         except Exception as e:
-            print(f"Error generating response: {e}")
+            print(f"Error generating response: {str(e)}")
             # Return default values in case of error
             batch_results.append((0, f"Error processing text: {str(e)}"))
     
@@ -370,6 +493,12 @@ def parse_arguments():
                         help="Temperature for sampling")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for processing (default: 16)")
+                        
+    # Text handling parameters
+    parser.add_argument("--allow_truncation", action="store_true", default=True,
+                        help="Allow automatic truncation of long texts")
+    parser.add_argument("--max_input_length", type=int, default=None,
+                        help="Maximum input length in tokens (default: auto-calculated based on model)")
 
     # Force precision if needed
     parser.add_argument("--force_fp16", action="store_true",
