@@ -12,7 +12,6 @@ from trl import SFTTrainer, SFTConfig
 from unsloth import FastLanguageModel
 import pandas as pd
 import json
-import numpy as np
 from models.llm_models import (
     MalnutritionDataset,
     MalnutritionPromptBuilder,
@@ -24,7 +23,6 @@ from models.llm_models import (
     print_metrics_report,
     WeightedSFTTrainer  # Import the WeightedSFTTrainer from llm_models
 )
-from transformers import EvalPrediction
 
 
 def parse_arguments():
@@ -313,7 +311,7 @@ def get_sft_config(args, fp16, bf16):
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:
         config_kwargs.update({
-            "eval_strategy": "steps", 
+            "eval_strategy": "steps",
             "eval_steps": 10,
             "load_best_model_at_end": True,
             "metric_for_best_model": "eval_loss",
@@ -388,46 +386,6 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
     return train_tokenized, eval_tokenized
 
 
-def compute_metrics(eval_pred):
-    """Compute evaluation metrics including token accuracy.
-    
-    Args:
-        eval_pred: EvalPrediction object containing predictions and labels
-        
-    Returns:
-        dict: Dictionary of computed metrics
-    """
-    logits, labels = eval_pred.predictions, eval_pred.label_ids
-    
-    # Create a mask where labels are not -100 (padding)
-    mask = labels != -100
-    
-    # Get predictions by taking argmax of logits
-    predictions = np.argmax(logits, axis=-1)
-    
-    # Compute accuracy only on non-padded tokens
-    correct_tokens = (predictions == labels) & mask
-    total_tokens = mask.sum()
-    
-    if total_tokens > 0:
-        mean_token_accuracy = correct_tokens.sum() / total_tokens
-    else:
-        mean_token_accuracy = 0.0
-    
-    # Calculate sequence accuracy (all tokens in a sequence correct)
-    sequence_lengths = mask.sum(axis=1)
-    correct_per_sequence = np.array([
-        correct_tokens[i, :lengths].sum() == lengths
-        for i, lengths in enumerate(sequence_lengths)
-    ])
-    sequence_accuracy = correct_per_sequence.mean() if len(correct_per_sequence) > 0 else 0.0
-    
-    return {
-        "mean_token_accuracy": float(mean_token_accuracy),
-        "sequence_accuracy": float(sequence_accuracy)
-    }
-
-
 def main():
     """Main function to run the training pipeline."""
     # Parse command line arguments
@@ -479,7 +437,6 @@ def main():
         "train_dataset": train_dataset,
         "args": sft_config,
         "pos_weight": args.pos_weight,  # Pass the positive class weight
-        "compute_metrics": compute_metrics,  # Add compute_metrics function
     }
     
     if eval_dataset is not None:
@@ -490,21 +447,7 @@ def main():
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     print(f"Using positive class weight: {args.pos_weight}")
-    train_result = trainer.train()
-    
-    # Print final evaluation metrics
-    if eval_dataset is not None:
-        print("\n===== FINAL EVALUATION METRICS =====")
-        eval_results = trainer.evaluate()
-        print(f"Evaluation loss: {eval_results['eval_loss']:.4f}")
-        print(f"Mean token accuracy: {eval_results['eval_mean_token_accuracy']:.4f}")
-        print(f"Sequence accuracy: {eval_results['eval_sequence_accuracy']:.4f}")
-        
-        # Save evaluation metrics to file
-        metrics_path = os.path.join(args.output_dir, "eval_metrics.json")
-        with open(metrics_path, "w") as f:
-            json.dump(eval_results, f, indent=4)
-        print(f"Evaluation metrics saved to {metrics_path}")
+    trainer.train()
 
     # Save the trained model properly
     print(f"Training completed. Saving model to {args.model_output}")
@@ -517,26 +460,26 @@ def main():
     print("Saving tokenizer...")
     tokenizer.save_pretrained(args.model_output)
     
-    # Create merged model directory
-    merged_model_path = os.path.join(args.model_output, "merged")
-    os.makedirs(merged_model_path, exist_ok=True)
+    # # Save a merged model version (LoRA weights merged into base model)
+    # merged_model_path = os.path.join(args.model_output, "merged")
+    # os.makedirs(merged_model_path, exist_ok=True)
     
-    print(f"Creating merged model (LoRA + base) at {merged_model_path}...")
-    try:
-        # Comment out the merging code
-        """
-        # Merge LoRA weights into base model
-        merged_model = trainer.model.merge_and_unload()
+    # print(f"Creating merged model (LoRA + base) at {merged_model_path}...")
+    # try:
+    #     # Comment out the merging code
+    #     """
+    #     # Merge LoRA weights into base model
+    #     merged_model = trainer.model.merge_and_unload()
         
-        # Save the merged model
-        merged_model.save_pretrained(merged_model_path)
-        tokenizer.save_pretrained(merged_model_path)
-        print("Merged model saved successfully.")
-        """
-        print("Merged model creation skipped.")
-    except Exception as e:
-        print(f"Warning: Could not create merged model: {e}")
-        print("Continuing with adapter-only model.")
+    #     # Save the merged model
+    #     merged_model.save_pretrained(merged_model_path)
+    #     tokenizer.save_pretrained(merged_model_path)
+    #     print("Merged model saved successfully.")
+    #     """
+    #     print("Merged model creation skipped.")
+    # except Exception as e:
+    #     print(f"Warning: Could not create merged model: {e}")
+    #     print("Continuing with adapter-only model.")
     
     # Clean up checkpoint files
     print("Cleaning up checkpoint files...")
@@ -578,6 +521,7 @@ Training date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Training parameters:
 - Learning rate: {args.learning_rate}
 - Batch size: {args.batch_size}
+- Gradient accumulation steps: {args.gradient_accumulation}
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
