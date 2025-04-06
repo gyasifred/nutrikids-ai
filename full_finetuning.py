@@ -82,16 +82,11 @@ def parse_arguments():
     parser.add_argument("--report_to", type=str, default="none",
                         choices=["none", "tensorboard", "wandb"],
                         help="Where to report training metrics")
-    parser.add_argument("--load_in_8bit", action="store_true", default=False,
-                        help="Load model in 8-bit precision")
-    parser.add_argument("--load_in_4bit", action="store_true", default=False,
-                        help="Load model in 4-bit precision")
+    parser.add_argument("--quantize", action="store_true", default=False,
+                        help="Enable quantization (not recommended for full fine-tuning)")
     
     args = parser.parse_args()
     
-    if args.load_in_8bit:
-        args.load_in_4bit = False
-        
     return args
 
 
@@ -102,35 +97,28 @@ def get_quantization_config(args):
         args: Command line arguments
         
     Returns:
-        BitsAndBytesConfig: Quantization configuration
+        BitsAndBytesConfig: Quantization configuration or None for full precision
     """
-    # Determine if we should use 8-bit or 4-bit quantization (but not both)
-    if args.load_in_8bit:
-        return BitsAndBytesConfig(
-            load_in_8bit=True,
-            load_in_4bit=False,  
-            llm_int8_enable_fp32_cpu_offload=True
-        )
-    elif args.load_in_4bit:
-        # Determine compute dtype based on available hardware and args
-        if args.force_bf16 and is_bfloat16_supported():
-            compute_dtype = torch.bfloat16
-        else:
-            compute_dtype = torch.float16
-            
-        return BitsAndBytesConfig(
-            load_in_4bit=True,
-            load_in_8bit=False,  # Explicitly set to False
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            llm_int8_enable_fp32_cpu_offload=True,
-            llm_int8_threshold=6.0,
-            llm_int8_has_fp16_weight=True
-        )
-    else:
-        # No quantization
+    # For full fine-tuning, we don't want quantization by default
+    if not args.quantize:
         return None
+    
+    # Determine if we should use 4-bit quantization if specifically requested
+    # Determine compute dtype based on available hardware and args
+    if args.force_bf16 and is_bfloat16_supported():
+        compute_dtype = torch.bfloat16
+    else:
+        compute_dtype = torch.float16
+        
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=compute_dtype,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        llm_int8_enable_fp32_cpu_offload=True,
+        llm_int8_threshold=6.0,
+        llm_int8_has_fp16_weight=True
+    )
 
 
 def determine_model_precision(args):
@@ -169,12 +157,8 @@ def load_model_and_tokenizer(args, quantization_config):
     dtype = torch.bfloat16 if bf16 else torch.float16
     
     try:
-        # Ensure we're not using both 4-bit and 8-bit
-        load_in_4bit = args.load_in_4bit and not args.load_in_8bit
-        load_in_8bit = args.load_in_8bit and not args.load_in_4bit
-        
         print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}, "
-              f"load_in_4bit={load_in_4bit}, load_in_8bit={load_in_8bit}")
+              f"quantization={'enabled' if quantization_config else 'disabled (full precision)'}")
         
         # Set attention implementation based on flash attention flag
         attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
@@ -190,12 +174,6 @@ def load_model_and_tokenizer(args, quantization_config):
         # If quantization_config is provided, use it
         if quantization_config is not None:
             model_kwargs["quantization_config"] = quantization_config
-        else:
-            # Otherwise use the direct parameters
-            model_kwargs["load_in_4bit"] = load_in_4bit
-            model_kwargs["load_in_8bit"] = load_in_8bit
-        
-        # Note: Removed the 'use_unsloth' parameter here
         
         # Load the model with the appropriate parameters
         base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
@@ -210,10 +188,9 @@ def prepare_model_for_full_finetuning(model):
     """Prepare the model for full fine-tuning by unfreezing all parameters."""
     print("Preparing model for full fine-tuning...")
     
-    # Unfreeze only parameters that can have gradients
-    for name, param in model.named_parameters():
-        if param.dtype in [torch.float32, torch.float16, torch.bfloat16, torch.complex64, torch.complex128]:
-            param.requires_grad = True
+    # Unfreeze all parameters
+    for param in model.parameters():
+        param.requires_grad = True
     
     # Enable gradient checkpointing for memory efficiency
     model.gradient_checkpointing_enable()
@@ -355,14 +332,14 @@ def main():
         json.dump(vars(args), f, indent=4)
 
     # Get quantization config - for full fine-tuning, you typically don't want to use quantization
-    quantization_config = None
+    quantization_config = get_quantization_config(args)
 
     # Load model and tokenizer with precision detection
     base_model, tokenizer, fp16, bf16 = load_model_and_tokenizer(
         args, quantization_config
     )
 
-    # Prepare model for full fine-tuning (instead of creating a PEFT model)
+    # Prepare model for full fine-tuning
     model = prepare_model_for_full_finetuning(base_model)
 
     # Initialize prompt builder
@@ -456,6 +433,7 @@ Training parameters:
 - Gradient accumulation steps: {args.gradient_accumulation}
 - Epochs: {args.epochs}
 - Positive class weight: {args.pos_weight}
+- Quantization: {'Enabled' if args.quantize else 'Disabled (full precision)'}
 
 ## Usage
 This directory contains a fully fine-tuned model (no LoRA).
