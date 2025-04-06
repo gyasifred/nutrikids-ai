@@ -385,12 +385,11 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --label_column "$LABEL_COLUMN" \
     --output_dir "$MODEL_OUTPUT_DIR" \
     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-    --batch_size 8 \
-    --gradient_accumulation 4 \
+    --batch_size 4 \
     --learning_rate 2e-4 \
     # --max_steps 500 \
     --max_seq_length 2048 \
-    --epochs 15 \
+    --epochs 10 \
     --lora_r 8 \
     --lora_alpha 32 \
     --seed 42 \
