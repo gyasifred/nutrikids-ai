@@ -6,6 +6,7 @@ os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 
 import torch
 import argparse
+import datetime
 from datasets import Dataset
 from transformers import BitsAndBytesConfig
 from trl import SFTTrainer, SFTConfig
@@ -290,6 +291,7 @@ def get_sft_config(args, fp16, bf16):
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "warmup_steps": 5,
+        "gradient_accumulation_steps": 1,  # Explicitly set to 1 to disable gradient accumulation
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
@@ -318,6 +320,7 @@ def get_sft_config(args, fp16, bf16):
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
+    print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
 
 
@@ -427,7 +430,7 @@ def main():
     # Create PEFT/LoRA model
     model = create_peft_model(base_model, args)
 
-    # Get SFT config with correct precision settings
+    # Get SFT config with correct precision settings and gradient accumulation disabled
     sft_config = get_sft_config(args, fp16, bf16)
 
     # Initialize SFT trainer with weighted loss
@@ -447,6 +450,7 @@ def main():
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     print(f"Using positive class weight: {args.pos_weight}")
+    print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
 
     # Save the trained model properly
@@ -521,11 +525,11 @@ Training date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Training parameters:
 - Learning rate: {args.learning_rate}
 - Batch size: {args.batch_size}
-- Gradient accumulation steps: {args.gradient_accumulation}
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
 - Positive class weight: {args.pos_weight}
+- Gradient accumulation: Disabled
 
 ## Usage
 This directory contains two versions of the model:
@@ -540,9 +544,8 @@ For inference, the merged model is typically easier to use as it doesn't require
 
     print("Fine-tuning complete!")
     print(f"Model saved to: {args.model_output}")
-    print(f"Merged model saved to: {merged_model_path}")
+    print(f"Merged model saved to: {os.path.join(args.model_output, 'merged')}")
 
 
 if __name__ == "__main__":
-    import datetime  # Add this import at the top of your file
     main()
