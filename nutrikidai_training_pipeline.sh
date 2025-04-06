@@ -54,7 +54,7 @@ LLM_MODELS=(
    #"unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
-   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+   # "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
    "unsloth/Phi-4"
    )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS_w1"
