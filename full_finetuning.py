@@ -195,8 +195,7 @@ def load_model_and_tokenizer(args, quantization_config):
             model_kwargs["load_in_4bit"] = load_in_4bit
             model_kwargs["load_in_8bit"] = load_in_8bit
         
-        # Load the model with the appropriate parameters - for full fine-tuning
-        model_kwargs["use_unsloth"] = False  # Disable Unsloth optimizations for full fine-tuning
+        # Note: Removed the 'use_unsloth' parameter here
         
         # Load the model with the appropriate parameters
         base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
@@ -206,7 +205,6 @@ def load_model_and_tokenizer(args, quantization_config):
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
-
 
 def prepare_model_for_full_finetuning(model):
     """Prepare the model for full fine-tuning by unfreezing all parameters."""
