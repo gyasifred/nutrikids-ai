@@ -154,14 +154,15 @@ def get_model_max_length(model, tokenizer):
         return 8192
 
 
-def truncate_text_to_fit(text, tokenizer, max_tokens):
+def truncate_text_to_fit(text, tokenizer, max_tokens, strategy="middle-out"):
     """
-    Truncate text to fit within token limit.
+    Truncate text to fit within token limit using various strategies.
     
     Args:
         text (str): The text to truncate
         tokenizer: The tokenizer
         max_tokens (int): Maximum number of tokens allowed
+        strategy (str): Truncation strategy: 'beginning', 'end', 'middle-out', or 'sliding-window'
         
     Returns:
         str: Truncated text
@@ -173,8 +174,47 @@ def truncate_text_to_fit(text, tokenizer, max_tokens):
     if len(tokens) <= max_tokens:
         return text
     
-    # Truncate to max_tokens
-    truncated_tokens = tokens[:max_tokens]
+    # Apply different truncation strategies
+    if strategy == "beginning":
+        # Keep the beginning of the text (first max_tokens)
+        truncated_tokens = tokens[:max_tokens]
+        
+    elif strategy == "end":
+        # Keep the end of the text (last max_tokens)
+        truncated_tokens = tokens[-max_tokens:]
+        
+    elif strategy == "middle-out":
+        # Keep beginning and end, remove middle
+        # Allocate more tokens to the beginning than the end (assuming more context at start)
+        beginning_ratio = 0.7  # 70% from beginning, 30% from end
+        beginning_tokens = int(max_tokens * beginning_ratio)
+        end_tokens = max_tokens - beginning_tokens
+        
+        truncated_tokens = tokens[:beginning_tokens] + tokens[-end_tokens:]
+        
+    elif strategy == "sliding-window":
+        # Extract key segments at regular intervals
+        # Useful for very long documents to get samples throughout
+        if max_tokens < 512:  # If we have very limited space
+            return truncate_text_to_fit(text, tokenizer, max_tokens, "beginning")
+            
+        # Determine how many windows we need
+        window_size = 256  # Size of each extracted window
+        num_windows = max(1, max_tokens // window_size)
+        stride = max(1, (len(tokens) - window_size) // (num_windows - 1)) if num_windows > 1 else 0
+        
+        truncated_tokens = []
+        for i in range(0, num_windows):
+            start_idx = min(i * stride, len(tokens) - window_size) if num_windows > 1 else 0
+            window = tokens[start_idx:start_idx + window_size]
+            truncated_tokens.extend(window)
+            
+        # Ensure we don't exceed max_tokens
+        truncated_tokens = truncated_tokens[:max_tokens]
+    
+    else:
+        # Default to beginning-focused truncation
+        truncated_tokens = tokens[:max_tokens]
     
     # Decode back to text
     truncated_text = tokenizer.decode(truncated_tokens)
@@ -185,7 +225,7 @@ def truncate_text_to_fit(text, tokenizer, max_tokens):
 def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     """
     Process a batch of patient notes and extract predictions based on text response.
-    Automatically handles text truncation for long inputs.
+    Automatically handles text truncation for long inputs using adaptive methods.
     
     Args:
         batch_texts (list): List of patient note texts
@@ -203,13 +243,24 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Get model's maximum sequence length
     model_max_length = get_model_max_length(model, tokenizer)
     
+    # Calculate adaptive truncation thresholds
     # Reserve tokens for prompt components and generation
-    # This includes space for the prompt template, few-shot examples, and generation
-    reserved_tokens = args.max_new_tokens + 3072  # Reserve more for prompt structure and generation
+    # Typical breakdown: 
+    # - System prompt: ~100-200 tokens
+    # - Few-shot examples: ~500-1000 tokens per example
+    # - Generation: args.max_new_tokens (default 2048)
+    # - Extra buffer: 200 tokens
+    
+    few_shot_token_estimate = 750 * args.few_shot_count  # Estimated average tokens per example
+    reserved_tokens = args.max_new_tokens + few_shot_token_estimate + 400  # Reserve for prompt structure and generation
     max_patient_note_tokens = model_max_length - reserved_tokens
     
-    # Ensure we have a reasonable minimum text size
-    max_patient_note_tokens = max(2048, max_patient_note_tokens)
+    # Ensure we have a reasonable minimum text size (at least 40% of model context or 4096, whichever is smaller)
+    max_patient_note_tokens = max(min(4096, int(model_max_length * 0.4)), max_patient_note_tokens)
+    
+    # Log truncation thresholds
+    print(f"Model max length: {model_max_length}, Reserved tokens: {reserved_tokens}")
+    print(f"Max patient note tokens: {max_patient_note_tokens}")
     
     batch_results = []
     
@@ -218,10 +269,20 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # First, check if we need to truncate the patient notes
             original_token_length = len(tokenizer.encode(text, add_special_tokens=False))
             
-            # Truncate text if needed
+            truncation_strategy = "beginning"  # Default strategy
+            
+            # Choose truncation strategy based on input length
             if original_token_length > max_patient_note_tokens:
-                print(f"Warning: Truncating text from {original_token_length} to {max_patient_note_tokens} tokens")
-                text = truncate_text_to_fit(text, tokenizer, max_patient_note_tokens)
+                # For very long documents, use more sophisticated truncation
+                if original_token_length > 2 * max_patient_note_tokens:
+                    truncation_strategy = "middle-out"
+                    
+                    # For extremely long documents, consider sliding window
+                    if original_token_length > 3 * max_patient_note_tokens:
+                        truncation_strategy = "sliding-window"
+                
+                print(f"Truncating text from {original_token_length} to {max_patient_note_tokens} tokens using {truncation_strategy} strategy")
+                text = truncate_text_to_fit(text, tokenizer, max_patient_note_tokens, strategy=truncation_strategy)
             
             # Prepare prompt with few-shot examples if specified
             prompt = prompt_builder.get_balanced_inference_prompt(
@@ -238,8 +299,10 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             
             # Check full prompt length to verify it will fit
             full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+            
+            # If prompt is still too long, apply adaptive strategies
             if full_prompt_length + args.max_new_tokens > model_max_length:
-                # If still too long, try reducing few-shot examples or further truncation
+                # First try reducing few-shot examples
                 if args.few_shot_count > 0:
                     # Try with fewer examples
                     reduced_examples = max(0, args.few_shot_count - 1)
@@ -260,15 +323,16 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                     # Re-check length
                     full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
                 
-                # If still too long, we need more aggressive truncation
+                # If still too long, apply more aggressive truncation to text
                 if full_prompt_length + args.max_new_tokens > model_max_length:
                     # Calculate how much we need to reduce
                     needed_reduction = (full_prompt_length + args.max_new_tokens) - model_max_length + 100  # Add buffer
-                    new_max_tokens = max(1024, max_patient_note_tokens - needed_reduction)
-                    print(f"Warning: Further truncating text to {new_max_tokens} tokens")
-                    text = truncate_text_to_fit(text, tokenizer, new_max_tokens)
+                    new_max_tokens = max(2048, max_patient_note_tokens - needed_reduction)
                     
-                    # Regenerate prompt with more aggressive truncation
+                    print(f"Warning: Further truncating text to {new_max_tokens} tokens using {truncation_strategy} strategy")
+                    text = truncate_text_to_fit(text, tokenizer, new_max_tokens, strategy=truncation_strategy)
+                    
+                    # Regenerate prompt with more aggressive truncation and fewer examples
                     prompt = prompt_builder.get_balanced_inference_prompt(
                         patient_notes=text,
                         text_col=args.text_column,
@@ -280,6 +344,10 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                         label_col=args.label_column,
                         num_examples=0
                     )
+                    
+                    # Final length check after all reductions
+                    final_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+                    print(f"Final prompt length after all reductions: {final_prompt_length} tokens")
             
             # Prepare chat format messages
             messages = [
@@ -331,8 +399,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             batch_results.append((0, f"Error processing text: {str(e)}"))
     
     return batch_results
-
-
+    
 def evaluate_model(args, model, tokenizer, prompt_builder):
     """
     Evaluate model on test dataset using batch processing.
