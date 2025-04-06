@@ -60,7 +60,7 @@ def parse_arguments():
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Maximum sequence length for tokenization")
-    parser.add_argument("--epochs", type=int, default=10,
+    parser.add_argument("--epochs", type=int, default=20,
                         help="Number of training epochs")
     
     # Class weighting argument
