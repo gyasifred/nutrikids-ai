@@ -188,9 +188,10 @@ def prepare_model_for_full_finetuning(model):
     """Prepare the model for full fine-tuning by unfreezing all parameters."""
     print("Preparing model for full fine-tuning...")
     
-    # Unfreeze all parameters
+    # Unfreeze only parameters that can have gradients (floating point types)
     for param in model.parameters():
-        param.requires_grad = True
+        if param.dtype in [torch.float16, torch.float32, torch.float64, torch.bfloat16, torch.complex64, torch.complex128]:
+            param.requires_grad = True
     
     # Enable gradient checkpointing for memory efficiency
     model.gradient_checkpointing_enable()
@@ -200,7 +201,6 @@ def prepare_model_for_full_finetuning(model):
     print(f"Model prepared for full fine-tuning with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
     
     return model
-
 
 def get_sft_config(args, fp16, bf16):
     """Configure SFT training arguments.
