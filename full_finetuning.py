@@ -50,8 +50,7 @@ def parse_arguments():
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Per-device training batch size")
-    parser.add_argument("--gradient_accumulation", type=int, default=8,
-                        help="Number of gradient accumulation steps")
+    # Removed gradient accumulation argument
     parser.add_argument("--learning_rate", type=float, default=1e-5,
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=2048,
@@ -182,7 +181,7 @@ def get_sft_config(args, fp16, bf16):
     """
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
-        "gradient_accumulation_steps": args.gradient_accumulation,
+        "gradient_accumulation_steps": 1,  # Set gradient accumulation to 1 (disabled)
         "warmup_steps": 5,
         "learning_rate": args.learning_rate,
         "fp16": fp16,
@@ -214,6 +213,7 @@ def get_sft_config(args, fp16, bf16):
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
+    print("Gradient accumulation disabled (steps=1)")
     return SFTConfig(**config_kwargs)
 
 
@@ -338,6 +338,7 @@ def main():
     # Train the model
     print(f"Starting full fine-tuning with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     print(f"Using positive class weight: {args.pos_weight}")
+    print("Gradient accumulation is disabled")
     trainer.train()
 
     # Save the trained model properly
@@ -392,7 +393,7 @@ Training date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Training parameters:
 - Learning rate: {args.learning_rate}
 - Batch size: {args.batch_size}
-- Gradient accumulation steps: {args.gradient_accumulation}
+- Gradient accumulation: Disabled
 - Epochs: {args.epochs}
 - Positive class weight: {args.pos_weight}
 - Full precision training (no quantization)
