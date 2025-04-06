@@ -209,7 +209,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     max_patient_note_tokens = model_max_length - reserved_tokens
     
     # Ensure we have a reasonable minimum text size
-    max_patient_note_tokens = max(1024, max_patient_note_tokens)
+    max_patient_note_tokens = max(2048, max_patient_note_tokens)
     
     batch_results = []
     
@@ -264,7 +264,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 if full_prompt_length + args.max_new_tokens > model_max_length:
                     # Calculate how much we need to reduce
                     needed_reduction = (full_prompt_length + args.max_new_tokens) - model_max_length + 100  # Add buffer
-                    new_max_tokens = max(512, max_patient_note_tokens - needed_reduction)
+                    new_max_tokens = max(1024, max_patient_note_tokens - needed_reduction)
                     print(f"Warning: Further truncating text to {new_max_tokens} tokens")
                     text = truncate_text_to_fit(text, tokenizer, new_max_tokens)
                     
@@ -297,7 +297,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Double-check that the input is not too long
             if inputs.shape[1] + args.max_new_tokens > model_max_length:
                 print(f"Warning: Final input still too long: {inputs.shape[1]} tokens. Reducing max_new_tokens.")
-                adjusted_max_new_tokens = max(256, model_max_length - inputs.shape[1] - 50)  # Keep some buffer
+                adjusted_max_new_tokens = max(512, model_max_length - inputs.shape[1] - 50)  # Keep some buffer
             else:
                 adjusted_max_new_tokens = args.max_new_tokens
             
@@ -487,7 +487,7 @@ def parse_arguments():
                         help="Use Flash Attention 2 if available")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
-    parser.add_argument("--max_new_tokens", type=int, default=1024,
+    parser.add_argument("--max_new_tokens", type=int, default=2048,
                         help="Maximum number of new tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
