@@ -313,7 +313,7 @@ def get_sft_config(args, fp16, bf16):
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:
         config_kwargs.update({
-            "evaluation_strategy": "steps",  # Use "evaluation_strategy" instead of "eval_strategy"
+            "eval_strategy": "steps", 
             "eval_steps": 10,
             "load_best_model_at_end": True,
             "metric_for_best_model": "eval_loss",
