@@ -210,9 +210,10 @@ def prepare_model_for_full_finetuning(model):
     """Prepare the model for full fine-tuning by unfreezing all parameters."""
     print("Preparing model for full fine-tuning...")
     
-    # Unfreeze all parameters
-    for param in model.parameters():
-        param.requires_grad = True
+    # Unfreeze only parameters that can have gradients
+    for name, param in model.named_parameters():
+        if param.dtype in [torch.float32, torch.float16, torch.bfloat16, torch.complex64, torch.complex128]:
+            param.requires_grad = True
     
     # Enable gradient checkpointing for memory efficiency
     model.gradient_checkpointing_enable()
