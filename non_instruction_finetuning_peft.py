@@ -470,5 +470,5 @@ trainer.train()
 # Save the final model
 print(f"Training completed. Saving model to {config['model_output']}")
 trainer.tokenizer.save_pretrained(config['model_output']
-trainer.model.save_pretrained((config['model_output'])
+trainer.model.save_pretrained(config['model_output'])
 print("Fine-tuning complete!")
