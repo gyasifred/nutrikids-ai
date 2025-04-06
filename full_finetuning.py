@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 import os
-import unsloth
-# Set the environment variable for Unsloth logits before any imports
-os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
-
 import torch
 import argparse
 from datasets import Dataset
-from transformers import BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from trl import SFTTrainer, SFTConfig
-from unsloth import FastLanguageModel
 import pandas as pd
 import datetime
 import json
@@ -33,7 +28,7 @@ def parse_arguments():
 
     # Model and data arguments
     parser.add_argument("--model_name", type=str,
-                        default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
+                        default="meta-llama/Llama-3-8b-instruct",
                         help="Base model to use for fine-tuning")
     parser.add_argument("--train_data", type=str, required=True,
                         help="Path to training CSV data")
@@ -82,43 +77,10 @@ def parse_arguments():
     parser.add_argument("--report_to", type=str, default="none",
                         choices=["none", "tensorboard", "wandb"],
                         help="Where to report training metrics")
-    parser.add_argument("--quantize", action="store_true", default=False,
-                        help="Enable quantization (not recommended for full fine-tuning)")
     
     args = parser.parse_args()
     
     return args
-
-
-def get_quantization_config(args):
-    """Define quantization configuration for the model based on arguments.
-    
-    Args:
-        args: Command line arguments
-        
-    Returns:
-        BitsAndBytesConfig: Quantization configuration or None for full precision
-    """
-    # For full fine-tuning, we don't want quantization by default
-    if not args.quantize:
-        return None
-    
-    # Determine if we should use 4-bit quantization if specifically requested
-    # Determine compute dtype based on available hardware and args
-    if args.force_bf16 and is_bfloat16_supported():
-        compute_dtype = torch.bfloat16
-    else:
-        compute_dtype = torch.float16
-        
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=compute_dtype,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        llm_int8_enable_fp32_cpu_offload=True,
-        llm_int8_threshold=6.0,
-        llm_int8_has_fp16_weight=True
-    )
 
 
 def determine_model_precision(args):
@@ -148,7 +110,7 @@ def determine_model_precision(args):
         return True, False
 
 
-def load_model_and_tokenizer(args, quantization_config):
+def load_model_and_tokenizer(args):
     """Load base model and tokenizer with appropriate settings."""
     print(f"Loading base model and tokenizer: {args.model_name}")
     
@@ -157,32 +119,36 @@ def load_model_and_tokenizer(args, quantization_config):
     dtype = torch.bfloat16 if bf16 else torch.float16
     
     try:
-        print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}, "
-              f"quantization={'enabled' if quantization_config else 'disabled (full precision)'}")
+        print(f"Loading model with settings: precision={'bf16' if bf16 else 'fp16'}")
         
         # Set attention implementation based on flash attention flag
         attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
         
-        # Create kwargs for model loading
-        model_kwargs = {
-            "model_name": args.model_name,
-            "dtype": dtype,
-            "device_map": "auto",
-            "attn_implementation": attn_implementation,
-        }
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
         
-        # If quantization_config is provided, use it
-        if quantization_config is not None:
-            model_kwargs["quantization_config"] = quantization_config
+        # Ensure the tokenizer has a padding token
+        if not tokenizer.pad_token:
+            if tokenizer.eos_token:
+                tokenizer.pad_token = tokenizer.eos_token
+            else:
+                tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         
-        # Load the model with the appropriate parameters
-        base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
+        # Load model
+        base_model = AutoModelForCausalLM.from_pretrained(
+            args.model_name,
+            torch_dtype=dtype,
+            device_map="auto",
+            attn_implementation=attn_implementation,
+            trust_remote_code=True
+        )
         
         print("Model and tokenizer loaded successfully.")
         return base_model, tokenizer, fp16, bf16
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
+
 
 def prepare_model_for_full_finetuning(model):
     """Prepare the model for full fine-tuning by unfreezing all parameters."""
@@ -201,6 +167,7 @@ def prepare_model_for_full_finetuning(model):
     print(f"Model prepared for full fine-tuning with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
     
     return model
+
 
 def get_sft_config(args, fp16, bf16):
     """Configure SFT training arguments.
@@ -331,13 +298,8 @@ def main():
     with open(os.path.join(args.output_dir, "config.json"), "w") as f:
         json.dump(vars(args), f, indent=4)
 
-    # Get quantization config - for full fine-tuning, you typically don't want to use quantization
-    quantization_config = get_quantization_config(args)
-
     # Load model and tokenizer with precision detection
-    base_model, tokenizer, fp16, bf16 = load_model_and_tokenizer(
-        args, quantization_config
-    )
+    base_model, tokenizer, fp16, bf16 = load_model_and_tokenizer(args)
 
     # Prepare model for full fine-tuning
     model = prepare_model_for_full_finetuning(base_model)
@@ -433,12 +395,19 @@ Training parameters:
 - Gradient accumulation steps: {args.gradient_accumulation}
 - Epochs: {args.epochs}
 - Positive class weight: {args.pos_weight}
-- Quantization: {'Enabled' if args.quantize else 'Disabled (full precision)'}
+- Full precision training (no quantization)
 
 ## Usage
 This directory contains a fully fine-tuned model (no LoRA).
 
-For inference, you can load this model directly without needing a separate adapter.
+For inference, you can load this model directly using Hugging Face Transformers:
+
+```python
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained("path/to/model")
+tokenizer = AutoTokenizer.from_pretrained("path/to/model")
+```
 """
     
     with open(os.path.join(args.model_output, "README.md"), "w") as f:
