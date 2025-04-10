@@ -59,11 +59,11 @@ def parse_arguments():
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Maximum sequence length for tokenization")
-    parser.add_argument("--epochs", type=int, default=20,
+    parser.add_argument("--epochs", type=int, default=2,
                         help="Number of training epochs")
     
     # Class weighting argument
-    parser.add_argument("--pos_weight", type=float, default=1.0,
+    parser.add_argument("--pos_weight", type=float, default=2.0,
                         help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
