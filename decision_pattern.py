@@ -22,13 +22,15 @@ def extract_decision_features(explanation_text):
     """
     Extract key features and criteria mentioned in the explanation text.
     Returns a dictionary of features and their values/mentions.
+    
+    Improved version with more precise regex patterns and better capture groups.
     """
-   # Define patterns for common criteria
+    # Define patterns for common criteria
     patterns = {
         # Anthropometric measurements
         'bmi': r'(?:bmi|body[\s-]*mass[\s-]*index)[\s-]*(for[\s-]*age)?[\s:]*((?:-?\d+\.?\d*)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|severe|moderate|mild|underweight|normal weight|obese|overweight)\b))',
         
-        'weight_height': r'(?:weight[\s-]*(?:for|to|\/|-)?[\s-]*(?:height|stature)|wfh|whz)[\s:]*((?:-?\d+\.?\d*)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|severe|moderate|mild|deficit|adequate|excess)\b))',
+        'weight_height': r'(?:weight[\s-]*(?:for|to|\/|-)?[\s-]*(?:height|stature)|wfh|whz)[\s:]*((?:-?\d+\.?\d*)|(?:<?\s*\d+\.?\d*)|(?:-?\d+\.?\d*\s*(?:z-score|z score|zscore|sd|standard deviation))|(?:\b(?:low|normal|high|severe|moderate|mild|deficit|adequate|excess)\b))',
         
         'muac': r'(?:muac|mid[\s-]*(?:upper|)[\s-]*arm[\s-]*circumference|mac)[\s:]*((?:-?\d+\.?\d*\s*(?:cm|mm)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|severe|moderate|mild|deficit|reduced|adequate)\b))',
         
@@ -41,56 +43,65 @@ def extract_decision_features(explanation_text):
         
         'weight_loss': r'(?:weight[\s-]*(?:loss|decrease|reduction|decline)|lost[\s-]*weight)[\s:]*((?:\d+\.?\d*\s*(?:%|percent|kg|lb|pounds)?)|(?:\b(?:significant|severe|moderate|mild|minimal|substantial|rapid|gradual|progressive|unintentional)\b))',
         
-        # Lab values
-        'albumin': r'(?:albumin|serum[\s-]*albumin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|hypoalbuminemia)\b))',
+        # Lab values - improved with more specific values and units
+        'albumin': r'(?:albumin|serum[\s-]*albumin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l|g/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|hypoalbuminemia)\b))',
         
-        'prealbumin': r'(?:prealbumin|transthyretin)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|mg/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
+        'prealbumin': r'(?:prealbumin|transthyretin)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|mg/l|mg/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
         
-        'hemoglobin': r'(?:hemoglobin|hgb|hb|haemoglobin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|anemia|anemic|anaemia|anaemic)\b))',
+        'hemoglobin': r'(?:hemoglobin|hgb|hb|haemoglobin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l|g/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|anemia|anemic|anaemia|anaemic)\b))',
         
-        'lymphocyte': r'(?:lymphocyte|lymphocyte[\s-]*count|total[\s-]*lymphocyte[\s-]*count|tlc|wbc)[\s:]*((?:\d+\.?\d*\s*(?:k/μl|×10\^9/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|lymphopenia|lymphocytopenia)\b))',
+        'lymphocyte': r'(?:lymphocyte|lymphocyte[\s-]*count|total[\s-]*lymphocyte[\s-]*count|tlc|wbc)[\s:]*((?:\d+\.?\d*\s*(?:k/μl|×10\^9/l|cells/mm3|/mm3|/μL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|lymphopenia|lymphocytopenia)\b))',
         
-        'transferrin': r'(?:transferrin|iron[\s-]*binding[\s-]*capacity|tibc)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|μg/dl)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
+        'transferrin': r'(?:transferrin|iron[\s-]*binding[\s-]*capacity|tibc)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|μg/dl|mg/dL|μg/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
         
-        'crp': r'(?:crp|c[\s-]*reactive[\s-]*protein)[\s:]*((?:\d+\.?\d*\s*(?:mg/l|mg/dl)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|elevated|positive|negative|inflammation)\b))',
+        'crp': r'(?:crp|c[\s-]*reactive[\s-]*protein)[\s:]*((?:\d+\.?\d*\s*(?:mg/l|mg/dl|mg/dL|mg/L)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|elevated|positive|negative|inflammation)\b))',
         
-        # Vitamin and mineral markers
-        'vitamin': r'(?:vitamin[\s-]*(?:a|b[1-9]|b12|c|d|e|k)|folate|folic[\s-]*acid|thiamine|riboflavin|niacin|cobalamin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|nmol/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|toxicity)\b))',
+        # Vitamin and mineral markers - expanded with specific vitamins and levels
+        'vitamin': r'(?:vitamin[\s-]*(?:a|b[1-9]|b12|c|d|e|k)|folate|folic[\s-]*acid|thiamine|riboflavin|niacin|cobalamin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|nmol/l|ng/mL|μg/dL|nmol/L|pg/mL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|toxicity)\b))',
         
-        'mineral': r'(?:(?:iron|zinc|calcium|magnesium|phosphorus|selenium|iodine|copper)[\s-]*(?:level|)|ferritin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|mg/dl|mmol/l)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|depleted)\b))',
+        'mineral': r'(?:(?:iron|zinc|calcium|magnesium|phosphorus|selenium|iodine|copper)[\s-]*(?:level|)|ferritin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|mg/dl|mmol/l|ng/mL|μg/dL|mg/dL|mmol/L)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|depleted)\b))',
         
-        # Clinical factors
-        'illness': r'\b(?:illness|infection|disease|sick|surgery|trauma|hospitalization|hospitalized|admitted|icu|intensive[\s-]*care|complication|recovery|post[\s-]*op|procedure|comorbid|comorbidity|chronic|acute|cancer|tumor|sepsis|wound|injury|pneumonia|respiratory|immunocompromised|inflammation|inflammatory|organ[\s-]*failure|critical)\b',
+        # Clinical factors - enhanced with more medical conditions
+        'illness': r'\b(?:illness|infection|disease|sick|surgery|trauma|hospitalization|hospitalized|admitted|icu|intensive[\s-]*care|complication|recovery|post[\s-]*op|procedure|comorbid|comorbidity|chronic|acute|cancer|tumor|sepsis|wound|injury|pneumonia|respiratory|immunocompromised|inflammation|inflammatory|organ[\s-]*failure|critical|diabetes|hiv|aids|renal failure|liver disease|hepatic|cirrhosis|pulmonary|cardiac|heart failure|copd|tuberculosis)\b',
         
-        'socioeconomic': r'\b(?:socioeconomic|poverty|food[\s-]*(?:insecurity|desert|access)|economic|financial|unemployed|homeless|housing|instability|education|literacy|transportation|welfare|assistance|snap|wic|food[\s-]*stamps|food[\s-]*bank|meal[\s-]*program|social[\s-]*support|vulnerable|marginalized|disadvantaged|barrier)\b',
+        'socioeconomic': r'\b(?:socioeconomic|poverty|food[\s-]*(?:insecurity|desert|access)|economic|financial|unemployed|homeless|housing|instability|education|literacy|transportation|welfare|assistance|snap|wic|food[\s-]*stamps|food[\s-]*bank|meal[\s-]*program|social[\s-]*support|vulnerable|marginalized|disadvantaged|barrier|refugee|immigrant|low[\s-]*income|no[\s-]*insurance|lack[\s-]*of[\s-]*resources)\b',
         
-        'symptoms': r'\b(?:fatigue|weakness|appetite|tired|weight[\s-]*loss|muscle[\s-]*wasting|lethargy|malaise|exhaustion|tiredness|cachexia|sarcopenia|frailty|thinness|emaciation|wasting|dehydration|swelling|lethargic|weak|tired|anorexia|lack[\s-]*of[\s-]*energy|hair[\s-]*loss|poor[\s-]*wound[\s-]*healing|skin[\s-]*changes|pallor|brittle[\s-]*nails|bruising|anasarca|kwashiorkor|marasmus|failure[\s-]*to[\s-]*thrive)\b',
+        'symptoms': r'\b(?:fatigue|weakness|appetite|tired|weight[\s-]*loss|muscle[\s-]*wasting|lethargy|malaise|exhaustion|tiredness|cachexia|sarcopenia|frailty|thinness|emaciation|wasting|dehydration|swelling|lethargic|weak|tired|anorexia|lack[\s-]*of[\s-]*energy|hair[\s-]*loss|poor[\s-]*wound[\s-]*healing|skin[\s-]*changes|pallor|brittle[\s-]*nails|bruising|anasarca|kwashiorkor|marasmus|failure[\s-]*to[\s-]*thrive|reduced[\s-]*appetite|no[\s-]*appetite|early[\s-]*satiety|nausea|vomiting|diarrhea)\b',
         
-        'medication': r'\b(?:medication|drug|treatment|therapy|side[\s-]*effect|chemotherapy|diuretic|antidepressant|antibiotic|corticosteroid|steroid|immunosuppressant|anticonvulsant|laxative|sedative|antipsychotic|nsaid|opioid|antacid|ppi|proton[\s-]*pump[\s-]*inhibitor|metformin|insulin|polypharmacy|appetite[\s-]*suppressant|stimulant|antiemetic|prescription|over[\s-]*the[\s-]*counter|supplement|herbal|regimen|dose|interaction)\b',
+        'medication': r'\b(?:medication|drug|treatment|therapy|side[\s-]*effect|chemotherapy|diuretic|antidepressant|antibiotic|corticosteroid|steroid|immunosuppressant|anticonvulsant|laxative|sedative|antipsychotic|nsaid|opioid|antacid|ppi|proton[\s-]*pump[\s-]*inhibitor|metformin|insulin|polypharmacy|appetite[\s-]*suppressant|stimulant|antiemetic|prescription|over[\s-]*the[\s-]*counter|supplement|herbal|regimen|dose|interaction|aspirin|tylenol|acetaminophen|ibuprofen|prednisone|methotrexate|warfarin)\b',
         
-        # Functional status
-        'functional': r'\b(?:functional|function|mobility|activity|exercise|physical[\s-]*activity|adl|activities[\s-]*of[\s-]*daily[\s-]*living|iadl|instrumental[\s-]*activities|independence|dependence|limitation|disability|impairment|weakness|strength|endurance|fatigue|energy|vitality|performance|capacity|rehabilitation|physical[\s-]*therapy|occupational[\s-]*therapy|walking|ambulation|bedridden|chair[\s-]*bound|transfer|gait|handgrip|grip[\s-]*strength)\b',
+        # Functional status - expanded with more functional assessment terms
+        'functional': r'\b(?:functional|function|mobility|activity|exercise|physical[\s-]*activity|adl|activities[\s-]*of[\s-]*daily[\s-]*living|iadl|instrumental[\s-]*activities|independence|dependence|limitation|disability|impairment|weakness|strength|endurance|fatigue|energy|vitality|performance|capacity|rehabilitation|physical[\s-]*therapy|occupational[\s-]*therapy|walking|ambulation|bedridden|chair[\s-]*bound|transfer|gait|handgrip|grip[\s-]*strength|karnofsky|ecog|performance[\s-]*status|barthel[\s-]*index|frailty[\s-]*index|fried[\s-]*criteria)\b',
         
-        # Nutritional intake
-        'intake': r'\b(?:intake|consumption|diet|oral[\s-]*intake|eating|meal|feeding|caloric|calorie|protein|carbohydrate|fat|nutrient|macronutrient|micronutrient|diet[\s-]*quality|diet[\s-]*diversity|meal[\s-]*frequency|portion[\s-]*size|restrictive[\s-]*diet|elimination[\s-]*diet|food[\s-]*allergy|food[\s-]*intolerance|food[\s-]*selectivity|picky[\s-]*eating|food[\s-]*refusal|feeding[\s-]*difficulty|meal[\s-]*skipping|fasting|reduced[\s-]*intake|poor[\s-]*intake|decreased[\s-]*intake|inadequate[\s-]*intake|insufficient[\s-]*intake|not[\s-]*eating|poor[\s-]*appetite)\b',
+        # Nutritional intake - improved with specific diet components
+        'intake': r'\b(?:intake|consumption|diet|oral[\s-]*intake|eating|meal|feeding|caloric|calorie|protein|carbohydrate|fat|nutrient|macronutrient|micronutrient|diet[\s-]*quality|diet[\s-]*diversity|meal[\s-]*frequency|portion[\s-]*size|restrictive[\s-]*diet|elimination[\s-]*diet|food[\s-]*allergy|food[\s-]*intolerance|food[\s-]*selectivity|picky[\s-]*eating|food[\s-]*refusal|feeding[\s-]*difficulty|meal[\s-]*skipping|fasting|reduced[\s-]*intake|poor[\s-]*intake|decreased[\s-]*intake|inadequate[\s-]*intake|insufficient[\s-]*intake|not[\s-]*eating|poor[\s-]*appetite|enteral|parenteral|tube[\s-]*feeding|TPN|PEG|NPO)\b',
         
-        # Mental health
-        'mental_health': r'\b(?:mental|psychological|psychiatric|mood|depression|anxiety|stress|trauma|ptsd|social[\s-]*isolation|loneliness|grief|bereavement|schizophrenia|bipolar|dementia|alzheimer|memory|confusion|disorientation|anorexia[\s-]*nervosa|bulimia|binge[\s-]*eating|avoidant[\s-]*food[\s-]*intake|pica|rumination|suicidal|self[\s-]*neglect|substance[\s-]*abuse|alcohol|addiction|emotional[\s-]*wellbeing|cognitive)\b',
+        # Mental health - expanded with more specific mental health conditions
+        'mental_health': r'\b(?:mental|psychological|psychiatric|mood|depression|anxiety|stress|trauma|ptsd|social[\s-]*isolation|loneliness|grief|bereavement|schizophrenia|bipolar|dementia|alzheimer|memory|confusion|disorientation|anorexia[\s-]*nervosa|bulimia|binge[\s-]*eating|avoidant[\s-]*food[\s-]*intake|pica|rumination|suicidal|self[\s-]*neglect|substance[\s-]*abuse|alcohol|addiction|emotional[\s-]*wellbeing|cognitive|autism|adhd|eating[\s-]*disorder|orthorexia|ocd|psychosis)\b',
         
-        # Malabsorption
-        'malabsorption': r'\b(?:malabsorption|absorption|digestive|gastrointestinal|celiac|crohn|ulcerative[\s-]*colitis|ibd|inflammatory[\s-]*bowel[\s-]*disease|short[\s-]*bowel|intestinal[\s-]*resection|pancreatic[\s-]*insufficiency|cystic[\s-]*fibrosis|bile[\s-]*acid[\s-]*deficiency|steatorrhea|constipation|bloating|gas|abdominal[\s-]*pain|nausea|vomiting|dysphagia|odynophagia|gerd|reflux|gastritis|enteritis|colitis|gastroparesis|bariatric[\s-]*surgery|ostomy|tube[\s-]*feeding|parenteral[\s-]*nutrition|diarrhea|malabsorptive|nutrient[\s-]*absorption)\b',
+        # Malabsorption - improved with more GI conditions
+        'malabsorption': r'\b(?:malabsorption|absorption|digestive|gastrointestinal|celiac|crohn|ulcerative[\s-]*colitis|ibd|inflammatory[\s-]*bowel[\s-]*disease|short[\s-]*bowel|intestinal[\s-]*resection|pancreatic[\s-]*insufficiency|cystic[\s-]*fibrosis|bile[\s-]*acid[\s-]*deficiency|steatorrhea|constipation|bloating|gas|abdominal[\s-]*pain|nausea|vomiting|dysphagia|odynophagia|gerd|reflux|gastritis|enteritis|colitis|gastroparesis|bariatric[\s-]*surgery|ostomy|tube[\s-]*feeding|parenteral[\s-]*nutrition|diarrhea|malabsorptive|nutrient[\s-]*absorption|ileus|bowel[\s-]*obstruction|dumping[\s-]*syndrome|lactose[\s-]*intolerance|gluten|IBS)\b',
         
-        # Hydration
-        'hydration': r'\b(?:hydration|fluid|water|dehydration|hyperhydration|thirst|dry[\s-]*mouth|poor[\s-]*skin[\s-]*turgor|urine[\s-]*output|concentrated[\s-]*urine|fluid[\s-]*balance|oral[\s-]*intake|liquid[\s-]*consumption|drinking|beverage|iv[\s-]*fluid|intravenous|rehydration|fluid[\s-]*restriction|fluid[\s-]*overload|dehydrated|hypovolemic|hypervolemic)\b',
+        # Hydration - expanded with more specific hydration indicators
+        'hydration': r'\b(?:hydration|fluid|water|dehydration|hyperhydration|thirst|dry[\s-]*mouth|poor[\s-]*skin[\s-]*turgor|urine[\s-]*output|concentrated[\s-]*urine|fluid[\s-]*balance|oral[\s-]*intake|liquid[\s-]*consumption|drinking|beverage|iv[\s-]*fluid|intravenous|rehydration|fluid[\s-]*restriction|fluid[\s-]*overload|dehydrated|hypovolemic|hypervolemic|oliguria|anuria|polyuria|urine[\s-]*color|urine[\s-]*specific[\s-]*gravity|mucous[\s-]*membranes|osmolality)\b',
         
-        # Edema
-        'edema': r'\b(?:edema|oedema|fluid[\s-]*retention|swelling|peripheral[\s-]*edema|dependent[\s-]*edema|pitting[\s-]*edema|non[\s-]*pitting[\s-]*edema|bilateral[\s-]*edema|pedal[\s-]*edema|ankle[\s-]*edema|leg[\s-]*swelling|sacral[\s-]*edema|ascites|anasarca|generalized[\s-]*edema|nutritional[\s-]*edema|hypoalbuminemic[\s-]*edema|protein[\s-]*deficiency[\s-]*edema|excess[\s-]*fluid|fluid[\s-]*accumulation|interstitial[\s-]*fluid|tissue[\s-]*swelling|puffy|waterlogging)\b',
+        # Edema - improved with more specific types
+        'edema': r'\b(?:edema|oedema|fluid[\s-]*retention|swelling|peripheral[\s-]*edema|dependent[\s-]*edema|pitting[\s-]*edema|non[\s-]*pitting[\s-]*edema|bilateral[\s-]*edema|pedal[\s-]*edema|ankle[\s-]*edema|leg[\s-]*swelling|sacral[\s-]*edema|ascites|anasarca|generalized[\s-]*edema|nutritional[\s-]*edema|hypoalbuminemic[\s-]*edema|protein[\s-]*deficiency[\s-]*edema|excess[\s-]*fluid|fluid[\s-]*accumulation|interstitial[\s-]*fluid|tissue[\s-]*swelling|puffy|waterlogging|periorbital[\s-]*edema|pulmonary[\s-]*edema)\b',
         
-        # Physical assessment
-        'physical_assessment': r'\b(?:physical[\s-]*assessment|clinical[\s-]*assessment|physical[\s-]*examination|clinical[\s-]*signs|visible[\s-]*ribs|protruding[\s-]*bones|temporal[\s-]*wasting|sunken[\s-]*eyes|sunken[\s-]*cheeks|thin[\s-]*limbs|loss[\s-]*of[\s-]*subcutaneous[\s-]*fat|hollow[\s-]*temples|prominent[\s-]*clavicle|prominent[\s-]*scapula|visible[\s-]*spine|visible[\s-]*pelvis|reduced[\s-]*fat[\s-]*pads|skin[\s-]*tenting|poor[\s-]*skin[\s-]*turgor|dry[\s-]*skin|hair[\s-]*changes|brittle[\s-]*nails|pressure[\s-]*ulcers|pressure[\s-]*sores|delayed[\s-]*wound[\s-]*healing|poor[\s-]*wound[\s-]*healing|muscle[\s-]*tone|muscle[\s-]*mass|anthropometric|bioimpedance|skinfold)\b',
+        # Physical assessment - expanded with more anthropometric and clinical assessment indicators
+        'physical_assessment': r'\b(?:physical[\s-]*assessment|clinical[\s-]*assessment|physical[\s-]*examination|clinical[\s-]*signs|visible[\s-]*ribs|protruding[\s-]*bones|temporal[\s-]*wasting|sunken[\s-]*eyes|sunken[\s-]*cheeks|thin[\s-]*limbs|loss[\s-]*of[\s-]*subcutaneous[\s-]*fat|hollow[\s-]*temples|prominent[\s-]*clavicle|prominent[\s-]*scapula|visible[\s-]*spine|visible[\s-]*pelvis|reduced[\s-]*fat[\s-]*pads|skin[\s-]*tenting|poor[\s-]*skin[\s-]*turgor|dry[\s-]*skin|hair[\s-]*changes|brittle[\s-]*nails|pressure[\s-]*ulcers|pressure[\s-]*sores|delayed[\s-]*wound[\s-]*healing|poor[\s-]*wound[\s-]*healing|muscle[\s-]*tone|muscle[\s-]*mass|anthropometric|bioimpedance|skinfold|triceps[\s-]*skinfold|biceps[\s-]*skinfold|subscapular[\s-]*skinfold|waist[\s-]*circumference|hip[\s-]*circumference|waist-to-hip[\s-]*ratio|neck[\s-]*circumference|calf[\s-]*circumference)\b',
         
-        # Classification terms
-        'malnutrition_class': r'\b(?:malnutrition|malnourished|undernourishment|undernutrition|protein[\s-]*energy[\s-]*malnutrition|protein[\s-]*calorie[\s-]*malnutrition|pcm|pem|marasmus|kwashiorkor|severe[\s-]*acute[\s-]*malnutrition|sam|moderate[\s-]*acute[\s-]*malnutrition|mam|mild[\s-]*malnutrition|moderate[\s-]*malnutrition|severe[\s-]*malnutrition|at[\s-]*risk[\s-]*for[\s-]*malnutrition|nutritional[\s-]*risk|nutritionally[\s-]*compromised|cachexia|wasting|starvation|failure[\s-]*to[\s-]*thrive|underweight|nutritionally[\s-]*deficient)\b'
+        # Classification terms - improved with specific clinical classification systems
+        'malnutrition_class': r'\b(?:malnutrition|malnourished|undernourishment|undernutrition|protein[\s-]*energy[\s-]*malnutrition|protein[\s-]*calorie[\s-]*malnutrition|pcm|pem|marasmus|kwashiorkor|severe[\s-]*acute[\s-]*malnutrition|sam|moderate[\s-]*acute[\s-]*malnutrition|mam|mild[\s-]*malnutrition|moderate[\s-]*malnutrition|severe[\s-]*malnutrition|at[\s-]*risk[\s-]*for[\s-]*malnutrition|nutritional[\s-]*risk|nutritionally[\s-]*compromised|cachexia|wasting|starvation|failure[\s-]*to[\s-]*thrive|underweight|nutritionally[\s-]*deficient|aspen|academy|glim|criteria|subjective[\s-]*global[\s-]*assessment|sga|mini[\s-]*nutritional[\s-]*assessment|mna|nutrition[\s-]*risk[\s-]*screening|nrs|must|malnutrition[\s-]*universal[\s-]*screening[\s-]*tool|strongkids)\b',
+        
+        # Screening tools - new category for malnutrition screening tools
+        'screening_tools': r'\b(?:subjective[\s-]*global[\s-]*assessment|sga|mini[\s-]*nutritional[\s-]*assessment|mna|nutrition[\s-]*risk[\s-]*screening|nrs|must|malnutrition[\s-]*universal[\s-]*screening[\s-]*tool|strongkids|nutritional[\s-]*risk[\s-]*index|nri|geriatric[\s-]*nutritional[\s-]*risk[\s-]*index|gnri|pni|prognostic[\s-]*nutritional[\s-]*index|snaq|short[\s-]*nutritional[\s-]*assessment[\s-]*questionnaire|nutritional[\s-]*risk[\s-]*index|screening[\s-]*tool|nutrition[\s-]*screening)\b',
+        
+        # Nutrition intervention - new category for intervention terms
+        'intervention': r'\b(?:nutrition[\s-]*intervention|dietary[\s-]*intervention|nutrition[\s-]*support|oral[\s-]*nutritional[\s-]*supplement|ons|supplement|fortification|enrichment|enteral[\s-]*nutrition|parenteral[\s-]*nutrition|tube[\s-]*feeding|feeding[\s-]*tube|nasogastric|ng[\s-]*tube|peg|percutaneous[\s-]*endoscopic[\s-]*gastrostomy|jejunostomy|tpn|total[\s-]*parenteral[\s-]*nutrition|dietary[\s-]*counseling|nutrition[\s-]*education|meal[\s-]*plan|diet[\s-]*modification|feeding[\s-]*assistance|texture[\s-]*modification|thickened[\s-]*liquids|pureed|minced|soft[\s-]*diet|high[\s-]*protein|high[\s-]*calorie|high[\s-]*energy)\b',
+        
+        # Age-specific terms - new category for age-specific malnutrition terminology
+        'age_specific': r'\b(?:pediatric|paediatric|child|infant|adolescent|geriatric|elderly|older[\s-]*adult|senior|failure[\s-]*to[\s-]*thrive|ftt|growth[\s-]*faltering|stunting|wasting|underweight|weight-for-age|height-for-age|weight-for-height|bmi-for-age|weight[\s-]*percentile|height[\s-]*percentile|growth[\s-]*chart|growth[\s-]*curve|growth[\s-]*velocity|catch-up[\s-]*growth|sarcopenia|frailty|age-related|senile|elderly|anorexia[\s-]*of[\s-]*aging)\b'
     }
 
     features = {}
@@ -115,12 +126,57 @@ def extract_decision_features(explanation_text):
             features[feature] = 'mentioned'
 
     # Check for key words indicating strong decisions
-    if re.search(r'\b(?:clear|clearly|definite|definitely|obvious|strong|evidence|confirms|confirmed)\b', explanation_text, re.IGNORECASE):
+    if re.search(r'\b(?:clear|clearly|definite|definitely|obvious|strong|evidence|confirms|confirmed|diagnostic|apparent|certain|conclusive|unmistakable|evident|pronounced|marked|beyond doubt)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'high'
-    elif re.search(r'\b(?:suggests|suggest|indicative|may|might|could|possible|possibly|probable|probably)\b', explanation_text, re.IGNORECASE):
+    elif re.search(r'\b(?:suggests|suggest|indicative|may|might|could|possible|possibly|probable|probably|likely|consistent with|suspicious for|suggestive|compatible with|concerning for)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'medium'
-    elif re.search(r'\b(?:unclear|not clear|uncertain|unsure|insufficient|limited|data|more information)\b', explanation_text, re.IGNORECASE):
+    elif re.search(r'\b(?:unclear|not clear|uncertain|unsure|insufficient|limited|data|more information|cannot determine|cannot assess|difficult to determine|equivocal|inconclusive|borderline|questionable|doubtful|ambiguous)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'low'
+
+    # Extract specific values based on simpler patterns for numeric features
+    numeric_patterns = {
+        'BMI_value': r'(?:BMI|body mass index)\s*(?:is|of|:)?\s*([\d.]+)',
+        'weight_for_height_zscore': r'(?:weight[- ]for[- ]height)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)',
+        'BMI_for_age_zscore': r'(?:BMI[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)',
+        'MUAC_value': r'(?:MUAC|mid[- ]upper arm circumference)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:cm|mm)?',
+        'albumin_value': r'(?:albumin|serum albumin)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:g/dl|g/l)?',
+        'hemoglobin_value': r'(?:hemoglobin|haemoglobin|serum haemoglobin|serum hemoglobin)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:g/dl|g/l)?',
+        'weight_value': r'weight\s*(?:is|of|:)?\s*([\d.]+)\s*(?:kg|lb|pounds)?',
+        'weight_loss_percent': r'(?:weight loss|lost)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:%|percent)?',
+        'length_height_for_age_zscore': r'(?:length/height[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)'
+    }
+
+    # Extract numeric values
+    for feature, pattern in numeric_patterns.items():
+        match = re.search(pattern, explanation_text, re.IGNORECASE)
+        if match and match.group(1):
+            try:
+                # Convert to float if possible
+                features[feature] = float(match.group(1))
+            except ValueError:
+                # If it's not a valid float, just store the string
+                features[feature] = match.group(1)
+
+    # Check for classification framework mentions
+    framework_patterns = {
+        'ASPEN': r'\b(?:ASPEN|Academy|A\.S\.P\.E\.N\.)\b',
+        'GLIM': r'\b(?:GLIM|Global Leadership Initiative)\b',
+        'ESPEN': r'\b(?:ESPEN|European Society)\b',
+        'WHO': r'\b(?:WHO|World Health Organization)\b',
+        'SGA': r'\b(?:SGA|Subjective Global Assessment)\b',
+        'MNA': r'\b(?:MNA|Mini Nutritional Assessment)\b',
+        'MUST': r'\b(?:MUST|Malnutrition Universal Screening Tool)\b'
+    }
+
+    for framework, pattern in framework_patterns.items():
+        if re.search(pattern, explanation_text, re.IGNORECASE):
+            features[f'framework_{framework}'] = 'mentioned'
+
+    # Extract yes/no decision indicators
+    if re.search(r'\b(?:is malnourished|has malnutrition|suffers from malnutrition|diagnosis of malnutrition|malnutrition is present|evidence of malnutrition)\b', explanation_text, re.IGNORECASE):
+        features['decision_indicator'] = 'yes'
+    elif re.search(r'\b(?:no malnutrition|not malnourished|does not have malnutrition|absence of malnutrition|no evidence of malnutrition|no signs of malnutrition|adequately nourished|well nourished)\b', explanation_text, re.IGNORECASE):
+        features['decision_indicator'] = 'no'
 
     return features
 
