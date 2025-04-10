@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-import  os
+import os
+import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+import re
+from scipy import stats
+from statsmodels.stats.proportion import proportion_confint
+from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve, average_precision_score, confusion_matrix
+import warnings
 from utils import (
-    load_and_filter_data, 
+    load_and_filter_data,
     extract_clinical_measurements,
-    extract_criteria_mentions, 
+    extract_criteria_mentions,
     analyze_measurement_thresholds,
     analyze_criteria_frequency,
     analyze_criteria_correlation,
@@ -12,284 +20,373 @@ from utils import (
     plot_measurement_distributions,
     analyze_severity_classifications,
     generate_measurement_summary,
-    analyze_measurement_criteria_alignment
+    analyze_measurement_criteria_alignment,
+    analyze_clinical_symptoms,
+    analyze_dietary_factors,
+    analyze_risk_factors,
+    extract_patient_demographics
 )
 
-def main():
-    # Load Data
-    file_path = "./llama_zero_shot/prediction.csv"
-    data = load_and_filter_data(file_path)
+# Set plotting style
+plt.style.use('seaborn')
+sns.set_palette("Set2")
+plt.rcParams['figure.figsize'] = [12, 8]
+plt.rcParams['font.size'] = 12
 
+def main():
+    # ------------------------------------------------
+    # 1. Configuration and Data Loading
+    # ------------------------------------------------
+    
     # Create output directories
     os.makedirs('figures', exist_ok=True)
     os.makedirs('results', exist_ok=True)
-
-    # Define Criteria Dictionary
+    os.makedirs('tables', exist_ok=True)
+    
+    # Load data
+    file_path = "./llama_zero_shot/prediction.csv"
+    data = load_and_filter_data(file_path)
+    
+    # Define comprehensive criteria dictionary
     criteria_dict = {
-        'BMI': [
-            'BMI', 'body mass index', 'body-mass index', 'kg/m2', 'kg/m^2', 'kg per meter squared',
-            'weight/height squared', 'quetelet index', 'kilo per square meter', 'mass index',
-            'bmi calculation', 'bmi score', 'bmi value', 'bmi measurement'
-        ],
+        # Anthropometric measurements
+        'BMI': ['bmi', 'body mass index', 'kg/m2', 'quetelet index'],
+        'weight_for_height': ['weight for height', 'weight-for-height', 'wfh', 'whz'],
+        'BMI_for_age': ['bmi for age', 'bmi-for-age', 'baz'],
+        'MUAC': ['muac', 'mid upper arm circumference', 'mid-upper arm circumference', 'arm circumference'],
+        'weight_loss': ['weight loss', 'lost weight', 'decrease in weight', 'declining weight', 'unintentional weight loss'],
         
-        'weight_for_height': [
-            'weight for height', 'weight-for-height', 'WHZ', 'WFH', 'W/H', 'W/H ratio',
-            'weight-height ratio', 'weight to height ratio', 'weight relative to height',
-            'weight proportional to height', 'weight compared to height', 'weight against height standard',
-            'weight height proportion', 'weight/height z-score', 'wasted', 'wasting',
-            'weight-stature ratio', 'weight for stature'
-        ],
+        # Clinical symptoms
+        'muscle_wasting': ['muscle wasting', 'muscle loss', 'decreased muscle mass', 'muscle atrophy', 'sarcopenia'],
+        'fatigue': ['fatigue', 'weakness', 'tired', 'low energy', 'lethargy'],
+        'skin_changes': ['skin changes', 'dry skin', 'thin skin', 'skin breakdown', 'poor skin turgor'],
+        'hair_changes': ['hair changes', 'hair loss', 'thin hair', 'brittle hair'],
+        'edema': ['edema', 'swelling', 'fluid retention', 'pitting edema'],
         
-        'BMI_for_age': [
-            'BMI for age', 'BMI-for-age', 'BAZ', 'age-adjusted BMI', 'age appropriate BMI',
-            'BMI percentile', 'BMI centile', 'age-specific BMI', 'BMI z-score for age',
-            'BMI standard deviation score', 'BMI relative to age', 'age-normalized BMI',
-            'BMI compared to reference', 'weight-for-age related to height', 'growth chart BMI',
-            'BMI growth curve', 'BMIFA', 'BMI by age'
-        ],
+        # Dietary intake
+        'inadequate_intake': ['inadequate intake', 'poor intake', 'decreased intake', 'reduced appetite'],
+        'caloric_deficit': ['caloric deficit', 'insufficient calories', 'low calorie', 'calorie restriction'],
+        'protein_deficit': ['protein deficit', 'low protein', 'insufficient protein', 'protein-energy malnutrition'],
+        'food_insecurity': ['food insecurity', 'limited access to food', 'cannot afford food', 'food scarcity'],
         
-        'MUAC': [
-            'MUAC', 'mid-upper arm circumference', 'mid upper arm circumference', 'arm circumference',
-            'MAC', 'upper arm circumference', 'arm perimeter', 'arm girth', 'arm measurement',
-            'mid-arm circumference', 'arm anthropometry', 'MUAC tape', 'MUAC measurement',
-            'MUAC screening', 'MUAC for age', 'MUAC z-score', 'MUAC percentile', 'arm size',
-            'midupper arm measurement', 'circumferential arm measurement', 'arm diameter'
-        ],
+        # Medical conditions
+        'chronic_illness': ['chronic illness', 'chronic disease', 'comorbidity', 'long-term condition'],
+        'gi_disorders': ['gi disorder', 'gastrointestinal disorder', 'malabsorption', 'diarrhea', 'vomiting'],
+        'infection': ['infection', 'sepsis', 'inflammatory', 'infectious process'],
+        'cancer': ['cancer', 'malignancy', 'oncology', 'tumor', 'chemotherapy'],
         
-        'weight_loss': [
-            'weight loss', 'lost weight', 'losing weight', 'decreased weight', 'declining weight',
-            'weight decrease', 'weight reduction', 'weight deficit', 'unintentional weight loss',
-            'involuntary weight loss', 'weight drop', 'weight trend down', 'negative weight change',
-            'weight deterioration', 'falling weight', 'weight below baseline', 'weight decline',
-            'shrinking weight', 'diminished weight', 'weight depletion', 'reduced body mass',
-            'shedding weight', 'weight comparing to previous'
-        ],
+        # Risk factors
+        'medications': ['medication', 'drug induced', 'steroid', 'chemotherapy', 'immunosuppressants'],
+        'mental_health': ['depression', 'dementia', 'cognitive impairment', 'psychiatric', 'anxiety'],
+        'socioeconomic': ['socioeconomic', 'homeless', 'poverty', 'financial', 'low income'],
+        'functional_status': ['functional decline', 'immobility', 'bed bound', 'decreased activity'],
         
-        'inadequate_intake': [
-            'inadequate intake', 'poor intake', 'reduced intake', 'insufficient intake', 'low intake',
-            'suboptimal intake', 'decreased consumption', 'insufficient consumption', 'minimal eating',
-            'poor oral intake', 'decreased oral intake', 'suboptimal feeding', 'inadequate nutrition',
-            'poor nutritional intake', 'limited food intake', 'restricted intake', 'inadequate food consumption',
-            'reduced dietary intake', 'low dietary consumption', 'poor feeding', 'insufficient calories',
-            'inadequate caloric intake', 'poor energy intake', 'low nutrient intake', 'decreased food intake',
-            'not meeting nutritional needs'
-        ],
+        # Lab markers
+        'lab_markers': ['albumin', 'prealbumin', 'transferrin', 'hemoglobin', 'lymphocyte', 'protein'],
         
-        'reduced_appetite': [
-            'reduced appetite', 'poor appetite', 'loss of appetite', 'anorexia', 'decreased hunger',
-            'lack of hunger', 'suppressed appetite', 'diminished appetite', 'no appetite', 'minimal appetite',
-            'low appetite', 'appetite decline', 'appetite decrease', 'appetite suppression', 'not hungry',
-            'early satiety', 'feeling full quickly', 'satiated easily', 'poor interest in food',
-            'aversion to food', 'disinterest in eating', 'reluctance to eat', 'no desire to eat',
-            'reduced food interest', 'lack of interest in meals'
-        ],
-        
-        'cachexia': [
-            'cachexia', 'muscle wasting', 'muscle loss', 'wasting', 'wasting syndrome', 'tissue wasting',
-            'severe wasting', 'protein-energy malnutrition', 'protein wasting', 'protein catabolism',
-            'catabolic state', 'hypermetabolic wasting', 'pathological wasting', 'disease-related wasting',
-            'severe muscle depletion', 'extreme weight loss', 'profound weight loss', 'body wasting',
-            'accelerated muscle loss', 'cancer cachexia', 'cardiac cachexia', 'marasmus', 'marasmic',
-            'kwashiorkor', 'severe tissue depletion'
-        ],
-        
-        'sarcopenia': [
-            'sarcopenia', 'muscle weakness', 'reduced strength', 'muscle atrophy', 'muscle deterioration',
-            'decreased muscle mass', 'loss of muscle function', 'diminished muscle strength',
-            'skeletal muscle reduction', 'muscle volume loss', 'reduced lean mass', 'decreased lean body mass',
-            'muscle degradation', 'reduced muscle quality', 'age-related muscle loss',
-            'progressive muscle decline', 'decreased physical performance', 'reduced physical function',
-            'poor muscle tone', 'functional impairment', 'poor grip strength', 'frailty', 'muscle frailty'
-        ],
-        
-        'edema': [
-            'edema', 'oedema', 'fluid retention', 'swelling', 'peripheral edema', 'dependent edema',
-            'pitting edema', 'non-pitting edema', 'bilateral edema', 'pedal edema', 'ankle edema',
-            'leg swelling', 'sacral edema', 'ascites', 'anasarca', 'generalized edema',
-            'nutritional edema', 'hypoalbuminemic edema', 'protein deficiency edema', 'excess fluid',
-            'fluid accumulation', 'interstitial fluid', 'tissue swelling', 'puffy', 'waterlogging'
-        ],
-        
-        'lab_markers': [
-            'albumin', 'prealbumin', 'transferrin', 'protein', 'hemoglobin', 'lymphocyte',
-            'serum albumin', 'hypoalbuminemia', 'transthyretin', 'retinol binding protein', 'RBP',
-            'total protein', 'protein level', 'protein status', 'serum protein', 'low albumin',
-            'low prealbumin', 'iron binding capacity', 'TIBC', 'ferritin', 'total lymphocyte count',
-            'TLC', 'white blood cells', 'WBC', 'low hemoglobin', 'anemia', 'low hematocrit',
-            'cholesterol', 'low cholesterol', 'hypocholesterolemia', 'CRP', 'C-reactive protein',
-            'elevated CRP', 'nitrogen balance', 'creatinine height index', 'CHI'
-        ],
-        
-        'growth_parameters': [
-            'growth', 'growth curve', 'growth chart', 'growth velocity', 'growth rate',
-            'growth percentile', 'growth trajectory', 'stunting', 'stunted', 'linear growth',
-            'height velocity', 'length velocity', 'height for age', 'length for age',
-            'height-for-age z-score', 'HAZ', 'LAZ', 'growth faltering', 'growth failure',
-            'failure to thrive', 'FTT', 'poor growth', 'growth restriction', 'catch-up growth',
-            'deceleration in growth', 'growth plateau', 'crossed percentiles', 'crossed centiles'
-        ],
-        
-        'body_composition': [
-            'body composition', 'body fat', 'fat mass', 'lean mass', 'fat-free mass', 'FFM',
-            'muscle mass', 'skeletal muscle mass', 'SMM', 'body fat percentage', 'lean body mass',
-            'LBM', 'fat distribution', 'subcutaneous fat', 'visceral fat', 'adipose tissue',
-            'fat depletion', 'reduced fat stores', 'depleted muscle', 'muscle depletion',
-            'bioimpedance', 'BIA', 'DEXA', 'DXA', 'anthropometric', 'skinfold', 'triceps skinfold'
-        ],
-        
-        'physical_assessment': [
-            'physical assessment', 'clinical assessment', 'physical examination', 'clinical signs',
-            'visible ribs', 'protruding bones', 'temporal wasting', 'sunken eyes', 'sunken cheeks',
-            'thin limbs', 'loss of subcutaneous fat', 'hollow temples', 'prominent clavicle',
-            'prominent scapula', 'visible spine', 'visible pelvis', 'reduced fat pads',
-            'skin tenting', 'poor skin turgor', 'dry skin', 'hair changes', 'brittle nails',
-            'pressure ulcers', 'pressure sores', 'delayed wound healing', 'poor wound healing'
-        ],
-        
-        'functional_indicators': [
-            'functional status', 'functional capacity', 'physical function', 'physical performance',
-            'handgrip strength', 'grip dynamometer', 'muscle function', 'walking speed', 'gait speed',
-            'chair stand', 'sit-to-stand', 'physical activity', 'activities of daily living', 'ADL',
-            'instrumental activities of daily living', 'IADL', 'functional decline',
-            'functional impairment', 'reduced mobility', 'bedridden', 'chair-bound', 'fatigue',
-            'weakness', 'exhaustion', 'exertional fatigue', 'reduced endurance', 'exercise intolerance'
-        ]
-}
-
-    # ------------------------------------------------
-    # 1. Criteria Mention Analysis
-    # ------------------------------------------------
-
-    # Extract Criteria Mentions
-    criteria_results = {
-        key: extract_criteria_mentions(data[key]['explanation'], criteria_dict)
-        for key in ['correct_predictions', 'incorrect_predictions', 'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']
-    }
-
-    # Correlation Analysis for Correct & Incorrect Predictions
-    correlation_results = {
-        key: analyze_criteria_correlation(criteria_results[key], data[key]['true_label'])
-        for key in ['correct_predictions', 'incorrect_predictions']
-    }
-
-    # Frequency Analysis for the Four Groups
-    frequency_results = {
-        key: analyze_criteria_frequency(criteria_results[key])
-        for key in ['correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']
-    }
-
-    # Visualize criteria frequency
-    criteria_freq_fig = visualize_criteria_frequency(frequency_results)
-    criteria_freq_fig.savefig('figures/criteria_frequency_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close(criteria_freq_fig)
-
-    # ------------------------------------------------
-    # 2. Clinical Measurement Analysis
-    # ------------------------------------------------
-
-    # Extract clinical measurements from explanations
-    measurement_results = {
-        key: extract_clinical_measurements(data[key]['explanation'])
-        for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']
-    }
-
-    # Analyze measurement thresholds
-    threshold_results = {
-        key: analyze_measurement_thresholds(measurement_results[key], data[key]['true_label'])
-        for key in ['correct_predictions', 'incorrect_predictions']
-    }
-
-    # Generate distribution plots
-    plot_results = {}
-    for key in ['correct_predictions', 'incorrect_predictions']:
-        if len(measurement_results[key]) > 0:
-            figures = plot_measurement_distributions(measurement_results[key], data[key]['true_label'])
-
-            # Save figures
-            for measure, fig in figures.items():
-                fig.savefig(f'figures/{key}_{measure}_distribution.png', dpi=300, bbox_inches='tight')
-                plt.close(fig)
-
-            plot_results[key] = figures
-
-    # Analyze severity classifications
-    severity_results = {
-        key: analyze_severity_classifications(measurement_results[key], data[key]['true_label'])
-        for key in ['correct_predictions', 'incorrect_predictions']
-    }
-
-    # Analyze alignment between measurements and criteria mentions
-    alignment_results = {
-        key: analyze_measurement_criteria_alignment(
-            measurement_results[key],
-            criteria_results[key],
-            data[key]['true_label']
-        )
-        for key in ['correct_predictions', 'incorrect_predictions']
+        # Special categories
+        'pediatric': ['child', 'infant', 'pediatric', 'growth chart', 'percentile'],
+        'geriatric': ['elderly', 'geriatric', 'frail', 'aging', 'older adult']
     }
 
     # ------------------------------------------------
-    # 3. Generate Summary Report
+    # 2. Comprehensive Analysis Pipeline
     # ------------------------------------------------
-
-    # Generate criteria analysis summary
-    criteria_summary = []
-    criteria_summary.append("CRITERIA MENTION ANALYSIS SUMMARY")
-    criteria_summary.append("==============================\n")
-
-    criteria_summary.append("Top Criteria by Correlation with Malnutrition Status:")
-    for key in ['correct_predictions', 'incorrect_predictions']:
-        criteria_summary.append(f"\n{key.replace('_', ' ').title()}:")
-        top_corr = correlation_results[key].head(5)
-        for _, row in top_corr.iterrows():
-            criteria_summary.append(f"  {row['criteria']}: {row['correlation']:.4f}")
-
-    criteria_summary.append("\nTop Criteria by Frequency in Each Group:")
-    for key in ['correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']:
-        criteria_summary.append(f"\n{key.replace('_', ' ').title()}:")
-        top_freq = frequency_results[key].head(5)
-        for _, row in top_freq.iterrows():
-            criteria_summary.append(f"  {row['criteria']}: {row['frequency']:.4f}")
-
-    # Generate measurement analysis summary
-    measurement_summary = ["", "CLINICAL MEASUREMENT ANALYSIS SUMMARY", "=====================================\n"]
-    measurement_summary.append(generate_measurement_summary(measurement_results, threshold_results, alignment_results))
-
-    # Combine summaries
-    full_summary = "\n".join(criteria_summary + measurement_summary)
-
-    # Save summary to file
-    with open('results/malnutrition_analysis_summary.txt', 'w') as f:
-        f.write(full_summary)
-
-    # Save DataFrames to CSV
-    for key, df in correlation_results.items():
-        df.to_csv(f'results/{key}_correlation.csv', index=False)
-
-    for key, df in frequency_results.items():
-        df.to_csv(f'results/{key}_frequency.csv', index=False)
-
-    for key, df in measurement_results.items():
-        if len(df) > 0:
-            df.to_csv(f'results/{key}_measurements.csv', index=False)
-
-    for key, df in alignment_results.items():
-        if len(df) > 0:
-            df.to_csv(f'results/{key}_alignment.csv', index=False)
-
-    # Display Results
-    print(full_summary)
-
-    return {
+    
+    # Initialize results dictionary
+    results = {
         'data': data,
-        'criteria_results': criteria_results,
-        'correlation_results': correlation_results,
-        'frequency_results': frequency_results,
-        'measurement_results': measurement_results,
-        'threshold_results': threshold_results,
-        'alignment_results': alignment_results,
-        'severity_results': severity_results
+        'criteria_analysis': {},
+        'measurement_analysis': {},
+        'symptom_analysis': {},
+        'dietary_analysis': {},
+        'risk_factor_analysis': {},
+        'demographics': {}
+    }
+    
+    # A. Criteria Mention Analysis
+    print("Running criteria mention analysis...")
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']:
+        results['criteria_analysis'][key] = extract_criteria_mentions(
+            data[key]['explanation'], 
+            criteria_dict
+        )
+    
+    # B. Clinical Measurement Extraction
+    print("Extracting clinical measurements...")
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']:
+        results['measurement_analysis'][key] = extract_clinical_measurements(
+            data[key]['explanation']
+        )
+    
+    # C. Patient Demographics
+    print("Extracting patient demographics...")
+    results['demographics'] = extract_patient_demographics(data['full_df']['explanation'])
+    
+    # D. Clinical Symptom Analysis
+    print("Analyzing clinical symptoms...")
+    results['symptom_analysis'] = analyze_clinical_symptoms(
+        data['full_df']['explanation'], 
+        data['full_df']['true_label']
+    )
+    
+    # E. Dietary Factor Analysis
+    print("Analyzing dietary factors...")
+    results['dietary_analysis'] = analyze_dietary_factors(
+        data['full_df']['explanation'], 
+        data['full_df']['true_label']
+    )
+    
+    # F. Risk Factor Analysis
+    print("Analyzing risk factors...")
+    results['risk_factor_analysis'] = analyze_risk_factors(
+        data['full_df']['explanation'], 
+        data['full_df']['true_label']
+    )
+    
+    # ------------------------------------------------
+    # 3. Comparative Analysis by Prediction Accuracy
+    # ------------------------------------------------
+    
+    # Initialize comparative results
+    comparative_results = {
+        'correct_vs_incorrect': {},
+        'true_positives': {},
+        'true_negatives': {},
+        'false_positives': {},
+        'false_negatives': {}
+    }
+    
+    # A. Criteria Frequency Comparison
+    print("Comparing criteria frequency...")
+    for group in ['correct_predictions', 'incorrect_predictions']:
+        comparative_results['correct_vs_incorrect'][group] = analyze_criteria_frequency(
+            results['criteria_analysis'][group],
+            data[group]['true_label']
+        )
+    
+    # B. Threshold Analysis
+    print("Analyzing measurement thresholds...")
+    for group in ['correct_predictions', 'incorrect_predictions']:
+        comparative_results['correct_vs_incorrect'][f'{group}_thresholds'] = analyze_measurement_thresholds(
+            results['measurement_analysis'][group],
+            data[group]['true_label']
+        )
+    
+    # C. Four-group Analysis (TP, TN, FP, FN)
+    print("Analyzing four prediction groups...")
+    for group, label in [('correct_yes', 'true_positives'), 
+                         ('correct_no', 'true_negatives'),
+                         ('incorrect_yes', 'false_positives'),
+                         ('incorrect_no', 'false_negatives')]:
+        # Criteria correlation
+        comparative_results[label]['criteria_correlation'] = analyze_criteria_correlation(
+            results['criteria_analysis'][group],
+            data[group]['true_label']
+        )
+        
+        # Measurement distributions
+        if len(results['measurement_analysis'][group]) > 0:
+            comparative_results[label]['measurement_distributions'] = plot_measurement_distributions(
+                results['measurement_analysis'][group],
+                data[group]['true_label']
+            )
+        
+        # Severity classifications
+        comparative_results[label]['severity_classifications'] = analyze_severity_classifications(
+            results['measurement_analysis'][group],
+            data[group]['true_label']
+        )
+    
+    # ------------------------------------------------
+    # 4. Visualization and Output Generation
+    # ------------------------------------------------
+    
+    print("Generating visualizations and reports...")
+    
+    # A. Criteria Frequency Visualization
+    freq_fig = visualize_criteria_frequency(
+        comparative_results['correct_vs_incorrect']['correct_predictions'],
+        top_n=20
+    )
+    freq_fig.savefig('figures/criteria_frequency_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close(freq_fig)
+    
+    # B. Measurement Distribution Plots
+    for group in ['correct_predictions', 'incorrect_predictions']:
+        if len(results['measurement_analysis'][group]) > 0:
+            figs = plot_measurement_distributions(
+                results['measurement_analysis'][group],
+                data[group]['true_label']
+            )
+            
+            for measure, fig in figs.items():
+                fig.savefig(f'figures/{group}_{measure}_distribution.png', dpi=300, bbox_inches='tight')
+                plt.close(fig)
+    
+    # C. Generate Comprehensive Report
+    report_sections = []
+    
+    # 1. Executive Summary
+    report_sections.append("""
+MALNUTRITION PREDICTION ANALYSIS REPORT
+======================================
+
+This report provides a comprehensive analysis of malnutrition prediction performance, 
+including criteria utilization patterns, measurement distributions, and clinical 
+factor associations across correctly and incorrectly classified cases.
+""")
+    
+    # 2. Dataset Overview
+    report_sections.append(f"""
+DATASET OVERVIEW
+----------------
+Total cases: {len(data['full_df'])}
+Correct predictions: {len(data['correct_predictions'])} ({len(data['correct_predictions'])/len(data['full_df']):.1%})
+Incorrect predictions: {len(data['incorrect_predictions'])} ({len(data['incorrect_predictions'])/len(data['full_df']):.1%})
+
+Breakdown:
+- True Positives: {len(data['correct_yes'])}
+- True Negatives: {len(data['correct_no'])}
+- False Positives: {len(data['incorrect_yes'])}
+- False Negatives: {len(data['incorrect_no'])}
+""")
+    
+    # 3. Criteria Analysis Summary
+    report_sections.append("""
+CRITERIA ANALYSIS SUMMARY
+------------------------
+""")
+    
+    # Top criteria in correct predictions
+    top_correct = comparative_results['correct_vs_incorrect']['correct_predictions'].nlargest(5, 'risk_ratio')
+    report_sections.append("Most predictive criteria in correct predictions:")
+    for _, row in top_correct.iterrows():
+        report_sections.append(f"- {row['criteria']}: RR={row['risk_ratio']:.1f}, p={row['p_value']:.4f}")
+    
+    # Top criteria in incorrect predictions
+    top_incorrect = comparative_results['correct_vs_incorrect']['incorrect_predictions'].nlargest(5, 'risk_ratio')
+    report_sections.append("
+Most problematic criteria in incorrect predictions:")
+    for _, row in top_incorrect.iterrows():
+        report_sections.append(f"- {row['criteria']}: RR={row['risk_ratio']:.1f}, p={row['p_value']:.4f}")
+    
+    # 4. Measurement Analysis Summary
+    report_sections.append("""
+
+MEASUREMENT ANALYSIS SUMMARY
+---------------------------
+""")
+    
+    # Threshold performance
+    for group in ['correct_predictions', 'incorrect_predictions']:
+        thresholds = comparative_results['correct_vs_incorrect'][f'{group}_thresholds']
+        report_sections.append(f"
+Measurement performance in {group.replace('_', ' ')}:")
+        
+        for measure, stats in thresholds.items():
+            if 'error' not in stats:
+                report_sections.append(
+                    f"- {measure}: AUC={stats['auc']:.2f}, "
+                    f"Threshold={stats['optimal_threshold']:.1f} "
+                    f"(Sens={stats['sensitivity']:.1%}, Spec={stats['specificity']:.1%})"
+                )
+    
+    # 5. Clinical Factor Analysis
+    report_sections.append("""
+
+CLINICAL FACTOR ANALYSIS
+------------------------
+""")
+    
+    # Symptoms
+    report_sections.append("
+Top clinical symptoms associated with malnutrition:")
+    top_symptoms = results['symptom_analysis'].nlargest(5, 'prevalence_ratio')
+    for _, row in top_symptoms.iterrows():
+        report_sections.append(
+            f"- {row['symptom']}: PR={row['prevalence_ratio']:.1f}, "
+            f"AR={row['attributable_risk']:.2f}"
+        )
+    
+    # Dietary factors
+    report_sections.append("
+Top dietary factors associated with malnutrition:")
+    top_dietary = results['dietary_analysis'].nlargest(5, 'odds_ratio')
+    for _, row in top_dietary.iterrows():
+        report_sections.append(
+            f"- {row['factor']}: OR={row['odds_ratio']:.1f}"
+        )
+    
+    # Risk factors
+    report_sections.append("
+Top risk factors associated with malnutrition:")
+    top_risk = results['risk_factor_analysis'].nlargest(5, 'relative_risk')
+    for _, row in top_risk.iterrows():
+        report_sections.append(
+            f"- {row['factor']}: RR={row['relative_risk']:.1f}, "
+            f"AR={row['attributable_risk']:.2f}"
+        )
+    
+    # 6. Recommendations
+    report_sections.append("""
+
+RECOMMENDATIONS
+---------------
+1. Focus on improving recognition of: """ + ", ".join(top_incorrect['criteria'].tolist()) + """
+2. Validate measurement thresholds for: """ + ", ".join(list(comparative_results['correct_vs_incorrect']['correct_predictions_thresholds'].keys())[:3]) + """
+3. Consider additional training on: """ + ", ".join(top_risk['factor'].tolist()[:3]) + """
+""")
+    
+    # Save full report
+    with open('results/full_analysis_report.txt', 'w') as f:
+        f.write("\n".join(report_sections))
+    
+    # ------------------------------------------------
+    # 5. Data Export
+    # ------------------------------------------------
+    
+    print("Exporting results to files...")
+    
+    # A. Save DataFrames to CSV
+    for category in ['criteria_analysis', 'measurement_analysis']:
+        for key, df in results[category].items():
+            df.to_csv(f'tables/{category}_{key}.csv', index=False)
+    
+    # B. Save analysis results
+    pd.DataFrame(results['symptom_analysis']).to_csv('tables/symptom_analysis.csv', index=False)
+    pd.DataFrame(results['dietary_analysis']).to_csv('tables/dietary_analysis.csv', index=False)
+    pd.DataFrame(results['risk_factor_analysis']).to_csv('tables/risk_factor_analysis.csv', index=False)
+    results['demographics'].to_csv('tables/patient_demographics.csv', index=False)
+    
+    # C. Save comparative results
+    for group in ['correct_predictions', 'incorrect_predictions']:
+        comparative_results['correct_vs_incorrect'][group].to_csv(
+            f'tables/{group}_criteria_frequency.csv', 
+            index=False
+        )
+    
+    # ------------------------------------------------
+    # 6. Final Output
+    # ------------------------------------------------
+    
+    print("""
+Analysis complete!
+------------------
+Results saved to:
+- /figures/      : Visualizations
+- /results/      : Summary reports
+- /tables/       : Detailed data tables
+
+Key findings have been compiled in results/full_analysis_report.txt
+""")
+    
+    return {
+        'results': results,
+        'comparative_results': comparative_results
     }
 
 if __name__ == "__main__":
-    results = main()
+    analysis_results = main()
