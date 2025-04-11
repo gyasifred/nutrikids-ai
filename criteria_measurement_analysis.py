@@ -519,7 +519,7 @@ def main():
     os.makedirs('tables', exist_ok=True)
     
     # Load data
-    file_path = "./llama_zero_shot/prediction.csv"
+    file_path = "./LLM_pre_eval/gemma/prediction.csv"
     data = load_and_filter_data(file_path)
     
     # Define comprehensive criteria dictionary
@@ -753,8 +753,7 @@ CRITERIA ANALYSIS SUMMARY
     
     # Top criteria in incorrect predictions
     top_incorrect_fp = comparative_results['correct_vs_incorrect']['FP_data'].nlargest(5, 'risk_ratio')
-    report_sections.append("
-Most problematic criteria in false positive predictions:")
+    report_sections.append("Most problematic criteria in false positive predictions:")
     for _, row in top_incorrect_fp.iterrows():
         report_sections.append(f"- {row['criteria']}: RR={row['risk_ratio']:.1f}, p={row['p_value']:.4f}")
     
