@@ -716,15 +716,14 @@ def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_sampl
     
 def generate_permutation_importance(model, tokenizer, texts, output_dir, num_samples=5):
     """
-    Generate feature importance by permuting inputs.
-    This is a model-agnostic approach that doesn't require gradients.
+    Generate a word-level importance matrix using permutation importance.
+    Output: CSV where rows = samples, columns = words, values = importance scores (or 0).
     """
     results = []
 
     # Sample texts if there are many
     if len(texts) > num_samples:
-        sample_indices = np.random.choice(
-            len(texts), num_samples, replace=False)
+        sample_indices = np.random.choice(len(texts), num_samples, replace=False)
         sample_texts = [texts[i] for i in sample_indices]
     else:
         sample_texts = texts[:num_samples]
@@ -732,219 +731,133 @@ def generate_permutation_importance(model, tokenizer, texts, output_dir, num_sam
     # Tokenize samples
     sequences = tokenizer.transform(sample_texts)
 
-    # Get word mapping for interpretability
+    # Word index maps
     word_index = tokenizer.word2idx_
     reverse_word_index = {v: k for k, v in word_index.items()}
 
-    # Set model to eval mode
     model.eval()
     device = next(model.parameters()).device
+    all_words = set()
+    perm_matrix = []
 
     for i, text in enumerate(sample_texts):
-        # Get sequence for this sample
         sequence = sequences[i]
         seq_length = len([idx for idx in sequence if idx > 0])
-
-        # Skip if sequence is empty
         if seq_length == 0:
             continue
 
         # Create input tensor
         sequence_array = np.array([sequence], dtype=np.int64)
-        input_tensor = torch.tensor(
-            sequence_array, dtype=torch.long, device=device)
+        input_tensor = torch.tensor(sequence_array, dtype=torch.long, device=device)
 
-        # Get the original prediction
+        # Original prediction
         with torch.no_grad():
             original_output = model(input_tensor).item()
 
-        # Calculate importance of each word by permuting it
         importance_scores = np.zeros(seq_length)
-
-        # For each word, replace it with a padding token and see effect
-        pad_token = 0  # Usually the padding token is 0
+        pad_token = 0  # Typically padding token
 
         for j in range(seq_length):
-            # Create modified input with this word removed
             modified = input_tensor.clone()
             modified[0, j] = pad_token
 
-            # Get prediction
             with torch.no_grad():
                 modified_output = model(modified).item()
 
-            # Importance is how much the prediction changes
             importance_scores[j] = abs(original_output - modified_output)
 
-        # Get words for visualization
-        words = [reverse_word_index.get(idx, "<PAD>")
-                 for idx in sequence[:seq_length] if idx > 0]
-        values = importance_scores[:len(words)]
+        # Store as word:score mapping
+        word_scores = {}
+        for idx, score in zip(sequence[:seq_length], importance_scores[:seq_length]):
+            word = reverse_word_index.get(idx, "<PAD>")
+            word_scores[word] = score
+            all_words.add(word)
 
-        # Store results
-        result = {
-            "text": text,
-            "words": words,
-            "importance_scores": values.tolist()
-        }
-        results.append(result)
+        perm_matrix.append(word_scores)
 
-        # Create visualization
-        plt.figure(figsize=(12, 6))
-        plt.bar(range(len(words)), values)
-        plt.xticks(range(len(words)), words, rotation=45)
-        plt.title(f'Permutation Importance for Sample {i+1}')
-        plt.xlabel('Words')
-        plt.ylabel('Importance')
-        plt.tight_layout()
-        plt.savefig(os.path.join(
-            output_dir, f'permutation_importance_{i+1}.png'))
-        plt.close()
+    # Create word-level importance matrix
+    df = pd.DataFrame(perm_matrix).fillna(0)
+    df.index.name = "sample_id"
+    df = df.sort_index(axis=1)  # Optional: sort columns alphabetically
 
-        # Also create a heatmap-style visualization with text
-        plt.figure(figsize=(12, 4))
-        # Normalize values for better visualization
-        norm_values = (values - values.min()) / \
-            (values.max() - values.min() + 1e-10)
+    # Save to CSV
+    os.makedirs(output_dir, exist_ok=True)
+    df.to_csv(os.path.join(output_dir, "permutation_importance_matrix.csv"))
 
-        # Create a color-mapped visualization
-        for j, (word, val) in enumerate(zip(words, norm_values)):
-            plt.text(j, 0.5, word,
-                     horizontalalignment='center',
-                     verticalalignment='center',
-                     fontsize=14 + val * 10,  # Size based on importance
-                     color=plt.cm.RdBu(val))  # Color based on importance
-
-        plt.xlim(-1, len(words))
-        plt.ylim(0, 1)
-        plt.axis('off')
-        plt.title(f'Word Importance Heatmap for Sample {i+1}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'permutation_heatmap_{i+1}.png'))
-        plt.close()
-
-    return results
-
+    return df
 
 def generate_occlusion_importance(model, tokenizer, texts, output_dir, num_samples=5):
     """
-    Generate feature importance using occlusion (similar to permutation but with sliding window).
-    This is a model-agnostic approach that doesn't require gradients.
+    Generate word-level importance matrix using occlusion method.
+    Output: CSV where rows = samples, columns = words, values = importance scores (or 0).
     """
     results = []
 
-    # Sample texts if there are many
+    # Sample a subset of texts
     if len(texts) > num_samples:
-        sample_indices = np.random.choice(
-            len(texts), num_samples, replace=False)
+        sample_indices = np.random.choice(len(texts), num_samples, replace=False)
         sample_texts = [texts[i] for i in sample_indices]
     else:
         sample_texts = texts[:num_samples]
 
-    # Tokenize samples
+    # Tokenize
     sequences = tokenizer.transform(sample_texts)
-
-    # Get word mapping for interpretability
     word_index = tokenizer.word2idx_
     reverse_word_index = {v: k for k, v in word_index.items()}
 
-    # Set model to eval mode
     model.eval()
     device = next(model.parameters()).device
 
-    # Occlusion window size (1 for single tokens, 2 for pairs, etc.)
     window_size = 1
+    all_words = set()
+    occlusion_matrix = []
 
     for i, text in enumerate(sample_texts):
-        # Get sequence for this sample
         sequence = sequences[i]
         seq_length = len([idx for idx in sequence if idx > 0])
-
-        # Skip if sequence is empty
         if seq_length == 0:
             continue
 
-        # Create input tensor
         sequence_array = np.array([sequence], dtype=np.int64)
-        input_tensor = torch.tensor(
-            sequence_array, dtype=torch.long, device=device)
+        input_tensor = torch.tensor(sequence_array, dtype=torch.long, device=device)
 
-        # Get the original prediction
         with torch.no_grad():
             original_output = model(input_tensor).item()
 
-        # Calculate importance of each word by occluding it
         importance_scores = np.zeros(seq_length)
-
-        # For each position, create a sliding window and replace with pad tokens
-        pad_token = 0  # Usually the padding token is 0
+        pad_token = 0
 
         for j in range(seq_length - window_size + 1):
-            # Create modified input with this window occluded
             modified = input_tensor.clone()
             modified[0, j:j+window_size] = pad_token
 
-            # Get prediction
             with torch.no_grad():
                 modified_output = model(modified).item()
 
-            # Importance is how much the prediction changes
             delta = abs(original_output - modified_output)
 
-            # For window_size > 1, we attribute the change to each position
             for k in range(window_size):
-                if j+k < seq_length:
-                    importance_scores[j+k] += delta / window_size
+                if j + k < seq_length:
+                    importance_scores[j + k] += delta / window_size
 
-        # Get words for visualization
-        words = [reverse_word_index.get(idx, "<PAD>")
-                 for idx in sequence[:seq_length] if idx > 0]
-        values = importance_scores[:len(words)]
+        # Convert to {word: score} format
+        word_scores = {}
+        for idx, score in zip(sequence[:seq_length], importance_scores[:seq_length]):
+            word = reverse_word_index.get(idx, "<PAD>")
+            word_scores[word] = score
+            all_words.add(word)
 
-        # Store results
-        result = {
-            "text": text,
-            "words": words,
-            "importance_scores": values.tolist()
-        }
-        results.append(result)
+        occlusion_matrix.append(word_scores)
 
-        # Create visualization
-        plt.figure(figsize=(12, 6))
-        plt.bar(range(len(words)), values)
-        plt.xticks(range(len(words)), words, rotation=45)
-        plt.title(f'Occlusion Importance for Sample {i+1}')
-        plt.xlabel('Words')
-        plt.ylabel('Importance')
-        plt.tight_layout()
-        plt.savefig(os.path.join(
-            output_dir, f'occlusion_importance_{i+1}.png'))
-        plt.close()
+    # Create and save word-importance matrix
+    df = pd.DataFrame(occlusion_matrix).fillna(0)
+    df.index.name = "sample_id"
+    df = df.sort_index(axis=1)  # Optional sorting
 
-        # Also create a heatmap-style visualization with text
-        plt.figure(figsize=(12, 4))
-        # Normalize values for better visualization
-        norm_values = (values - values.min()) / \
-            (values.max() - values.min() + 1e-10)
+    os.makedirs(output_dir, exist_ok=True)
+    df.to_csv(os.path.join(output_dir, "occlusion_importance_matrix.csv"))
 
-        # Create a color-mapped visualization
-        for j, (word, val) in enumerate(zip(words, norm_values)):
-            plt.text(j, 0.5, word,
-                     horizontalalignment='center',
-                     verticalalignment='center',
-                     fontsize=14 + val * 10,
-                     color=plt.cm.RdBu(val))
-
-        plt.xlim(-1, len(words))
-        plt.ylim(0, 1)
-        plt.axis('off')
-        plt.title(f'Word Importance Heatmap for Sample {i+1}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'occlusion_heatmap_{i+1}.png'))
-        plt.close()
-
-    return results
-
+    return df
 
 def generate_prediction_summary(predictions, probabilities, labels, output_path):
     """Generate a summary of predictions and save as CSV."""
