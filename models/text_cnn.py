@@ -639,55 +639,47 @@ def load_model_artifacts(model_dir):
     return model, tokenizer, label_encoder, config
     
 
-def generate_integrated_gradients(model, tokenizer,
-                                  texts, output_dir,
-                                  num_samples=5):
+import torch
+import numpy as np
+import pandas as pd
+import os
+
+def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_samples=5):
     """
-    Generate integrated gradients explanations for text samples.
-    This is an alternative to SHAP that works better with integer inputs.
+    Generate a word-level importance matrix using integrated gradients.
+    Output: CSV where rows = patient samples, columns = words, values = IG scores or 0.
     """
     results = []
 
-    # Sample texts if there are many
+    # Sample texts
     if len(texts) > num_samples:
-        sample_indices = np.random.choice(len(texts),
-                                          num_samples,
-                                          replace=False)
+        sample_indices = np.random.choice(len(texts), num_samples, replace=False)
         sample_texts = [texts[i] for i in sample_indices]
     else:
         sample_texts = texts[:num_samples]
 
-    # Tokenize samples
     sequences = tokenizer.transform(sample_texts)
-
-    # Get word mapping for interpretability
     word_index = tokenizer.word2idx_
     reverse_word_index = {v: k for k, v in word_index.items()}
 
-    # Create a baseline of zeros (reference point)
     device = next(model.parameters()).device
+    all_words = set()
+    ig_matrix = []
 
     for i, text in enumerate(sample_texts):
-        # Get sequence for this sample
         sequence = sequences[i]
         seq_length = len([idx for idx in sequence if idx > 0])
+        if seq_length == 0:
+            continue
 
-        # Convert sequence list into a NumPy array before making it a tensor
         sequence_array = np.array([sequence], dtype=np.int64)
-        input_tensor = torch.tensor(sequence_array,
-                                    dtype=torch.long,
-                                    device=device)
-
-        # Create baseline of zeros (represents absence of words)
+        input_tensor = torch.tensor(sequence_array, dtype=torch.long, device=device)
         baseline = torch.zeros_like(input_tensor)
 
-        # Manual implementation of integrated gradients
         steps = 20
         attr_scores = np.zeros(len(sequence))
 
-        # For each word position, calculate its importance
         for pos in range(seq_length):
-            # Create a modified input where we progressively add this word
             modified_inputs = []
             for step in range(steps + 1):
                 alpha = step / steps
@@ -696,64 +688,32 @@ def generate_integrated_gradients(model, tokenizer,
                     modified[0, j] = int(alpha * input_tensor[0, j])
                 modified_inputs.append(modified)
 
-            # Stack all steps into one batch
             batch_input = torch.cat(modified_inputs, dim=0)
-
-            # Get predictions for all steps
             with torch.no_grad():
                 outputs = model(batch_input).squeeze().cpu().numpy()
-
-            # Calculate gradient approximation using integral
             deltas = outputs[1:] - outputs[:-1]
-
-            # Score is the sum of these differences
             attr_scores[pos] = np.sum(deltas)
 
-        # Get words for visualization
-        words = [reverse_word_index.get(idx, "<PAD>") for idx in sequence[:seq_length] if idx > 0]
-        values = attr_scores[:len(words)]
+        # Create a dict of word:score
+        word_scores = {}
+        for idx, score in zip(sequence[:seq_length], attr_scores[:seq_length]):
+            word = reverse_word_index.get(idx, "<PAD>")
+            word_scores[word] = score
+            all_words.add(word)
 
-        # Store results
-        result = {
-            "text": text,
-            "words": words,
-            "importance_scores": values.tolist()
-        }
-        results.append(result)
+        ig_matrix.append(word_scores)
 
-        # Create visualization
-        plt.figure(figsize=(12, 6))
-        plt.bar(range(len(words)), values)
-        plt.xticks(range(len(words)), words, rotation=45)
-        plt.title(f'Word Importance for Sample {i+1}')
-        plt.xlabel('Words')
-        plt.ylabel('Attribution')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'word_importance_{i+1}.png'))
-        plt.close()
+    # Create DataFrame: rows = samples, cols = all words, fill missing with 0
+    df = pd.DataFrame(ig_matrix).fillna(0)
+    df.index.name = "sample_id"
+    df = df.sort_index(axis=1)  # optional: sort columns alphabetically
 
-        # Also create a heatmap-style visualization with text
-        plt.figure(figsize=(12, 4))
-        norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
+    # Save as CSV
+    os.makedirs(output_dir, exist_ok=True)
+    df.to_csv(os.path.join(output_dir, "integrated_gradients_matrix.csv"))
 
-        for j, (word, val) in enumerate(zip(words, norm_values)):
-            plt.text(j, 0.5, word,
-                     horizontalalignment='center',
-                     verticalalignment='center',
-                     fontsize=14 + val * 10,
-                     color=plt.cm.RdBu(val))
-
-        plt.xlim(-1, len(words))
-        plt.ylim(0, 1)
-        plt.axis('off')
-        plt.title(f'Word Importance Heatmap for Sample {i+1}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'word_heatmap_{i+1}.png'))
-        plt.close()
-
-    return results
-
-
+    return df
+    
 def generate_permutation_importance(model, tokenizer, texts, output_dir, num_samples=5):
     """
     Generate feature importance by permuting inputs.
