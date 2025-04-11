@@ -162,10 +162,32 @@ def evaluate_xgb_model(
         importance_path = os.path.join(output_dir, f'{model_name}_feature_importance.png')
         plt.savefig(importance_path, bbox_inches='tight')
         plt.close()
+        
+        # Save feature importances to CSV
+        importance_df = pd.DataFrame({
+            'feature': feature_names,
+            'importance': feature_importance
+        })
+        importance_df = importance_df.sort_values('importance', ascending=False)
+        importance_csv_path = os.path.join(output_dir, f'{model_name}_feature_importance.csv')
+        importance_df.to_csv(importance_csv_path, index=False)
+        logging.info(f"Feature importances saved to {importance_csv_path}")
     
-    # ROC Curve (for binary classification)
+    # ROC Curve and data (for binary classification)
     if len(np.unique(y_test)) == 2:
-        fpr, tpr, _ = roc_curve(y_test, y_pred_proba[:, 1])
+        fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba[:, 1])
+        
+        # Save ROC curve data to CSV
+        roc_df = pd.DataFrame({
+            'fpr': fpr,
+            'tpr': tpr,
+            'thresholds': thresholds
+        })
+        roc_csv_path = os.path.join(output_dir, f'{model_name}_roc_curve_data.csv')
+        roc_df.to_csv(roc_csv_path, index=False)
+        logging.info(f"ROC curve data saved to {roc_csv_path}")
+        
+        # Plot ROC curve
         plt.figure(figsize=(10, 8))
         plt.plot(fpr, tpr, color='blue', label='ROC curve')
         plt.plot([0, 1], [0, 1], color='red', linestyle='--', label='Random Classifier')
@@ -176,25 +198,151 @@ def evaluate_xgb_model(
         roc_path = os.path.join(output_dir, f'{model_name}_roc_curve.png')
         plt.savefig(roc_path)
         plt.close()
-    
-    # Prepare predictions DataFrame
-    if id_series is not None:
-        predictions_df = pd.DataFrame({
-            'id': id_series,
-            'true_label': y_test,
-            'predicted_label': y_pred
+        
+        # Precision-Recall curve and data
+        precision, recall, pr_thresholds = precision_recall_curve(y_test, y_pred_proba[:, 1])
+        
+        # Save Precision-Recall curve data to CSV
+        pr_df = pd.DataFrame({
+            'precision': precision,
+            'recall': recall,
+            'thresholds': np.append(pr_thresholds, [1.0])  # Add 1.0 to match the length of precision/recall
         })
-        predictions_path = os.path.join(output_dir, 'predictions.csv')
-        predictions_df.to_csv(predictions_path, index=False)
-        logging.info(f"Predictions saved to {predictions_path}")
+        pr_csv_path = os.path.join(output_dir, f'{model_name}_precision_recall_curve_data.csv')
+        pr_df.to_csv(pr_csv_path, index=False)
+        logging.info(f"Precision-Recall curve data saved to {pr_csv_path}")
+        
+        # Plot Precision-Recall curve
+        plt.figure(figsize=(10, 8))
+        plt.plot(recall, precision, color='green', label='Precision-Recall curve')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title(f'{model_name} Precision-Recall Curve')
+        plt.legend(loc="upper right")
+        pr_path = os.path.join(output_dir, f'{model_name}_precision_recall_curve.png')
+        plt.savefig(pr_path)
+        plt.close()
+    
+    # For multiclass classification, save class-specific metrics
+    if len(np.unique(y_test)) > 2:
+        # Get class probabilities for each sample
+        class_probs = y_pred_proba
+        
+        # Save all prediction probabilities to CSV
+        # Create a DataFrame with predicted probabilities for each class
+        probs_df = pd.DataFrame(class_probs)
+        
+        # Rename columns to match class labels
+        probs_df.columns = [f'class_{i}_prob' for i in range(probs_df.shape[1])]
+        
+        # Add true and predicted labels
+        probs_df['true_label'] = y_test
+        probs_df['predicted_label'] = y_pred
+        
+        # Add ID column if available
+        if id_series is not None:
+            probs_df['id'] = id_series.values
+        
+        # Save to CSV
+        probs_csv_path = os.path.join(output_dir, f'{model_name}_class_probabilities.csv')
+        probs_df.to_csv(probs_csv_path, index=False)
+        logging.info(f"Class probabilities saved to {probs_csv_path}")
+        
+        # One-vs-Rest ROC curves for each class
+        plt.figure(figsize=(12, 10))
+        
+        # Create DataFrame to store all OvR ROC data
+        ovr_roc_data = []
+        
+        for i in range(len(np.unique(y_test))):
+            # Create binary labels (1 for current class, 0 for all others)
+            binary_y = (y_test == i).astype(int)
+            
+            # Calculate ROC curve for this class
+            fpr, tpr, thresholds = roc_curve(binary_y, class_probs[:, i])
+            
+            # Store data for this class
+            for j in range(len(fpr)):
+                ovr_roc_data.append({
+                    'class': i,
+                    'fpr': fpr[j],
+                    'tpr': tpr[j],
+                    'threshold': thresholds[j] if j < len(thresholds) else None
+                })
+            
+            # Plot this class's ROC curve
+            plt.plot(fpr, tpr, label=f'Class {i} (AUC = {roc_auc_score(binary_y, class_probs[:, i]):.2f})')
+        
+        # Save OvR ROC data to CSV
+        ovr_roc_df = pd.DataFrame(ovr_roc_data)
+        ovr_roc_csv_path = os.path.join(output_dir, f'{model_name}_ovr_roc_curve_data.csv')
+        ovr_roc_df.to_csv(ovr_roc_csv_path, index=False)
+        logging.info(f"One-vs-Rest ROC curve data saved to {ovr_roc_csv_path}")
+        
+        # Complete the OvR ROC plot
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title(f'{model_name} One-vs-Rest ROC Curves')
+        plt.legend(loc='lower right')
+        ovr_roc_path = os.path.join(output_dir, f'{model_name}_ovr_roc_curves.png')
+        plt.savefig(ovr_roc_path)
+        plt.close()
+    
+    # Prepare predictions DataFrame with all details
+    predictions_df = pd.DataFrame({
+        'true_label': y_test,
+        'predicted_label': y_pred
+    })
+    
+    # Add probabilities to predictions DataFrame
+    for i in range(y_pred_proba.shape[1]):
+        predictions_df[f'prob_class_{i}'] = y_pred_proba[:, i]
+    
+    # Add ID column if available
+    if id_series is not None:
+        predictions_df['id'] = id_series.values
+    
+    # Save predictions to CSV
+    predictions_path = os.path.join(output_dir, f'{model_name}_predictions.csv')
+    predictions_df.to_csv(predictions_path, index=False)
+    logging.info(f"Predictions with probabilities saved to {predictions_path}")
+    
+    # Save confusion matrix as CSV
+    cm_df = pd.DataFrame(cm)
+    cm_csv_path = os.path.join(output_dir, f'{model_name}_confusion_matrix.csv')
+    cm_df.to_csv(cm_csv_path, index=False, header=False)
+    logging.info(f"Confusion matrix saved to {cm_csv_path}")
+    
+    # Save classification report as CSV
+    class_report_df = pd.DataFrame(class_report).transpose()
+    report_csv_path = os.path.join(output_dir, f'{model_name}_classification_report.csv')
+    class_report_df.to_csv(report_csv_path)
+    logging.info(f"Classification report saved to {report_csv_path}")
     
     # Save results
     results = {
         'metrics': metrics,
         'confusion_matrix': cm.tolist(),
         'classification_report': class_report,
-        'confusion_matrix_path': cm_path
+        'confusion_matrix_path': cm_path,
+        'exported_files': {
+            'predictions': predictions_path,
+            'confusion_matrix_csv': cm_csv_path,
+            'classification_report_csv': report_csv_path
+        }
     }
+    
+    # Add paths of ROC and PR curve data files if they exist
+    if len(np.unique(y_test)) == 2:
+        results['exported_files']['roc_curve_data'] = roc_csv_path
+        results['exported_files']['precision_recall_curve_data'] = pr_csv_path
+    elif len(np.unique(y_test)) > 2:
+        results['exported_files']['ovr_roc_curve_data'] = ovr_roc_csv_path
+        results['exported_files']['class_probabilities'] = probs_csv_path
+    
+    if feature_names is not None:
+        results['exported_files']['feature_importance_csv'] = importance_csv_path
     
     # Save evaluation results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -205,8 +353,6 @@ def evaluate_xgb_model(
     logging.info(f"Evaluation results saved to {results_path}")
     
     return results
-
-
 def main():
     # Argument parsing
     parser = argparse.ArgumentParser(description='XGBoost Model Evaluation Script')
