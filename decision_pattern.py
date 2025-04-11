@@ -173,6 +173,19 @@ def analyze_decision_patterns(data_dict):
     categories = ['TP_data', 'TN_data', 'FP_data', 'FN_data']
     all_features = {}
     
+    # Add full dataset features extraction
+    all_features['full_df'] = []
+    for _, row in data_dict['full_df'].iterrows():
+        features = extract_decision_features(row['explanation'])
+        features['category'] = row['prediction_result']  # Store the prediction result as category
+        features['patient_id'] = row['patient_id']
+        features['true_label'] = row['true_label']  # Store true label for additional analysis
+        features['predicted_label'] = row['predicted_label']  # Store predicted label
+        all_features['full_df'].append(features)
+    
+    all_features['full_df'] = pd.DataFrame(all_features['full_df'])
+    
+    # Process individual categories as before
     for category in categories:
         if category in data_dict and not data_dict[category].empty:
             features_list = []
@@ -190,8 +203,8 @@ def analyze_decision_patterns(data_dict):
     
     for category, df in all_features.items():
         if not df.empty:
-            # Get all columns except 'category' and 'patient_id'
-            feature_cols = [col for col in df.columns if col not in ['category', 'patient_id']]
+            # Get all columns except 'category', 'patient_id', 'true_label', and 'predicted_label'
+            feature_cols = [col for col in df.columns if col not in ['category', 'patient_id', 'true_label', 'predicted_label']]
             all_feature_names.update(feature_cols)
             
             # Count non-null values for each feature
@@ -203,10 +216,10 @@ def analyze_decision_patterns(data_dict):
     comparison_data = []
     for feature in all_feature_names:
         row = {'feature': feature}
-        for category in categories:
+        for category in categories + ['full_df']:
             if category in feature_counts:
                 # Calculate percentage of records in the category that mention this feature
-                n_records = len(data_dict[category])
+                n_records = len(data_dict[category]) if category != 'full_df' else len(data_dict['full_df'])
                 count = feature_counts[category].get(feature, 0)
                 percentage = (count / n_records * 100) if n_records > 0 else 0
                 row[f'{category}_count'] = count
@@ -304,7 +317,7 @@ def analyze_decision_patterns(data_dict):
     decision_alignment = {category: {} for category in categories}
     
     for category, df in all_features.items():
-        if not df.empty and 'decision_indicator' in df.columns:
+        if category != 'full_df' and not df.empty and 'decision_indicator' in df.columns:
             expected_indicator = 'yes' if category in ['TP_data', 'FP_data'] else 'no'
             alignment_count = sum(df['decision_indicator'] == expected_indicator)
             total = sum(df['decision_indicator'].notna())
@@ -326,7 +339,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     
     Args:
         features_df (DataFrame): DataFrame with extracted features
-        category (str): The prediction category (TP, TN, FP, FN)
+        category (str): The prediction category (TP, TN, FP, FN, or 'full_df' for full dataset)
         output_filename (str): Filename for the output image
         
     Returns:
@@ -341,16 +354,24 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     # Add start node
     G.add_node("START")
     
-    # Add target node based on category
-    if category in ['TP_data', 'FP_data']:
-        target_node = "YES (Malnutrition)"
+    # Handle the full dataset case differently
+    if category == 'full_df':
+        # Create both target nodes for full dataset
+        yes_node = "YES (Malnutrition)"
+        no_node = "NO (No Malnutrition)"
+        G.add_node(yes_node)
+        G.add_node(no_node)
     else:
-        target_node = "NO (No Malnutrition)"
+        # Add target node based on category
+        if category in ['TP_data', 'FP_data']:
+            target_node = "YES (Malnutrition)"
+        else:
+            target_node = "NO (No Malnutrition)"
     
     # Count feature occurrences
     feature_counts = {}
     for col in features_df.columns:
-        if col not in ['category', 'patient_id']:
+        if col not in ['category', 'patient_id', 'true_label', 'predicted_label']:
             # Count non-null values
             feature_counts[col] = sum(features_df[col].notna())
     
@@ -361,30 +382,59 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     top_features = [f for f, c in sorted_features[:10] if c > 0]
     
     # Build the graph structure
-    if top_features:
-        G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
-        
-        for i in range(len(top_features) - 1):
-            G.add_edge(top_features[i], top_features[i+1], 
-                      weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
-        
-        G.add_edge(top_features[-1], target_node, weight=feature_counts[top_features[-1]])
+    if category == 'full_df':
+        # For full dataset, split flows to both YES and NO nodes
+        if top_features:
+            G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
+            
+            for i in range(len(top_features) - 1):
+                G.add_edge(top_features[i], top_features[i+1], 
+                          weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
+            
+            # Split the flow proportionally based on predicted labels
+            yes_count = sum(features_df['predicted_label'] == 1)
+            no_count = sum(features_df['predicted_label'] == 0)
+            
+            # Connect last feature to both target nodes
+            G.add_edge(top_features[-1], yes_node, weight=yes_count)
+            G.add_edge(top_features[-1], no_node, weight=no_count)
+    else:
+        # Original logic for individual categories
+        if top_features:
+            G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
+            
+            for i in range(len(top_features) - 1):
+                G.add_edge(top_features[i], top_features[i+1], 
+                          weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
+            
+            G.add_edge(top_features[-1], target_node, weight=feature_counts[top_features[-1]])
     
     # Add decision indicator if available
     if 'decision_indicator' in features_df.columns:
         indicator_counts = features_df['decision_indicator'].value_counts()
         
-        if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
-            if 'yes' not in G.nodes():
+        if category == 'full_df':
+            # For full dataset, route yes/no indicators to appropriate target nodes
+            if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
                 G.add_node('Explicit YES')
-            G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
-            G.add_edge('Explicit YES', target_node, weight=indicator_counts['yes'])
-        
-        if 'no' in indicator_counts and indicator_counts['no'] > 0:
-            if 'no' not in G.nodes():
+                G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
+                G.add_edge('Explicit YES', yes_node, weight=indicator_counts['yes'])
+            
+            if 'no' in indicator_counts and indicator_counts['no'] > 0:
                 G.add_node('Explicit NO')
-            G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
-            G.add_edge('Explicit NO', target_node, weight=indicator_counts['no'])
+                G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
+                G.add_edge('Explicit NO', no_node, weight=indicator_counts['no'])
+        else:
+            # Original logic for individual categories
+            if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
+                G.add_node('Explicit YES')
+                G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
+                G.add_edge('Explicit YES', target_node, weight=indicator_counts['yes'])
+            
+            if 'no' in indicator_counts and indicator_counts['no'] > 0:
+                G.add_node('Explicit NO')
+                G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
+                G.add_edge('Explicit NO', target_node, weight=indicator_counts['no'])
     
     # Add confidence level if available
     if 'confidence' in features_df.columns:
@@ -395,7 +445,17 @@ def create_decision_flow_diagram(features_df, category, output_filename):
                 node_name = f'Confidence: {level}'
                 G.add_node(node_name)
                 G.add_edge("START", node_name, weight=count)
-                G.add_edge(node_name, target_node, weight=count)
+                
+                if category == 'full_df':
+                    # For full dataset, split confidence flows based on predicted labels
+                    high_confidence_yes = sum((features_df['confidence'] == level) & (features_df['predicted_label'] == 1))
+                    high_confidence_no = sum((features_df['confidence'] == level) & (features_df['predicted_label'] == 0))
+                    
+                    G.add_edge(node_name, yes_node, weight=high_confidence_yes)
+                    G.add_edge(node_name, no_node, weight=high_confidence_no)
+                else:
+                    # Original logic
+                    G.add_edge(node_name, target_node, weight=count)
     
     # Visualize the graph
     plt.figure(figsize=(14, 10))
@@ -412,7 +472,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     for node in G.nodes():
         if node == "START":
             node_colors.append("#3498db")  # Blue
-        elif node == target_node:
+        elif node in ["YES (Malnutrition)", "NO (No Malnutrition)"]:
             node_colors.append("#2ecc71" if "YES" in node else "#e74c3c")  # Green or Red
         elif "Confidence" in node:
             node_colors.append("#f39c12")  # Orange
@@ -424,7 +484,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     # Node sizes based on importance
     node_sizes = []
     for node in G.nodes():
-        if node in ["START", target_node, "Explicit YES", "Explicit NO"]:
+        if node in ["START", "YES (Malnutrition)", "NO (No Malnutrition)", "Explicit YES", "Explicit NO"]:
             node_sizes.append(3000)
         elif "Confidence" in node:
             node_sizes.append(2500)
@@ -456,14 +516,15 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
     
     # Add title
-    plt.title(f"Decision Flow Diagram for {category}", fontsize=16)
+    category_name = "Full Dataset" if category == "full_df" else category
+    plt.title(f"Decision Flow Diagram for {category_name}", fontsize=16)
     plt.axis('off')
     plt.tight_layout()
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     plt.close()
     
     return G, pos
-
+        
 def analyze_feature_differences(data_dict, analysis_results):
     """
     Analyze feature differences between correct and incorrect predictions
@@ -497,12 +558,12 @@ def analyze_feature_differences(data_dict, analysis_results):
     # Count feature mentions
     correct_mentions = {}
     for col in correct_features.columns:
-        if col not in ['category', 'patient_id']:
+        if col not in ['category', 'patient_id', 'true_label', 'predicted_label']:
             correct_mentions[col] = sum(correct_features[col].notna())
     
     incorrect_mentions = {}
     for col in incorrect_features.columns:
-        if col not in ['category', 'patient_id']:
+        if col not in ['category', 'patient_id', 'true_label', 'predicted_label']:
             incorrect_mentions[col] = sum(incorrect_features[col].notna())
     
     # Create comparison DataFrame
@@ -541,7 +602,7 @@ def analyze_feature_differences(data_dict, analysis_results):
         plt.title('Feature Importance Difference: Correct vs Incorrect Predictions')
         plt.xlabel('Difference in Percentage Points (Correct - Incorrect)')
         plt.tight_layout()
-        plt.savefig('feature_difference_analysis.png')
+        plt.savefig('feature_differences.png')
         plt.close()
     
     return diff_df
@@ -571,6 +632,14 @@ def analyze_llm_explanations(file_path):
                     category,
                     f'decision_flow_{category}.png'
                 )
+    
+    # Also create a flow diagram for the full dataset
+    if 'full_df' in decision_patterns['all_features']:
+        create_decision_flow_diagram(
+            decision_patterns['all_features']['full_df'],
+            'full_df',
+            'decision_flow_full_dataset.png'
+        )
     
     # Analyze feature differences
     feature_differences = analyze_feature_differences(data_dict, decision_patterns)
@@ -605,7 +674,139 @@ def analyze_llm_explanations(file_path):
     
     return results
 
+# Function to create word clouds from explanations
+def create_explanation_wordclouds(data_dict):
+    """
+    Create word clouds from explanations for each category
+    
+    Args:
+        data_dict (dict): Dictionary containing DataFrames with prediction results
+    """
+    from wordcloud import WordCloud
+    import matplotlib.pyplot as plt
+    from nltk.corpus import stopwords
+    
+    # Get stopwords
+    stop_words = set(stopwords.words('english'))
+    
+    # Add domain specific stopwords
+    domain_stopwords = {'patient', 'malnutrition', 'based', 'indicates', 'shows', 'evidence',
+                       'since', 'therefore', 'however', 'thus', 'also', 'due', 'because', 'given'}
+    stop_words.update(domain_stopwords)
+    
+    # Create a word cloud for each category
+    categories = ['TP_data', 'TN_data', 'FP_data', 'FN_data']
+    
+    for category in categories:
+        if category in data_dict and not data_dict[category].empty:
+            # Combine all explanations
+            text = ' '.join(data_dict[category]['explanation'].astype(str))
+            
+            # Create wordcloud
+            wordcloud = WordCloud(width=800, height=400, 
+                                background_color='white',
+                                stopwords=stop_words,
+                                max_words=100,
+                                collocations=False).generate(text)
+            
+            # Display
+            plt.figure(figsize=(10, 5))
+            plt.imshow(wordcloud, interpolation='bilinear')
+            plt.axis('off')
+            plt.title(f'Word Cloud for {category}')
+            plt.tight_layout()
+            plt.savefig(f'wordcloud_{category}.png')
+            plt.close()
+    
+    # Also create a combined wordcloud for correct vs incorrect
+    correct_text = ' '.join(data_dict['correct_predictions']['explanation'].astype(str))
+    incorrect_text = ' '.join(data_dict['incorrect_predictions']['explanation'].astype(str))
+    
+    # Create wordclouds
+    correct_cloud = WordCloud(width=800, height=400, 
+                           background_color='white',
+                           stopwords=stop_words,
+                           max_words=100,
+                           collocations=False).generate(correct_text)
+    
+    incorrect_cloud = WordCloud(width=800, height=400, 
+                             background_color='white',
+                             stopwords=stop_words,
+                             max_words=100,
+                             collocations=False).generate(incorrect_text)
+    
+    # Display side by side
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    ax1.imshow(correct_cloud, interpolation='bilinear')
+    ax1.set_title('Correct Predictions')
+    ax1.axis('off')
+    
+    ax2.imshow(incorrect_cloud, interpolation='bilinear')
+    ax2.set_title('Incorrect Predictions')
+    ax2.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig('wordcloud_comparison.png')
+    plt.close()
+
+# Function to analyze feature co-occurrence
+def analyze_feature_cooccurrence(decision_patterns):
+    """
+    Analyze which features tend to co-occur in explanations
+    
+    Args:
+        decision_patterns (dict): Decision pattern analysis results
+        
+    Returns:
+        DataFrame: Co-occurrence matrix
+    """
+    # Get the full dataframe with all features
+    all_features_df = decision_patterns['all_features']['full_df']
+    
+    # Get feature columns (exclude metadata columns)
+    feature_cols = [col for col in all_features_df.columns 
+                   if col not in ['category', 'patient_id', 'true_label', 'predicted_label']]
+    
+    # Create co-occurrence matrix
+    cooccurrence = pd.DataFrame(index=feature_cols, columns=feature_cols)
+    
+    # Fill matrix with co-occurrence counts
+    for i, feature1 in enumerate(feature_cols):
+        for feature2 in feature_cols:
+            # Count how many times both features appear in the same explanation
+            cooccur_count = sum((all_features_df[feature1].notna()) & (all_features_df[feature2].notna()))
+            cooccurrence.loc[feature1, feature2] = cooccur_count
+    
+    # Visualize top co-occurrences
+    # Focus on features that appear a minimum number of times
+    min_occurrences = 5
+    frequent_features = [col for col in feature_cols 
+                        if sum(all_features_df[col].notna()) >= min_occurrences]
+    
+    # Create a heatmap for frequent features
+    if frequent_features:
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(cooccurrence.loc[frequent_features, frequent_features], 
+                   annot=True, cmap='YlGnBu', fmt='g')
+        plt.title('Feature Co-occurrence Matrix')
+        plt.tight_layout()
+        plt.savefig('feature_cooccurrence.png')
+        plt.close()
+    
+    return cooccurrence
+
 # Main execution
 if __name__ == "__main__":
+    # Set the file path to your predictions CSV
     file_path = "./LLM_pre_eval/gemma/predictions.csv" 
+    
+    # Run the analysis
     analysis_results = analyze_llm_explanations(file_path)
+    
+    # Create additional visualizations
+    create_explanation_wordclouds(analysis_results['data'])
+    
+    # Analyze feature co-occurrence
+    cooccurrence = analyze_feature_cooccurrence(analysis_results['decision_patterns'])
+    
+    print("\nAnalysis complete! Check the generated images for visualizations.")
