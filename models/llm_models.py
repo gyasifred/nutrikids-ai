@@ -89,10 +89,12 @@ def evaluate_predictions(
     y_scores: Optional[List[float]] = None 
 ) -> Dict[str, Any]:
     """Evaluate model predictions and return comprehensive metrics.
+    
     Args:
         y_true (List[Any]): Ground truth labels (1/0 or "yes"/"no")
         y_pred (List[Any]): Predicted labels (1/0 or "yes"/"no")
         y_scores (Optional[List[float]]): Prediction scores/probabilities (optional)
+        
     Returns:
         Dict[str, Any]: Dictionary containing evaluation metrics
     """
@@ -139,18 +141,20 @@ def evaluate_predictions(
     if y_scores is not None:
         try:
             # ROC Curve
-            fpr, tpr, _ = roc_curve(y_true_binary, y_scores)
+            fpr, tpr, thresholds_roc = roc_curve(y_true_binary, y_scores)
             roc_auc = auc(fpr, tpr)
             
             # Precision-Recall Curve
-            precision_curve, recall_curve, _ = precision_recall_curve(y_true_binary, y_scores)
+            precision_curve, recall_curve, thresholds_pr = precision_recall_curve(y_true_binary, y_scores)
             avg_precision = average_precision_score(y_true_binary, y_scores)
             
             metrics.update({
                 'fpr': fpr.tolist(),
                 'tpr': tpr.tolist(),
+                'thresholds_roc': thresholds_roc.tolist(),
                 'precision_curve': precision_curve.tolist(),
                 'recall_curve': recall_curve.tolist(),
+                'thresholds_pr': thresholds_pr.tolist() if len(thresholds_pr) > 0 else [],
                 'auc': float(roc_auc),
                 'avg_precision': float(avg_precision)
             })
@@ -159,113 +163,227 @@ def evaluate_predictions(
     
     return metrics
 
-def plot_evaluation_metrics(metrics: Dict[str, Any], output_dir: str):
-    """Create and save visualizations for evaluation metrics.
+
+def save_metrics_to_csv(metrics, metrics_csv_path):
+    """Save metrics to CSV file.
+    
     Args:
         metrics (Dict[str, Any]): Dictionary containing evaluation metrics
-        output_dir (str): Directory to save plots to
+        metrics_csv_path (str): Path to save metrics CSV
     """
-    os.makedirs(output_dir, exist_ok=True)
+    # Save basic metrics
+    basic_metrics = {
+        'Metric': ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'AUC', 'Average Precision'],
+        'Value': [
+            metrics['accuracy'], 
+            metrics['precision'], 
+            metrics['recall'], 
+            metrics['f1'], 
+            metrics.get('auc', 0.0), 
+            metrics.get('avg_precision', 0.0)
+        ]
+    }
+    pd.DataFrame(basic_metrics).to_csv(metrics_csv_path, index=False)
     
-    # 1. Plot confusion matrix
-    plt.figure(figsize=(8, 6))
+    # Save raw ROC curve data
+    if 'fpr' in metrics and len(metrics['fpr']) > 0:
+        output_dir = os.path.dirname(metrics_csv_path)
+        
+        # ROC curve data
+        roc_data = pd.DataFrame({
+            'False Positive Rate': metrics['fpr'],
+            'True Positive Rate': metrics['tpr'],
+            'Thresholds': metrics.get('thresholds_roc', [0.0] * len(metrics['fpr']))
+        })
+        roc_csv_path = os.path.join(output_dir, 'roc_curve_data.csv')
+        roc_data.to_csv(roc_csv_path, index=False)
+        print(f"ROC curve data saved to {roc_csv_path}")
+        
+        # Precision-Recall curve data
+        pr_data = pd.DataFrame({
+            'Precision': metrics['precision_curve'],
+            'Recall': metrics['recall_curve'],
+            'Thresholds': metrics.get('thresholds_pr', [0.0] * len(metrics['precision_curve'])) + [0.0] if len(metrics['precision_curve']) > len(metrics.get('thresholds_pr', [])) else metrics.get('thresholds_pr', [0.0] * len(metrics['precision_curve']))
+        })
+        pr_csv_path = os.path.join(output_dir, 'precision_recall_curve_data.csv')
+        pr_data.to_csv(pr_csv_path, index=False)
+        print(f"Precision-Recall curve data saved to {pr_csv_path}")
+        
+        # Confusion matrix
+        if 'confusion_matrix' in metrics:
+            cm_data = pd.DataFrame(
+                metrics['confusion_matrix'],
+                index=['Actual No', 'Actual Yes'],
+                columns=['Predicted No', 'Predicted Yes']
+            )
+            cm_csv_path = os.path.join(output_dir, 'confusion_matrix.csv')
+            cm_data.to_csv(cm_csv_path)
+            print(f"Confusion matrix saved to {cm_csv_path}")
+
+
+def plot_evaluation_metrics(metrics, output_dir):
+    """Generate and save evaluation metric plots.
+    
+    Args:
+        metrics (Dict[str, Any]): Dictionary containing evaluation metrics
+        output_dir (str): Directory to save the plots
+    """
+    # Create plots directory if it doesn't exist
+    plots_dir = os.path.join(output_dir, "plots")
+    os.makedirs(plots_dir, exist_ok=True)
+    
+    # Plot confusion matrix
+    fig, ax = plt.subplots(figsize=(8, 6))
     cm = np.array(metrics['confusion_matrix'])
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=["No", "Yes"],
-                yticklabels=["No", "Yes"])
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, 
+                xticklabels=['Predicted No', 'Predicted Yes'],
+                yticklabels=['Actual No', 'Actual Yes'])
     plt.title('Confusion Matrix')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'))
+    plt.savefig(os.path.join(plots_dir, 'confusion_matrix.png'), dpi=300)
     plt.close()
     
-    # 4. Plot metrics summary
-    plt.figure(figsize=(10, 6))
-    metrics_to_plot = ['accuracy', 'precision', 'recall', 'f1']
-    values = [metrics[m] for m in metrics_to_plot]
-    colors = ['#3498db', '#2ecc71', '#f39c12', '#e74c3c']
-    bars = plt.bar(metrics_to_plot, values, color=colors)
-    plt.ylim(0, 1.0)
-    plt.title('Classification Metrics Summary')
-    plt.grid(True, linestyle='--', alpha=0.3, axis='y')
+    # Plot ROC curve if available
+    if 'fpr' in metrics and len(metrics['fpr']) > 0:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        plt.plot(metrics['fpr'], metrics['tpr'], label=f'ROC curve (AUC = {metrics["auc"]:.3f})')
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plt.savefig(os.path.join(plots_dir, 'roc_curve.png'), dpi=300)
+        plt.close()
+        
+        # Plot Precision-Recall curve
+        fig, ax = plt.subplots(figsize=(10, 8))
+        plt.plot(metrics['recall_curve'], metrics['precision_curve'], 
+                 label=f'Precision-Recall curve (AP = {metrics["avg_precision"]:.3f})')
+        plt.axhline(y=sum(y_true)/len(y_true), color='r', linestyle='--', 
+                    label=f'Baseline (Prevalence = {sum(y_true)/len(y_true):.3f})')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve')
+        plt.legend(loc="best")
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plt.savefig(os.path.join(plots_dir, 'precision_recall_curve.png'), dpi=300)
+        plt.close()
+        
+        # Generate a calibration curve if scores are available
+        if 'thresholds_roc' in metrics:
+            try:
+                # Create calibration curve data
+                # Group predictions into bins and calculate observed vs expected rates
+                bin_count = min(10, len(set(np.array(y_scores) * 100).astype(int)))
+                if bin_count > 1:
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    plt.plot([0, 1], [0, 1], 'k--', label='Perfectly calibrated')
+                    
+                    # sklearn calibration_curve function
+                    prob_true, prob_pred = calibration_curve(y_true, y_scores, n_bins=bin_count)
+                    plt.plot(prob_pred, prob_true, 's-', label=f'Model calibration (bins={bin_count})')
+                    
+                    plt.xlabel('Mean predicted probability')
+                    plt.ylabel('Fraction of positives')
+                    plt.title('Calibration Curve')
+                    plt.legend(loc='best')
+                    plt.grid(True, linestyle='--', alpha=0.7)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(plots_dir, 'calibration_curve.png'), dpi=300)
+                    plt.close()
+                    
+                    # Save calibration data to CSV
+                    calibration_data = pd.DataFrame({
+                        'Mean Predicted Probability': prob_pred,
+                        'Observed Fraction of Positives': prob_true
+                    })
+                    calibration_csv_path = os.path.join(output_dir, 'calibration_curve_data.csv')
+                    calibration_data.to_csv(calibration_csv_path, index=False)
+                    print(f"Calibration curve data saved to {calibration_csv_path}")
+            except Exception as e:
+                print(f"Warning: Could not generate calibration curve: {e}")
+                
+    # Plot metrics distribution with bar chart
+    fig, ax = plt.subplots(figsize=(10, 6))
+    metrics_labels = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'AUC']
+    metrics_values = [
+        metrics['accuracy'], 
+        metrics['precision'], 
+        metrics['recall'], 
+        metrics['f1'], 
+        metrics.get('auc', 0)
+    ]
+    plt.bar(metrics_labels, metrics_values, color=['steelblue', 'forestgreen', 'indianred', 'mediumpurple', 'goldenrod'])
+    plt.ylim([0, 1.05])
+    plt.ylabel('Score')
+    plt.title('Performance Metrics Overview')
+    plt.grid(True, linestyle='--', alpha=0.7, axis='y')
     
     # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height + 0.02,
-                 f'{height:.3f}', ha='center', va='bottom')
+    for i, v in enumerate(metrics_values):
+        plt.text(i, v + 0.02, f'{v:.3f}', ha='center')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'metrics_summary.png'))
+    plt.savefig(os.path.join(plots_dir, 'metrics_summary.png'), dpi=300)
     plt.close()
-
-def save_metrics_to_csv(metrics: Dict[str, Any], output_path: str):
-    """Save main evaluation metrics to CSV file.
-
-    Args:
-        metrics (Dict[str, Any]): Dictionary containing evaluation metrics
-        output_path (str): Path to save the CSV file
-    """
-    # Extract main metrics for CSV
-    main_metrics = {
-        'accuracy': metrics['accuracy'],
-        'precision': metrics['precision'],
-        'recall': metrics['recall'],
-        'f1': metrics['f1'],
-        'auc': metrics['auc'],
-        'avg_precision': metrics['avg_precision']
-    }
-
-    # Convert to DataFrame
-    df = pd.DataFrame([main_metrics])
-
-    # Save CSV
-    df.to_csv(output_path, index=False)
+    
+    print(f"Evaluation plots saved to {plots_dir}")
 
 
-def print_metrics_report(metrics: Dict[str, Any]):
-    """Print a formatted report of metrics to the terminal.
-
+def print_metrics_report(metrics):
+    """Print a comprehensive metrics report to the console.
+    
     Args:
         metrics (Dict[str, Any]): Dictionary containing evaluation metrics
     """
     print("\n" + "="*50)
-    print("MALNUTRITION DETECTION PERFORMANCE METRICS")
+    print(" "*15 + "EVALUATION RESULTS")
     print("="*50)
-
-    print(f"\nACCURACY:      {metrics['accuracy']:.4f}")
-    print(f"PRECISION:     {metrics['precision']:.4f}")
-    print(f"RECALL:        {metrics['recall']:.4f}")
-    print(f"F1 SCORE:      {metrics['f1']:.4f}")
-
-    if metrics['auc'] > 0:
-        print(f"AUC:           {metrics['auc']:.4f}")
-        print(f"AVG PRECISION: {metrics['avg_precision']:.4f}")
-
-    print("\nCONFUSION MATRIX:")
+    
+    print(f"\nBasic Metrics:")
+    print(f"  - Accuracy:    {metrics['accuracy']:.4f}")
+    print(f"  - Precision:   {metrics['precision']:.4f}")
+    print(f"  - Recall:      {metrics['recall']:.4f}")
+    print(f"  - F1 Score:    {metrics['f1']:.4f}")
+    
+    if 'auc' in metrics and metrics['auc'] > 0:
+        print(f"  - AUC:         {metrics['auc']:.4f}")
+        print(f"  - Avg Precision: {metrics['avg_precision']:.4f}")
+    
+    print("\nConfusion Matrix:")
     cm = np.array(metrics['confusion_matrix'])
-    print(f"                  Predicted")
-    print(f"                  No    Yes")
-    print(f"Actual    No     {cm[0][0]:<5d} {cm[0][1]:<5d}")
-    print(f"          Yes    {cm[1][0]:<5d} {cm[1][1]:<5d}")
-
-    print("\nCLASSIFICATION REPORT:")
-    # Extract relevant information from classification report
-    report = metrics['classification_report']
-
-    # Format as a table
-    print(f"              precision    recall  f1-score   support")
-    print(
-        f"no           {report['no']['precision']:.4f}      {report['no']['recall']:.4f}    {report['no']['f1-score']:.4f}      {int(report['no']['support'])}")
-    print(
-        f"yes          {report['yes']['precision']:.4f}      {report['yes']['recall']:.4f}    {report['yes']['f1-score']:.4f}      {int(report['yes']['support'])}")
-    print(
-        f"accuracy                          {report['accuracy']:.4f}      {int(report['macro avg']['support'])}")
-    print(f"macro avg    {report['macro avg']['precision']:.4f}      {report['macro avg']['recall']:.4f}    {report['macro avg']['f1-score']:.4f}      {int(report['macro avg']['support'])}")
-    print(f"weighted avg {report['weighted avg']['precision']:.4f}      {report['weighted avg']['recall']:.4f}    {report['weighted avg']['f1-score']:.4f}      {int(report['weighted avg']['support'])}")
-
-    print("\n" + "="*50 + "\n")
+    print(f"  [True Neg: {cm[0][0]}, False Pos: {cm[0][1]}]")
+    print(f"  [False Neg: {cm[1][0]}, True Pos: {cm[1][1]}]")
+    
+    # Calculate additional metrics
+    tn, fp, fn, tp = cm.flatten()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
+    prevalence = (tp + fn) / (tp + fp + tn + fn)
+    
+    print("\nAdditional Metrics:")
+    print(f"  - Specificity: {specificity:.4f}")
+    print(f"  - NPV:         {npv:.4f}")
+    print(f"  - Prevalence:  {prevalence:.4f}")
+    
+    print("\nClassification Report by Class:")
+    for class_name, metrics_dict in metrics['classification_report'].items():
+        if class_name in ['0', '1', 'no', 'yes']:
+            class_display = 'No' if class_name in ['0', 'no'] else 'Yes'
+            print(f"  - Class: {class_display}")
+            print(f"    * Precision: {metrics_dict['precision']:.4f}")
+            print(f"    * Recall:    {metrics_dict['recall']:.4f}")
+            print(f"    * F1-Score:  {metrics_dict['f1-score']:.4f}")
+            print(f"    * Support:   {metrics_dict['support']}")
+    
+    print("="*50)
 
 class MalnutritionPromptBuilder:
     """A class to manage the creation of malnutrition prompts for various scenarios."""
