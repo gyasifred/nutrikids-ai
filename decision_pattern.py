@@ -85,6 +85,10 @@ def extract_decision_features(explanation_text):
     Returns:
         dict: Dictionary of features and their mentions
     """
+    # Ensure explanation_text is a string
+    if not isinstance(explanation_text, str):
+        explanation_text = str(explanation_text) if explanation_text is not None else ''
+    
     # Define patterns for common criteria
     patterns = {
         # Anthropometric measurements
@@ -158,6 +162,7 @@ def extract_decision_features(explanation_text):
         features['decision_indicator'] = 'no'
 
     return features
+
 
 def analyze_decision_patterns(data_dict):
     """
