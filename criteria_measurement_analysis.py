@@ -785,33 +785,32 @@ CLINICAL FACTOR ANALYSIS
 """)
     
     # Symptoms
-    report_sections.append("
-Top clinical symptoms associated with malnutrition:")
+   # Clinical Symptoms
+    report_sections.append("Top clinical symptoms associated with malnutrition:")
     top_symptoms = results['symptom_analysis'].nlargest(5, 'prevalence_ratio')
     for _, row in top_symptoms.iterrows():
         report_sections.append(
             f"- {row['symptom']}: PR={row['prevalence_ratio']:.1f}, "
             f"AR={row['attributable_risk']:.2f}"
         )
-    
+
     # Dietary factors
-    report_sections.append("
-Top dietary factors associated with malnutrition:")
+    report_sections.append("Top dietary factors associated with malnutrition:")
     top_dietary = results['dietary_analysis'].nlargest(5, 'odds_ratio')
     for _, row in top_dietary.iterrows():
         report_sections.append(
             f"- {row['factor']}: OR={row['odds_ratio']:.1f}"
         )
-    
+
     # Risk factors
-    report_sections.append("
-Top risk factors associated with malnutrition:")
+    report_sections.append("Top risk factors associated with malnutrition:")
     top_risk = results['risk_factor_analysis'].nlargest(5, 'relative_risk')
     for _, row in top_risk.iterrows():
         report_sections.append(
             f"- {row['factor']}: RR={row['relative_risk']:.1f}, "
             f"AR={row['attributable_risk']:.2f}"
         )
+
     
     # 6. NEW: Reasoning Analysis Summary
     report_sections.append("""
@@ -855,29 +854,29 @@ REASONING ANALYSIS SUMMARY
         overconf_ratio = avg_incorrect_overconf / avg_correct_overconf if avg_correct_overconf > 0 else float('inf')
         
         report_sections.append(f"""
-Hallucinations comparison:
-- Correct predictions: {avg_correct_hall:.2f} per record
-- Incorrect predictions: {avg_incorrect_hall:.2f} per record
-- Ratio (incorrect/correct): {hall_ratio:.2f}x
+    Hallucinations comparison:
+    - Correct predictions: {avg_correct_hall:.2f} per record
+    - Incorrect predictions: {avg_incorrect_hall:.2f} per record
+    - Ratio (incorrect/correct): {hall_ratio:.2f}x
 
-Unsupported claims comparison:
-- Correct predictions: {avg_correct_unsupp:.2f} per record
-- Incorrect predictions: {avg_incorrect_unsupp:.2f} per record
-- Ratio (incorrect/correct): {unsupp_ratio:.2f}x
+    Unsupported claims comparison:
+    - Correct predictions: {avg_correct_unsupp:.2f} per record
+    - Incorrect predictions: {avg_incorrect_unsupp:.2f} per record
+    - Ratio (incorrect/correct): {unsupp_ratio:.2f}x
 
-Overconfident statements comparison:
-- Correct predictions: {avg_correct_overconf:.2f} per record
-- Incorrect predictions: {avg_incorrect_overconf:.2f} per record
-- Ratio (incorrect/correct): {overconf_ratio:.2f}x
-""")
+    Overconfident statements comparison:
+    - Correct predictions: {avg_correct_overconf:.2f} per record
+    - Incorrect predictions: {avg_incorrect_overconf:.2f} per record
+    - Ratio (incorrect/correct): {overconf_ratio:.2f}x
+    """)
     
     # 7. Recommendations
     report_sections.append("""
 
-RECOMMENDATIONS
----------------
-""")
-    
+    RECOMMENDATIONS
+    ---------------
+    """)
+            
     # Clinical criteria recommendations
     top_incorrect = comparative_results['correct_vs_incorrect']['FP_data'].nlargest(5, 'risk_ratio')
     report_sections.append("1. Focus on improving recognition of: " + ", ".join(top_incorrect['criteria'].tolist()[:3]))
@@ -896,12 +895,12 @@ RECOMMENDATIONS
         report_sections.append(f"4. Focus on reducing {max_issue} in model explanations.")
     
     report_sections.append("""
-5. Improve annotation guidelines to promote:
-   - Evidence-based reasoning
-   - Appropriate confidence calibration
-   - Clear citation of specific observations from original notes
-""")
-    
+    5. Improve annotation guidelines to promote:
+    - Evidence-based reasoning
+    - Appropriate confidence calibration
+    - Clear citation of specific observations from original notes
+    """)
+        
     # Save full report
     with open('results/full_analysis_report.txt', 'w') as f:
         f.write("\n".join(report_sections))
