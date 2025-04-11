@@ -28,6 +28,290 @@ plt.rcParams['figure.figsize'] = [12, 8]
 plt.rcParams['font.size'] = 12
 warnings.filterwarnings('ignore', category=UserWarning)
 
+def compare_explanation_with_note(explanations, notes):
+    """
+    Compare explanations with their corresponding original notes to assess alignment.
+    
+    Args:
+        explanations (pd.Series): Series containing explanation texts
+        notes (pd.Series): Series containing original clinical notes
+        
+    Returns:
+        dict: Analysis results including alignment metrics and overlapping content
+    """
+    from sklearn.feature_extraction.text import CountVectorizer
+    import numpy as np
+    
+    results = {
+        'alignment_scores': [],
+        'key_term_overlap': [],
+        'novel_terms_in_explanation': [],
+        'missing_key_terms': []
+    }
+    
+    # Preprocess both explanations and notes
+    processed_explanations = [preprocess_text(text) for text in explanations]
+    processed_notes = [preprocess_text(text) for text in notes]
+    
+    # For each explanation-note pair
+    for exp, note in zip(processed_explanations, processed_notes):
+        # Calculate term overlap using Jaccard similarity
+        exp_terms = set(exp.split())
+        note_terms = set(note.split())
+        
+        # Calculate Jaccard similarity
+        if len(exp_terms.union(note_terms)) > 0:
+            jaccard = len(exp_terms.intersection(note_terms)) / len(exp_terms.union(note_terms))
+        else:
+            jaccard = 0
+            
+        results['alignment_scores'].append(jaccard)
+        
+        # Find overlapping key terms
+        overlap = exp_terms.intersection(note_terms)
+        results['key_term_overlap'].append(list(overlap))
+        
+        # Find terms in explanation not in note (potential hallucinations)
+        novel_terms = exp_terms - note_terms
+        results['novel_terms_in_explanation'].append(list(novel_terms))
+        
+        # Find key terms from note missing in explanation
+        missing_terms = note_terms - exp_terms
+        results['missing_key_terms'].append(list(missing_terms))
+    
+    # Calculate average alignment score
+    results['mean_alignment_score'] = np.mean(results['alignment_scores'])
+    
+    # Calculate percentage of explanations with low alignment (<0.3)
+    results['low_alignment_rate'] = sum(1 for score in results['alignment_scores'] if score < 0.3) / len(results['alignment_scores'])
+    
+    return results
+
+def analyze_evidence_support(explanations, notes):
+    """
+    Analyze the strength of evidence support in explanations based on original notes.
+    
+    Args:
+        explanations (pd.Series): Series containing explanation texts
+        notes (pd.Series): Series containing original clinical notes
+        
+    Returns:
+        dict: Analysis results including evidence support metrics
+    """
+    import re
+    import numpy as np
+    
+    # Common clinical indicators that might be used as evidence
+    clinical_indicators = [
+        'bmi', 'weight', 'height', 'malnutrition', 'nutrient', 'deficiency', 
+        'protein', 'calorie', 'intake', 'diet', 'supplement', 'feeding',
+        'appetite', 'vitamin', 'mineral', 'albumin', 'loss', 'gain',
+        'underweight', 'overweight', 'obese', 'thin', 'emaciated'
+    ]
+    
+    results = {
+        'score': [],
+        'evidence_count': [],
+        'unsupported_claims': []
+    }
+    
+    for exp, note in zip(explanations, notes):
+        exp_lower = exp.lower()
+        note_lower = note.lower()
+        
+        # 1. Count clinical indicators mentioned in both explanation and note
+        supported_indicators = 0
+        unsupported_indicators = 0
+        unsupported_claims = []
+        
+        for indicator in clinical_indicators:
+            if indicator in exp_lower:
+                if indicator in note_lower:
+                    supported_indicators += 1
+                else:
+                    unsupported_indicators += 1
+                    unsupported_claims.append(indicator)
+        
+        # 2. Calculate evidence support score (higher is better)
+        if supported_indicators + unsupported_indicators > 0:
+            support_score = supported_indicators / (supported_indicators + unsupported_indicators)
+        else:
+            support_score = 0
+            
+        results['score'].append(support_score)
+        results['evidence_count'].append(supported_indicators)
+        results['unsupported_claims'].append(unsupported_claims)
+    
+    # Calculate average evidence support score
+    results['mean_support_score'] = np.mean(results['score'])
+    
+    # Calculate percentage of explanations with low evidence support (<0.5)
+    results['low_support_rate'] = sum(1 for score in results['score'] if score < 0.5) / len(results['score'])
+    
+    return results
+
+def detect_hallucinations(explanations, notes):
+    """
+    Detect potential hallucinations (information in explanations not found in notes).
+    
+    Args:
+        explanations (pd.Series): Series containing explanation texts
+        notes (pd.Series): Series containing original clinical notes
+        
+    Returns:
+        dict: Analysis results including hallucination instances and metrics
+    """
+    import re
+    import numpy as np
+    from nltk.tokenize import sent_tokenize
+    import spacy
+    
+    # Load spaCy model for NER (used to identify clinical entities)
+    try:
+        nlp = spacy.load("en_core_web_sm")
+    except:
+        # If model not available, download it
+        import subprocess
+        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+        nlp = spacy.load("en_core_web_sm")
+    
+    results = {
+        'hallucination_scores': [],
+        'hallucinated_instances': [],
+        'hallucinated_entities': [],
+        'confidence_phrases': []
+    }
+    
+    # Confidence phrases that might indicate hallucinations when not supported
+    confidence_phrases = [
+        'clearly', 'obviously', 'definitely', 'certainly', 'undoubtedly',
+        'strongly', 'severely', 'significantly', 'markedly', 'notably',
+        'evidently', 'absolutely', 'extremely', 'very', 'highly'
+    ]
+    
+    for i, (exp, note) in enumerate(zip(explanations, notes)):
+        # Process with spaCy to get entities
+        exp_doc = nlp(exp)
+        note_doc = nlp(note)
+        
+        # Extract entities from explanation and note
+        exp_entities = [(ent.text.lower(), ent.label_) for ent in exp_doc.ents]
+        note_entities = [ent.text.lower() for ent in note_doc.ents]
+        
+        # Check for entities in explanation not found in note
+        hallucinated_ents = []
+        for ent_text, ent_label in exp_entities:
+            if ent_text not in note.lower() and len(ent_text) > 1:  # Skip single character entities
+                hallucinated_ents.append((ent_text, ent_label))
+        
+        # Check for confident statements containing potential hallucinations
+        confidence_matches = []
+        for phrase in confidence_phrases:
+            pattern = r'\b' + phrase + r'\b'
+            if re.search(pattern, exp.lower()):
+                # If confident phrase found, check surrounding text
+                for match in re.finditer(pattern, exp.lower()):
+                    # Get sentence containing the match
+                    sentences = sent_tokenize(exp)
+                    for sent in sentences:
+                        if phrase in sent.lower():
+                            # Check if sentence contains hallucinated entity
+                            if any(ent[0] in sent.lower() for ent in hallucinated_ents):
+                                confidence_matches.append(sent)
+        
+        # Calculate hallucination score based on ratio of hallucinated entities
+        if exp_entities:
+            hall_score = len(hallucinated_ents) / len(exp_entities)
+        else:
+            hall_score = 0
+            
+        # Record results
+        results['hallucination_scores'].append(hall_score)
+        results['hallucinated_entities'].append(hallucinated_ents)
+        results['confidence_phrases'].append(confidence_matches)
+        
+        # Flag as potential hallucination if score above threshold or confidence phrases with hallucinations
+        if hall_score > 0.2 or confidence_matches:
+            results['hallucinated_instances'].append(i)
+    
+    # Calculate metrics
+    results['mean_hallucination_score'] = np.mean(results['hallucination_scores'])
+    results['hallucination_rate'] = len(results['hallucinated_instances']) / len(explanations)
+    
+    return results
+
+def plot_comparative_analysis(comparison_results, hallucination_results, output_dir='figures/nlp'):
+    """
+    Generate visualizations for the comparison between explanations and notes.
+    
+    Args:
+        comparison_results (dict): Results from compare_explanation_with_note
+        hallucination_results (dict): Results from detect_hallucinations
+        output_dir (str): Directory to save figures
+        
+    Returns:
+        dict: Dictionary of generated figures
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+    import os
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    figures = {}
+    
+    # 1. Plot alignment score distribution
+    fig1 = plt.figure(figsize=(10, 6))
+    sns.histplot(comparison_results['alignment_scores'], bins=20, kde=True)
+    plt.title('Distribution of Explanation-Note Alignment Scores')
+    plt.xlabel('Alignment Score (Jaccard Similarity)')
+    plt.ylabel('Count')
+    plt.axvline(x=0.3, color='red', linestyle='--', label='Low Alignment Threshold')
+    plt.legend()
+    plt.savefig(f'{output_dir}/alignment_scores.png', bbox_inches='tight')
+    figures['alignment_dist'] = fig1
+    
+    # 2. Plot evidence support scores
+    if 'evidence_support' in comparison_results:
+        fig2 = plt.figure(figsize=(10, 6))
+        sns.histplot(comparison_results['evidence_support']['score'], bins=20, kde=True)
+        plt.title('Distribution of Evidence Support Scores')
+        plt.xlabel('Evidence Support Score')
+        plt.ylabel('Count')
+        plt.axvline(x=0.5, color='red', linestyle='--', label='Low Support Threshold')
+        plt.legend()
+        plt.savefig(f'{output_dir}/evidence_support.png', bbox_inches='tight')
+        figures['evidence_support'] = fig2
+    
+    # 3. Plot hallucination score distribution
+    fig3 = plt.figure(figsize=(10, 6))
+    sns.histplot(hallucination_results['hallucination_scores'], bins=20, kde=True)
+    plt.title('Distribution of Hallucination Scores')
+    plt.xlabel('Hallucination Score')
+    plt.ylabel('Count')
+    plt.axvline(x=0.2, color='red', linestyle='--', label='Hallucination Threshold')
+    plt.legend()
+    plt.savefig(f'{output_dir}/hallucination_scores.png', bbox_inches='tight')
+    figures['hallucination_dist'] = fig3
+    
+    # 4. Plot relationship between alignment and hallucination
+    fig4 = plt.figure(figsize=(10, 6))
+    plt.scatter(comparison_results['alignment_scores'], 
+                hallucination_results['hallucination_scores'],
+                alpha=0.6)
+    plt.title('Relationship Between Alignment and Hallucination')
+    plt.xlabel('Alignment Score')
+    plt.ylabel('Hallucination Score')
+    plt.axhline(y=0.2, color='red', linestyle='--', label='Hallucination Threshold')
+    plt.axvline(x=0.3, color='blue', linestyle='--', label='Low Alignment Threshold')
+    plt.legend()
+    plt.savefig(f'{output_dir}/alignment_vs_hallucination.png', bbox_inches='tight')
+    figures['alignment_vs_hallucination'] = fig4
+    
+    return figures
+
 def main():
     # ------------------------------------------------
     # 1. Configuration and Data Loading
@@ -37,6 +321,10 @@ def main():
     os.makedirs('figures/nlp', exist_ok=True)
     os.makedirs('results/nlp', exist_ok=True)
     os.makedirs('tables/nlp', exist_ok=True)
+    
+    # Additional directories for comparison analysis
+    os.makedirs('figures/nlp/comparison', exist_ok=True)
+    os.makedirs('tables/nlp/comparison', exist_ok=True)
     
     # Load data
     file_path = "./llama_zero_shot/prediction.csv"
@@ -52,13 +340,14 @@ def main():
         'topic_analysis': {},
         'keyword_networks': {},
         'sentiment_analysis': {},
-        'entity_analysis': {}
+        'entity_analysis': {},
+        'explanation_note_comparison': {}  # New section for comparison analysis
     }
     
     # A. Topic Modeling Analysis
     print("Running topic modeling analysis...")
     for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
-                'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']:
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:
         results['topic_analysis'][key] = analyze_topics(
             data[key]['explanation'],
             data[key]['true_label'],
@@ -67,7 +356,8 @@ def main():
     
     # B. Keyword Network Analysis
     print("Creating keyword networks...")
-    for key in ['full_df', 'correct_predictions', 'incorrect_predictions']:
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:  # Added individual prediction groups
         network = create_keyword_network(
             data[key]['explanation'],
             data[key]['true_label']
@@ -77,7 +367,7 @@ def main():
     # C. Sentiment Analysis
     print("Analyzing sentiment patterns...")
     for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
-                'correct_yes', 'correct_no', 'incorrect_yes', 'incorrect_no']:
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:
         results['sentiment_analysis'][key] = analyze_explanation_sentiment(
             data[key]['explanation'],
             data[key]['true_label']
@@ -85,7 +375,8 @@ def main():
     
     # D. Named Entity Recognition
     print("Extracting named entities...")
-    for key in ['full_df', 'correct_predictions', 'incorrect_predictions']:
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:  # Added individual prediction groups
         results['entity_analysis'][key] = get_named_entities(
             data[key]['explanation']
         )
@@ -100,7 +391,8 @@ def main():
         'true_positives': {},
         'true_negatives': {},
         'false_positives': {},
-        'false_negatives': {}
+        'false_negatives': {},
+        'explanation_fidelity': {}  # New section for explanation-note comparison
     }
     
     # A. Topic Comparison
@@ -124,10 +416,10 @@ def main():
     
     # C. Four-group Analysis (TP, TN, FP, FN)
     print("Analyzing four prediction groups...")
-    for group, label in [('correct_yes', 'true_positives'), 
-                         ('correct_no', 'true_negatives'),
-                         ('incorrect_yes', 'false_positives'),
-                         ('incorrect_no', 'false_negatives')]:
+    for group, label in [('TP_data', 'true_positives'), 
+                         ('TN_data', 'true_negatives'),
+                         ('FP_data', 'false_positives'),
+                         ('FN_data', 'false_negatives')]:
         # Topic analysis
         comparative_results[label]['topics'] = {
             'main_topics': list(results['topic_analysis'][group]['topics'].values())
@@ -136,6 +428,88 @@ def main():
         # Sentiment analysis
         comparative_results[label]['sentiment'] = {
             'mean': results['sentiment_analysis'][group]['sentiment_stats']['mean'].to_dict()
+        }
+    
+    # ------------------------------------------------
+    # 3a. Comparative Analysis between Explanations and Original Notes
+    # ------------------------------------------------
+
+    print("Analyzing explanation alignment with original notes...")
+    
+    # A. Detect potential hallucinations (content in explanation not found in notes)
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        results['explanation_note_comparison'][key] = compare_explanation_with_note(
+            data[key]['explanation'],
+            data[key]['original_note']
+        )
+        
+    # B. Measure evidence support strength
+    print("Quantifying evidence support in explanations...")
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        results['explanation_note_comparison'][key]['evidence_support'] = analyze_evidence_support(
+            data[key]['explanation'],
+            data[key]['original_note']
+        )
+
+    # C. Identify hallucination rate by prediction group
+    print("Detecting potential hallucinations...")
+    hallucination_results = {}
+    for key in ['TP_data', 'TN_data', 'FP_data', 'FN_data', 
+                'full_df', 'correct_predictions', 'incorrect_predictions']:
+        hallucination_results[key] = detect_hallucinations(
+            data[key]['explanation'],
+            data[key]['original_note']
+        )
+
+    # D. Comparative metrics between groups
+    comparative_results['explanation_fidelity'] = {
+        'hallucination_rates': {
+            'TP': len(hallucination_results['TP_data']['hallucinated_instances']) / len(data['TP_data']),
+            'TN': len(hallucination_results['TN_data']['hallucinated_instances']) / len(data['TN_data']),
+            'FP': len(hallucination_results['FP_data']['hallucinated_instances']) / len(data['FP_data']),
+            'FN': len(hallucination_results['FN_data']['hallucinated_instances']) / len(data['FN_data'])
+        },
+        'evidence_strength': {
+            'TP': np.mean(results['explanation_note_comparison']['TP_data']['evidence_support']['score']),
+            'TN': np.mean(results['explanation_note_comparison']['TN_data']['evidence_support']['score']),
+            'FP': np.mean(results['explanation_note_comparison']['FP_data']['evidence_support']['score']),
+            'FN': np.mean(results['explanation_note_comparison']['FN_data']['evidence_support']['score'])
+        },
+        'alignment_scores': {
+            'TP': np.mean(results['explanation_note_comparison']['TP_data']['alignment_scores']),
+            'TN': np.mean(results['explanation_note_comparison']['TN_data']['alignment_scores']),
+            'FP': np.mean(results['explanation_note_comparison']['FP_data']['alignment_scores']),
+            'FN': np.mean(results['explanation_note_comparison']['FN_data']['alignment_scores'])
+        }
+    }
+    
+    # E. Correlation between explanation fidelity and prediction accuracy
+    # Calculate correlation between alignment scores and prediction correctness
+    all_alignment_scores = []
+    all_correctness = []
+    
+    for i, row in data['full_df'].iterrows():
+        idx = i  # Use index in full dataframe
+        group = row['prediction_result']
+        if group in ['TP', 'TN']:
+            correctness = 1  # Correct prediction
+        else:
+            correctness = 0  # Incorrect prediction
+            
+        # Find alignment score for this instance
+        if idx < len(results['explanation_note_comparison']['full_df']['alignment_scores']):
+            alignment = results['explanation_note_comparison']['full_df']['alignment_scores'][idx]
+            all_alignment_scores.append(alignment)
+            all_correctness.append(correctness)
+    
+    # Calculate correlation if we have enough data
+    if len(all_alignment_scores) > 1:
+        corr, p_value = stats.pearsonr(all_alignment_scores, all_correctness)
+        comparative_results['explanation_fidelity']['correlation'] = {
+            'alignment_correctness_corr': corr,
+            'alignment_correctness_p': p_value
         }
     
     # ------------------------------------------------
@@ -182,6 +556,80 @@ def main():
         for fig_name, fig in figs.items():
             plt.close(fig)
     
+    # E. Explanation-Note Comparison Visualizations
+    print("Generating explanation-note comparison visualizations...")
+    
+    # Plot hallucination rates by prediction group
+    fig_hallucination = plt.figure(figsize=(10, 6))
+    rates = comparative_results['explanation_fidelity']['hallucination_rates']
+    plt.bar(rates.keys(), rates.values(), color=['green', 'blue', 'orange', 'red'])
+    plt.title('Hallucination Rate by Prediction Group')
+    plt.ylabel('Rate')
+    plt.ylim(0, 1)  # Ensure scale from 0-1 for rate visualization
+    plt.savefig('figures/nlp/comparison/hallucination_rates.png', bbox_inches='tight')
+    plt.close(fig_hallucination)
+    
+    # Plot evidence strength by prediction group
+    fig_evidence = plt.figure(figsize=(10, 6))
+    evidence = comparative_results['explanation_fidelity']['evidence_strength']
+    plt.bar(evidence.keys(), evidence.values(), color=['green', 'blue', 'orange', 'red'])
+    plt.title('Evidence Support Strength by Prediction Group')
+    plt.ylabel('Average Score')
+    plt.ylim(0, 1)  # Ensure scale from 0-1 for score visualization
+    plt.savefig('figures/nlp/comparison/evidence_strength.png', bbox_inches='tight')
+    plt.close(fig_evidence)
+    
+    # Plot alignment scores by prediction group
+    fig_alignment = plt.figure(figsize=(10, 6))
+    alignment = comparative_results['explanation_fidelity']['alignment_scores']
+    plt.bar(alignment.keys(), alignment.values(), color=['green', 'blue', 'orange', 'red'])
+    plt.title('Explanation-Note Alignment by Prediction Group')
+    plt.ylabel('Average Alignment Score')
+    plt.ylim(0, 1)  # Ensure scale from 0-1 for score visualization
+    plt.savefig('figures/nlp/comparison/alignment_scores.png', bbox_inches='tight')
+    plt.close(fig_alignment)
+    
+    # Plot correlation between alignment and correctness if available
+    if 'correlation' in comparative_results['explanation_fidelity']:
+        fig_corr = plt.figure(figsize=(10, 6))
+        plt.scatter(all_alignment_scores, all_correctness, alpha=0.5)
+        plt.title(f'Correlation between Alignment and Correctness (r={comparative_results["explanation_fidelity"]["correlation"]["alignment_correctness_corr"]:.3f})')
+        plt.xlabel('Explanation-Note Alignment Score')
+        plt.ylabel('Prediction Correctness (1=Correct, 0=Incorrect)')
+        plt.grid(True, alpha=0.3)
+        plt.savefig('figures/nlp/comparison/alignment_correctness_correlation.png', bbox_inches='tight')
+        plt.close(fig_corr)
+    
+    # Generate detailed visualizations for each prediction group
+    for key in ['TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        figs = plot_comparative_analysis(
+            results['explanation_note_comparison'][key],
+            hallucination_results[key],
+            output_dir=f'figures/nlp/comparison/{key}'
+        )
+        for fig_name, fig in figs.items():
+            plt.close(fig)
+            
+    # F. Generate Comparative Plots Between Correct and Incorrect Predictions
+    
+    # Compare hallucination scores between correct and incorrect
+    fig_hall_compare = plt.figure(figsize=(12, 6))
+    
+    # Create data for plotting
+    correct_hall = hallucination_results['correct_predictions']['hallucination_scores']
+    incorrect_hall = hallucination_results['incorrect_predictions']['hallucination_scores']
+    
+    # Plot distributions
+    plt.hist([correct_hall, incorrect_hall], bins=20, alpha=0.6, label=['Correct Predictions', 'Incorrect Predictions'], color=['green', 'red'])
+    plt.axvline(np.mean(correct_hall), color='green', linestyle='dashed', linewidth=2, label=f'Correct Mean: {np.mean(correct_hall):.3f}')
+    plt.axvline(np.mean(incorrect_hall), color='red', linestyle='dashed', linewidth=2, label=f'Incorrect Mean: {np.mean(incorrect_hall):.3f}')
+    plt.title('Comparison of Hallucination Scores: Correct vs. Incorrect Predictions')
+    plt.xlabel('Hallucination Score')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.savefig('figures/nlp/comparison/correct_vs_incorrect_hallucination.png', bbox_inches='tight')
+    plt.close(fig_hall_compare)
+    
     # E. Generate Comprehensive Report
     report_sections = []
     
@@ -192,7 +640,7 @@ NLP ANALYSIS REPORT
 
 This report provides a comprehensive natural language processing analysis of malnutrition 
 prediction explanations, including topic modeling, sentiment analysis, keyword networks, 
-and named entity recognition across different prediction groups.
+named entity recognition, and explanation-note comparison across different prediction groups.
 """)
     
     # 2. Dataset Overview
@@ -204,10 +652,10 @@ Correct predictions: {len(data['correct_predictions'])} ({len(data['correct_pred
 Incorrect predictions: {len(data['incorrect_predictions'])} ({len(data['incorrect_predictions'])/len(data['full_df']):.1%})
 
 Breakdown:
-- True Positives: {len(data['correct_yes'])}
-- True Negatives: {len(data['correct_no'])}
-- False Positives: {len(data['incorrect_yes'])}
-- False Negatives: {len(data['incorrect_no'])}
+- True Positives: {len(data['TP_data'])}
+- True Negatives: {len(data['TN_data'])}
+- False Positives: {len(data['FP_data'])}
+- False Negatives: {len(data['FN_data'])}
 """)
     
     # 3. Topic Analysis Summary
@@ -286,7 +734,56 @@ NAMED ENTITY SUMMARY
         for category, count in top_categories:
             report_sections.append(f"- {category}: {count} entities")
     
-    # 7. Recommendations
+    # 7. Explanation-Note Comparison Summary
+    report_sections.append("""
+
+EXPLANATION-NOTE COMPARISON
+--------------------------
+""")
+
+    # Hallucination stats
+    report_sections.append("Hallucination rates by prediction group:")
+    for group, rate in comparative_results['explanation_fidelity']['hallucination_rates'].items():
+        report_sections.append(f"- {group}: {rate:.2%}")
+
+    # Evidence support
+    report_sections.append("\nEvidence support strength by prediction group:")
+    for group, score in comparative_results['explanation_fidelity']['evidence_strength'].items():
+        report_sections.append(f"- {group}: {score:.2f}")
+        
+    # Alignment scores
+    report_sections.append("\nExplanation-note alignment by prediction group:")
+    for group, score in comparative_results['explanation_fidelity']['alignment_scores'].items():
+        report_sections.append(f"- {group}: {score:.2f}")
+
+    # Key findings from comparison
+    report_sections.append("\nKey findings from explanation-note comparison:")
+
+    # Find the group with highest hallucination rate
+    worst_group = max(comparative_results['explanation_fidelity']['hallucination_rates'].items(), 
+                      key=lambda x: x[1])[0]
+    report_sections.append(f"- Highest hallucination rate observed in {worst_group} predictions")
+
+    # Find the group with lowest evidence support
+    lowest_evidence = min(comparative_results['explanation_fidelity']['evidence_strength'].items(),
+                          key=lambda x: x[1])[0]
+    report_sections.append(f"- Lowest evidence support observed in {lowest_evidence} predictions")
+
+    # Check if there's correlation between hallucination and prediction error
+    hall_correct = (comparative_results['explanation_fidelity']['hallucination_rates']['TP'] + 
+                    comparative_results['explanation_fidelity']['hallucination_rates']['TN']) / 2
+    hall_incorrect = (comparative_results['explanation_fidelity']['hallucination_rates']['FP'] + 
+                      comparative_results['explanation_fidelity']['hallucination_rates']['FN']) / 2
+    report_sections.append(f"- {'Higher' if hall_incorrect > hall_correct else 'Similar or lower'} hallucination rates in incorrect predictions compared to correct ones")
+    
+    # Add correlation between alignment and correctness if available
+    if 'correlation' in comparative_results['explanation_fidelity']:
+        corr = comparative_results['explanation_fidelity']['correlation']['alignment_correctness_corr']
+        p_val = comparative_results['explanation_fidelity']['correlation']['alignment_correctness_p']
+        significance = "statistically significant" if p_val < 0.05 else "not statistically significant"
+        report_sections.append(f"- Correlation between explanation-note alignment and prediction correctness: r={corr:.3f} ({significance}, p={p_val:.3f})")
+    
+    # 8. Recommendations
     report_sections.append("""
 
 RECOMMENDATIONS
@@ -294,6 +791,9 @@ RECOMMENDATIONS
 1. Focus on improving explanations related to: """ + ", ".join(list(incorrect_topics.values())[0][:3]) + """
 2. Monitor sentiment patterns in: """ + ("FP/FN" if abs(incorrect_sentiment.loc['yes']['mean'] - incorrect_sentiment.loc['no']['mean']) > 0.2 else "all cases") + """
 3. Validate terminology usage for: """ + ", ".join([cat[0] for cat in top_categories[:3]]) + """
+4. Improve evidence support in: """ + lowest_evidence + """ predictions
+5. Reduce hallucination rate in: """ + worst_group + """ predictions
+6. """ + ("Strengthen alignment between explanations and source notes" if 'correlation' in comparative_results['explanation_fidelity'] and comparative_results['explanation_fidelity']['correlation']['alignment_correctness_corr'] > 0.3 else "Address inconsistencies between explanations and source notes") + """
 """)
     
     # Save full report
@@ -328,6 +828,37 @@ RECOMMENDATIONS
                     entity_counts.append({'category': category, 'entity': entity, 'count': count})
             pd.DataFrame(entity_counts).to_csv(f'tables/nlp/{key}_entities.csv', index=False)
     
+    # D. Save explanation-note comparison data
+    for key in ['full_df', 'correct_predictions', 'incorrect_predictions', 
+                'TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        
+        # Save hallucination data
+        if key in hallucination_results:
+            hall_data = pd.DataFrame({
+                'hallucination_score': hallucination_results[key]['hallucination_scores'],
+                'hallucinated_entities_count': [len(ents) for ents in hallucination_results[key]['hallucinated_entities']],
+                'confidence_phrases_count': [len(phrases) for phrases in hallucination_results[key]['confidence_phrases']]
+            })
+            hall_data.to_csv(f'tables/nlp/comparison/{key}_hallucinations.csv', index=False)
+        
+        # Save alignment data
+        if key in results['explanation_note_comparison']:
+            align_data = pd.DataFrame({
+                'alignment_score': results['explanation_note_comparison'][key]['alignment_scores'],
+                'evidence_support_score': results['explanation_note_comparison'][key]['evidence_support']['score'],
+                'evidence_count': results['explanation_note_comparison'][key]['evidence_support']['evidence_count'],
+                'unsupported_claims_count': [len(claims) for claims in results['explanation_note_comparison'][key]['evidence_support']['unsupported_claims']]
+            })
+            align_data.to_csv(f'tables/nlp/comparison/{key}_alignment.csv', index=False)
+    
+    # E. Save comparative analysis data
+    pd.DataFrame({
+        'group': list(comparative_results['explanation_fidelity']['hallucination_rates'].keys()),
+        'hallucination_rate': list(comparative_results['explanation_fidelity']['hallucination_rates'].values()),
+        'evidence_strength': list(comparative_results['explanation_fidelity']['evidence_strength'].values()),
+        'alignment_score': list(comparative_results['explanation_fidelity']['alignment_scores'].values()),
+    }).to_csv('tables/nlp/comparison/explanation_fidelity_summary.csv', index=False)
+    
     # ------------------------------------------------
     # 6. Final Output
     # ------------------------------------------------
@@ -339,13 +870,16 @@ Results saved to:
 - /figures/nlp/  : Visualizations
 - /results/nlp/   : Summary reports
 - /tables/nlp/    : Detailed data tables
+- /figures/nlp/comparison/ : Explanation-note comparison visualizations
+- /tables/nlp/comparison/  : Explanation-note comparison data
 
 Key findings have been compiled in results/nlp/full_analysis_report.txt
 """)
     
     return {
         'results': results,
-        'comparative_results': comparative_results
+        'comparative_results': comparative_results,
+        'hallucination_results': hallucination_results
     }
 
 if __name__ == "__main__":
