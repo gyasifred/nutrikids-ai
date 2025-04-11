@@ -520,7 +520,7 @@ def main():
     os.makedirs('tables', exist_ok=True)
     
     # Load data
-    file_path = "./LLM_pre_eval/gemma/prediction.csv"
+    file_path = "./LLM_pre_eval/gemma/predictions.csv"
     data = load_and_filter_data(file_path)
     
     # Define comprehensive criteria dictionary
