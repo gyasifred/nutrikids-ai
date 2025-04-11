@@ -85,12 +85,14 @@ def is_bfloat16_supported():
 
 def evaluate_predictions(
     y_true: List[Any],
-    y_pred: List[Any]
+    y_pred: List[Any],
+    y_scores: Optional[List[float]] = None 
 ) -> Dict[str, Any]:
     """Evaluate model predictions and return comprehensive metrics.
     Args:
         y_true (List[Any]): Ground truth labels (1/0 or "yes"/"no")
         y_pred (List[Any]): Predicted labels (1/0 or "yes"/"no")
+        y_scores (Optional[List[float]]): Prediction scores/probabilities (optional)
     Returns:
         Dict[str, Any]: Dictionary containing evaluation metrics
     """
@@ -101,8 +103,8 @@ def evaluate_predictions(
         return int(label)  # Assume already 0/1 if not a string
     
     # Convert both y_true and y_pred to binary (0 or 1)
-    y_true_binary = [convert_to_binary(label) for label in y_true]
-    y_pred_binary = [convert_to_binary(label) for label in y_pred]
+    y_true_binary = np.array([convert_to_binary(label) for label in y_true])
+    y_pred_binary = np.array([convert_to_binary(label) for label in y_pred])
     
     # Calculate basic metrics
     accuracy = accuracy_score(y_true_binary, y_pred_binary)
@@ -117,7 +119,7 @@ def evaluate_predictions(
     cls_report = classification_report(y_true_binary, y_pred_binary, 
                                       target_names=["no", "yes"], output_dict=True)
     
-    # Create metrics dictionary with only binary classification metrics
+    # Initialize metrics dictionary
     metrics = {
         'accuracy': float(accuracy),
         'precision': float(precision),
@@ -125,7 +127,6 @@ def evaluate_predictions(
         'f1': float(f1),
         'confusion_matrix': cm.tolist(),
         'classification_report': cls_report,
-        # Empty placeholders to maintain compatibility with plotting function
         'fpr': [],
         'tpr': [],
         'precision_curve': [],
@@ -134,8 +135,29 @@ def evaluate_predictions(
         'avg_precision': 0.0
     }
     
+    # Calculate ROC and PR curves if we have probability scores
+    if y_scores is not None:
+        try:
+            # ROC Curve
+            fpr, tpr, _ = roc_curve(y_true_binary, y_scores)
+            roc_auc = auc(fpr, tpr)
+            
+            # Precision-Recall Curve
+            precision_curve, recall_curve, _ = precision_recall_curve(y_true_binary, y_scores)
+            avg_precision = average_precision_score(y_true_binary, y_scores)
+            
+            metrics.update({
+                'fpr': fpr.tolist(),
+                'tpr': tpr.tolist(),
+                'precision_curve': precision_curve.tolist(),
+                'recall_curve': recall_curve.tolist(),
+                'auc': float(roc_auc),
+                'avg_precision': float(avg_precision)
+            })
+        except Exception as e:
+            print(f"Error calculating ROC/PR curves: {e}")
+    
     return metrics
-
 
 def plot_evaluation_metrics(metrics: Dict[str, Any], output_dir: str):
     """Create and save visualizations for evaluation metrics.
