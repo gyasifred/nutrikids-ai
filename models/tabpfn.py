@@ -343,13 +343,22 @@ def evaluate_model(
 from sklearn.inspection import permutation_importance
 
 
+from sklearn.inspection import permutation_importance
+from typing import List, Tuple
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 def get_feature_importance(
     model,
     X: pd.DataFrame,
     y: np.ndarray,
     feature_names: List[str],
     n_top_features: int = 20,
-    random_state: int = 42
+    random_state: int = 42,
+    output_dir: str = None,
+    model_name: str = 'model'
 ) -> Tuple[pd.DataFrame, plt.Figure]:
     """
     Calculate and visualize feature importance using permutation importance.
@@ -361,6 +370,8 @@ def get_feature_importance(
         feature_names: Names of features
         n_top_features: Number of top features to display
         random_state: Random seed for reproducibility
+        output_dir: Directory to save CSV output (optional)
+        model_name: Name of the model for file naming (optional)
         
     Returns:
         Tuple containing:
@@ -384,6 +395,29 @@ def get_feature_importance(
         
         # Sort by importance
         importance_df = importance_df.sort_values('Importance', ascending=False)
+        
+        # Save to CSV if output directory is provided
+        if output_dir:
+            import os
+            os.makedirs(output_dir, exist_ok=True)
+            csv_path = os.path.join(output_dir, f'{model_name}_feature_importance.csv')
+            importance_df.to_csv(csv_path, index=False)
+            print(f"Feature importance saved to {csv_path}")
+            
+            # Save raw permutation importance data with all repeats
+            raw_importance_data = []
+            for feature_idx, feature_name in enumerate(feature_names):
+                for repeat_idx in range(perm_importance.importances.shape[1]):
+                    raw_importance_data.append({
+                        'Feature': feature_name,
+                        'Repeat': repeat_idx,
+                        'Importance': perm_importance.importances[feature_idx, repeat_idx]
+                    })
+            
+            raw_importance_df = pd.DataFrame(raw_importance_data)
+            raw_csv_path = os.path.join(output_dir, f'{model_name}_feature_importance_raw.csv')
+            raw_importance_df.to_csv(raw_csv_path, index=False)
+            print(f"Raw feature importance data saved to {raw_csv_path}")
         
         # Create visualization
         plt.figure(figsize=(10, 8))
@@ -411,6 +445,13 @@ def get_feature_importance(
         
         plt.title(f'Top {n_top_features} Features by Importance')
         plt.tight_layout()
+        
+        # Save figure if output directory is provided
+        if output_dir:
+            import os
+            fig_path = os.path.join(output_dir, f'{model_name}_feature_importance.png')
+            plt.savefig(fig_path, bbox_inches='tight', dpi=300)
+            print(f"Feature importance plot saved to {fig_path}")
         
         return importance_df, plt.gcf()
     except Exception as e:
