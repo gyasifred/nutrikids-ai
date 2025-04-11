@@ -752,7 +752,7 @@ def create_explanation_wordclouds(data_dict):
 # Function to analyze feature co-occurrence
 def analyze_feature_cooccurrence(decision_patterns):
     """
-    Analyze which features tend to co-occur in explanations
+    Analyze which features tend to co-occur in explanations.
     
     Args:
         decision_patterns (dict): Decision pattern analysis results
@@ -776,6 +776,9 @@ def analyze_feature_cooccurrence(decision_patterns):
             # Count how many times both features appear in the same explanation
             cooccur_count = sum((all_features_df[feature1].notna()) & (all_features_df[feature2].notna()))
             cooccurrence.loc[feature1, feature2] = cooccur_count
+    
+    # Ensure numeric values for the heatmap (convert to float and handle NaNs)
+    cooccurrence = cooccurrence.apply(pd.to_numeric, errors='coerce').fillna(0)
     
     # Visualize top co-occurrences
     # Focus on features that appear a minimum number of times
