@@ -607,5 +607,5 @@ def analyze_llm_explanations(file_path):
 
 # Main execution
 if __name__ == "__main__":
-    file_path = "./predictions.csv"  # Update with actual file path
+    file_path = "./LLM_pre_eval/gemma/predictions.csv" 
     analysis_results = analyze_llm_explanations(file_path)
