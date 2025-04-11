@@ -534,7 +534,8 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "true_label": batch_true_labels[i],
                         "predicted_label": predicted_label,
                         "prediction_score": pred_score,
-                        "explanation": explanation
+                        "explanation": explanation,
+                        "original_note": batch_texts[i]  # Add the original note text to the results
                     })
                 except Exception as e:
                     print(f"Error processing result for item {i} in batch {batch_idx}: {e}")
@@ -544,7 +545,8 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "true_label": batch_true_labels[i],
                         "predicted_label": -1,
                         "prediction_score": -1,
-                        "explanation": f"Error: {str(e)}"
+                        "explanation": f"Error: {str(e)}",
+                        "original_note": batch_texts[i]  # Add the original note even for error cases
                     })
     
     # Convert to DataFrame
@@ -574,7 +576,6 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             print(f"Error computing evaluation metrics: {e}")
     
     return results_df
-
 def parse_arguments():
     """Parse command line arguments for the evaluation script."""
     parser = argparse.ArgumentParser(
