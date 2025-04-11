@@ -661,47 +661,63 @@ def detect_label_type(labels):
 
 def load_and_filter_data(file_path):
     """
-    Load the malnutrition dataset and create filtered DataFrames based on prediction correctness.
+    Load the dataset and create filtered DataFrames based on prediction correctness.
     
     Args:
         file_path (str): Path to the CSV file containing prediction data.
         
     Returns:
         dict: A dictionary containing:
-        - 'full_df': Original dataset
-        - 'correct_predictions': DataFrame of correct predictions
-        - 'incorrect_predictions': DataFrame of incorrect predictions
-        - 'correct_yes': Correctly classified 'yes' (true positives)
-        - 'correct_no': Correctly classified 'no' (true negatives)
-        - 'incorrect_yes': Incorrectly classified as 'yes' (false positives)
-        - 'incorrect_no': Incorrectly classified as 'no' (false negatives)
+        - 'full_df': Original dataset with prediction_result column
+        - 'TP_data': True Positives
+        - 'TN_data': True Negatives
+        - 'FP_data': False Positives
+        - 'FN_data': False Negatives
+        - 'correct_predictions': All correct predictions
+        - 'incorrect_predictions': All incorrect predictions
     """
     # Load dataset
     df = pd.read_csv(file_path)
 
     # Ensure required columns exist
-    required_columns = {'patient_id', 'true_label', 'predicted_label', 'explanation'}
+    required_columns = {'patient_id', 'true_label', 'predicted_label', 'explanation', 'original_note'}
     if not required_columns.issubset(df.columns):
-        raise ValueError(f"Missing required columns: {required_columns - set(df.columns)}")
+        missing_cols = required_columns - set(df.columns)
+        raise ValueError(f"Missing required columns: {missing_cols}")
 
-    # Split into correct and incorrect predictions
-    correct_predictions = df[df['true_label'] == df['predicted_label']].reset_index(drop=True)
-    incorrect_predictions = df[df['true_label'] != df['predicted_label']].reset_index(drop=True)
-
-    # Further breakdown into four groups
-    correct_yes = correct_predictions[correct_predictions['true_label'] == "yes"]  # True Positives
-    correct_no = correct_predictions[correct_predictions['true_label'] == "no"]    # True Negatives
-    incorrect_yes = incorrect_predictions[incorrect_predictions['predicted_label'] == "yes"]  # False Positives
-    incorrect_no = incorrect_predictions[incorrect_predictions['predicted_label'] == "no"]    # False Negatives
+    # Add prediction_result column
+    def classify_prediction(row):
+        if row['predicted_label'] == 1 and row['true_label'] == 1:
+            return 'TP'
+        elif row['predicted_label'] == 0 and row['true_label'] == 0:
+            return 'TN'
+        elif row['predicted_label'] == 1 and row['true_label'] == 0:
+            return 'FP'
+        elif row['predicted_label'] == 0 and row['true_label'] == 1:
+            return 'FN'
+        else:
+            return 'Unknown'
+            
+    df['prediction_result'] = df.apply(classify_prediction, axis=1)
+    
+    # Create filtered dataframes based on prediction result
+    TP_data = df[df['prediction_result'] == 'TP'].reset_index(drop=True)
+    TN_data = df[df['prediction_result'] == 'TN'].reset_index(drop=True)
+    FP_data = df[df['prediction_result'] == 'FP'].reset_index(drop=True)
+    FN_data = df[df['prediction_result'] == 'FN'].reset_index(drop=True)
+    
+    # Group by correct/incorrect for backward compatibility
+    correct_predictions = pd.concat([TP_data, TN_data]).reset_index(drop=True)
+    incorrect_predictions = pd.concat([FP_data, FN_data]).reset_index(drop=True)
 
     return {
         'full_df': df,
+        'TP_data': TP_data,
+        'TN_data': TN_data,
+        'FP_data': FP_data,
+        'FN_data': FN_data,
         'correct_predictions': correct_predictions,
-        'incorrect_predictions': incorrect_predictions,
-        'correct_yes': correct_yes,
-        'correct_no': correct_no,
-        'incorrect_yes': incorrect_yes,
-        'incorrect_no': incorrect_no
+        'incorrect_predictions': incorrect_predictions
     }
 
 
