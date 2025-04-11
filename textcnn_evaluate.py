@@ -102,6 +102,13 @@ def generate_confusion_matrix(y_true, y_pred, classes, output_dir):
 
     with open(os.path.join(output_dir, 'confusion_matrix.json'), 'w') as f:
         json.dump(cm_data, f, indent=2)
+        
+    # Save confusion matrix to CSV
+    cm_df = pd.DataFrame(cm, index=str_classes, columns=str_classes)
+    cm_df.to_csv(os.path.join(output_dir, 'confusion_matrix.csv'))
+    
+    cm_norm_df = pd.DataFrame(cm_normalized, index=str_classes, columns=str_classes)
+    cm_norm_df.to_csv(os.path.join(output_dir, 'confusion_matrix_normalized.csv'))
 
 
 def generate_roc_curve(y_true, y_proba, classes, output_dir):
@@ -110,6 +117,9 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
 
     roc_data = {}
     str_classes = [str(c) for c in classes]
+    
+    # DataFrame for storing all ROC data
+    roc_df_data = []
 
     if len(classes) == 2:
         # Binary classification
@@ -124,6 +134,16 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
             'thresholds': thresholds.tolist(),
             'auc': roc_auc
         }
+        
+        # Add to DataFrame data
+        for i in range(len(fpr)):
+            roc_df_data.append({
+                'class': 'binary',
+                'fpr': fpr[i],
+                'tpr': tpr[i],
+                'threshold': thresholds[i] if i < len(thresholds) else np.nan,
+                'auc': roc_auc
+            })
     else:
         # Multi-class classification (one-vs-rest)
         roc_data['multiclass'] = {}
@@ -142,6 +162,16 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
                 'thresholds': thresholds.tolist(),
                 'auc': roc_auc
             }
+            
+            # Add to DataFrame data
+            for j in range(len(fpr)):
+                roc_df_data.append({
+                    'class': class_name,
+                    'fpr': fpr[j],
+                    'tpr': tpr[j],
+                    'threshold': thresholds[j] if j < len(thresholds) else np.nan,
+                    'auc': roc_auc
+                })
 
     plt.plot([0, 1], [0, 1], 'k--', lw=2)
     plt.xlim([0.0, 1.0])
@@ -153,9 +183,13 @@ def generate_roc_curve(y_true, y_proba, classes, output_dir):
     plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
     plt.close()
 
-    # Save ROC data
+    # Save ROC data as JSON
     with open(os.path.join(output_dir, 'roc_data.json'), 'w') as f:
         json.dump(roc_data, f, indent=2)
+    
+    # Save ROC data as CSV
+    roc_df = pd.DataFrame(roc_df_data)
+    roc_df.to_csv(os.path.join(output_dir, 'roc_curve_data.csv'), index=False)
 
 
 def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
@@ -164,6 +198,9 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
 
     pr_data = {}
     str_classes = [str(c) for c in classes]
+    
+    # DataFrame for storing all PR curve data
+    pr_df_data = []
 
     if len(classes) == 2:
         # Binary classification
@@ -180,6 +217,16 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
             'thresholds': thresholds.tolist(),
             'average_precision': avg_precision
         }
+        
+        # Add to DataFrame data
+        for i in range(len(precision)):
+            pr_df_data.append({
+                'class': 'binary',
+                'precision': precision[i],
+                'recall': recall[i],
+                'threshold': thresholds[i] if i < len(thresholds) else np.nan,
+                'average_precision': avg_precision
+            })
     else:
         # Multi-class classification (one-vs-rest)
         pr_data['multiclass'] = {}
@@ -200,6 +247,16 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
                 'thresholds': thresholds.tolist(),
                 'average_precision': avg_precision
             }
+            
+            # Add to DataFrame data
+            for j in range(len(precision)):
+                pr_df_data.append({
+                    'class': class_name,
+                    'precision': precision[j],
+                    'recall': recall[j],
+                    'threshold': thresholds[j] if j < len(thresholds) else np.nan,
+                    'average_precision': avg_precision
+                })
 
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
@@ -210,10 +267,13 @@ def generate_precision_recall_curve(y_true, y_proba, classes, output_dir):
     plt.savefig(os.path.join(output_dir, 'precision_recall_curve.png'))
     plt.close()
 
-    # Save PR data
-    with open(os.path.join(output_dir,
-                           'precision_recall_data.json'), 'w') as f:
+    # Save PR data as JSON
+    with open(os.path.join(output_dir, 'precision_recall_data.json'), 'w') as f:
         json.dump(pr_data, f, indent=2)
+    
+    # Save PR data as CSV
+    pr_df = pd.DataFrame(pr_df_data)
+    pr_df.to_csv(os.path.join(output_dir, 'precision_recall_curve_data.csv'), index=False)
 
 
 def generate_class_distribution(y_true, y_pred, classes, output_dir):
@@ -260,7 +320,437 @@ def generate_class_distribution(y_true, y_pred, classes, output_dir):
 
     with open(os.path.join(output_dir, 'class_distribution.json'), 'w') as f:
         json.dump(distribution_data, f, indent=2)
+        
+    # Save distribution data as CSV
+    dist_df = pd.DataFrame({
+        'class': list(distribution_data['actual'].keys()),
+        'actual_count': list(distribution_data['actual'].values()),
+        'predicted_count': [distribution_data['predicted'].get(k, 0) for k in distribution_data['actual'].keys()]
+    })
+    dist_df.to_csv(os.path.join(output_dir, 'class_distribution.csv'), index=False)
 
+
+def generate_integrated_gradients(model, tokenizer, texts, output_dir, num_samples=5):
+    """
+    Generate integrated gradients explanations for text samples.
+    This is an alternative to SHAP that works better with integer inputs.
+    """
+    results = []
+
+    # Sample texts if there are many
+    if len(texts) > num_samples:
+        sample_indices = np.random.choice(len(texts),
+                                          num_samples,
+                                          replace=False)
+        sample_texts = [texts[i] for i in sample_indices]
+    else:
+        sample_texts = texts[:num_samples]
+
+    # Tokenize samples
+    sequences = tokenizer.transform(sample_texts)
+
+    # Get word mapping for interpretability
+    word_index = tokenizer.word2idx_
+    reverse_word_index = {v: k for k, v in word_index.items()}
+
+    # Create a baseline of zeros (reference point)
+    device = next(model.parameters()).device
+    
+    # DataFrame to store feature importance data
+    importance_data = []
+
+    for i, text in enumerate(sample_texts):
+        # Get sequence for this sample
+        sequence = sequences[i]
+        seq_length = len([idx for idx in sequence if idx > 0])
+
+        # Convert sequence list into a NumPy array before making it a tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
+        input_tensor = torch.tensor(sequence_array,
+                                    dtype=torch.long,
+                                    device=device)
+
+        # Create baseline of zeros (represents absence of words)
+        baseline = torch.zeros_like(input_tensor)
+
+        # Manual implementation of integrated gradients
+        steps = 20
+        attr_scores = np.zeros(len(sequence))
+
+        # For each word position, calculate its importance
+        for pos in range(seq_length):
+            # Create a modified input where we progressively add this word
+            modified_inputs = []
+            for step in range(steps + 1):
+                alpha = step / steps
+                modified = baseline.clone()
+                for j in range(pos + 1):
+                    modified[0, j] = int(alpha * input_tensor[0, j])
+                modified_inputs.append(modified)
+
+            # Stack all steps into one batch
+            batch_input = torch.cat(modified_inputs, dim=0)
+
+            # Get predictions for all steps
+            with torch.no_grad():
+                outputs = model(batch_input).squeeze().cpu().numpy()
+
+            # Calculate gradient approximation using integral
+            deltas = outputs[1:] - outputs[:-1]
+
+            # Score is the sum of these differences
+            attr_scores[pos] = np.sum(deltas)
+
+        # Get words for visualization
+        words = [reverse_word_index.get(idx, "<PAD>") for idx in sequence[:seq_length] if idx > 0]
+        values = attr_scores[:len(words)]
+
+        # Store results
+        result = {
+            "text": text,
+            "words": words,
+            "importance_scores": values.tolist()
+        }
+        results.append(result)
+        
+        # Add to DataFrame data
+        for word_idx, (word, importance) in enumerate(zip(words, values)):
+            importance_data.append({
+                'sample_id': i,
+                'text': text,
+                'method': 'integrated_gradients',
+                'word': word,
+                'position': word_idx,
+                'importance_score': importance
+            })
+
+        # Create visualization
+        plt.figure(figsize=(12, 6))
+        plt.bar(range(len(words)), values)
+        plt.xticks(range(len(words)), words, rotation=45)
+        plt.title(f'Word Importance for Sample {i+1}')
+        plt.xlabel('Words')
+        plt.ylabel('Attribution')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'word_importance_{i+1}.png'))
+        plt.close()
+
+        # Also create a heatmap-style visualization with text
+        plt.figure(figsize=(12, 4))
+        norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
+
+        for j, (word, val) in enumerate(zip(words, norm_values)):
+            plt.text(j, 0.5, word,
+                     horizontalalignment='center',
+                     verticalalignment='center',
+                     fontsize=14 + val * 10,
+                     color=plt.cm.RdBu(val))
+
+        plt.xlim(-1, len(words))
+        plt.ylim(0, 1)
+        plt.axis('off')
+        plt.title(f'Word Importance Heatmap for Sample {i+1}')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'word_heatmap_{i+1}.png'))
+        plt.close()
+
+    # Save feature importance data
+    with open(os.path.join(output_dir, 'integrated_gradients_results.json'), 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Save feature importance to CSV
+    importance_df = pd.DataFrame(importance_data)
+    importance_df.to_csv(os.path.join(output_dir, 'feature_importance.csv'), index=False)
+    
+    return results
+
+
+def generate_permutation_importance(model, tokenizer, texts, output_dir, num_samples=5):
+    """
+    Generate feature importance by permuting inputs.
+    This is a model-agnostic approach that doesn't require gradients.
+    """
+    results = []
+    
+    # DataFrame to store feature importance data
+    importance_data = []
+
+    # Sample texts if there are many
+    if len(texts) > num_samples:
+        sample_indices = np.random.choice(
+            len(texts), num_samples, replace=False)
+        sample_texts = [texts[i] for i in sample_indices]
+    else:
+        sample_texts = texts[:num_samples]
+
+    # Tokenize samples
+    sequences = tokenizer.transform(sample_texts)
+
+    # Get word mapping for interpretability
+    word_index = tokenizer.word2idx_
+    reverse_word_index = {v: k for k, v in word_index.items()}
+
+    # Set model to eval mode
+    model.eval()
+    device = next(model.parameters()).device
+
+    for i, text in enumerate(sample_texts):
+        # Get sequence for this sample
+        sequence = sequences[i]
+        seq_length = len([idx for idx in sequence if idx > 0])
+
+        # Skip if sequence is empty
+        if seq_length == 0:
+            continue
+
+        # Create input tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
+        input_tensor = torch.tensor(
+            sequence_array, dtype=torch.long, device=device)
+
+        # Get the original prediction
+        with torch.no_grad():
+            original_output = model(input_tensor).item()
+
+        # Calculate importance of each word by permuting it
+        importance_scores = np.zeros(seq_length)
+
+        # For each word, replace it with a padding token and see effect
+        pad_token = 0  # Usually the padding token is 0
+
+        for j in range(seq_length):
+            # Create modified input with this word removed
+            modified = input_tensor.clone()
+            modified[0, j] = pad_token
+
+            # Get prediction
+            with torch.no_grad():
+                modified_output = model(modified).item()
+
+            # Importance is how much the prediction changes
+            importance_scores[j] = abs(original_output - modified_output)
+
+        # Get words for visualization
+        words = [reverse_word_index.get(idx, "<PAD>")
+                 for idx in sequence[:seq_length] if idx > 0]
+        values = importance_scores[:len(words)]
+
+        # Store results
+        result = {
+            "text": text,
+            "words": words,
+            "importance_scores": values.tolist()
+        }
+        results.append(result)
+        
+        # Add to DataFrame data
+        for word_idx, (word, importance) in enumerate(zip(words, values)):
+            importance_data.append({
+                'sample_id': i,
+                'text': text,
+                'method': 'permutation',
+                'word': word,
+                'position': word_idx,
+                'importance_score': importance
+            })
+
+        # Create visualization
+        plt.figure(figsize=(12, 6))
+        plt.bar(range(len(words)), values)
+        plt.xticks(range(len(words)), words, rotation=45)
+        plt.title(f'Permutation Importance for Sample {i+1}')
+        plt.xlabel('Words')
+        plt.ylabel('Importance')
+        plt.tight_layout()
+        plt.savefig(os.path.join(
+            output_dir, f'permutation_importance_{i+1}.png'))
+        plt.close()
+
+        # Also create a heatmap-style visualization with text
+        plt.figure(figsize=(12, 4))
+        # Normalize values for better visualization
+        norm_values = (values - values.min()) / \
+            (values.max() - values.min() + 1e-10)
+
+        # Create a color-mapped visualization
+        for j, (word, val) in enumerate(zip(words, norm_values)):
+            plt.text(j, 0.5, word,
+                     horizontalalignment='center',
+                     verticalalignment='center',
+                     fontsize=14 + val * 10,  # Size based on importance
+                     color=plt.cm.RdBu(val))  # Color based on importance
+
+        plt.xlim(-1, len(words))
+        plt.ylim(0, 1)
+        plt.axis('off')
+        plt.title(f'Word Importance Heatmap for Sample {i+1}')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'permutation_heatmap_{i+1}.png'))
+        plt.close()
+
+    # Save feature importance data
+    with open(os.path.join(output_dir, 'permutation_importance_results.json'), 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Save feature importance to CSV
+    importance_df = pd.DataFrame(importance_data)
+    if os.path.exists(os.path.join(output_dir, 'feature_importance.csv')):
+        # Append to existing file
+        existing_df = pd.read_csv(os.path.join(output_dir, 'feature_importance.csv'))
+        combined_df = pd.concat([existing_df, importance_df])
+        combined_df.to_csv(os.path.join(output_dir, 'feature_importance.csv'), index=False)
+    else:
+        importance_df.to_csv(os.path.join(output_dir, 'feature_importance.csv'), index=False)
+    
+    return results
+
+
+def generate_occlusion_importance(model, tokenizer, texts, output_dir, num_samples=5):
+    """
+    Generate feature importance using occlusion (similar to permutation but with sliding window).
+    This is a model-agnostic approach that doesn't require gradients.
+    """
+    results = []
+    
+    # DataFrame to store feature importance data
+    importance_data = []
+
+    # Sample texts if there are many
+    if len(texts) > num_samples:
+        sample_indices = np.random.choice(
+            len(texts), num_samples, replace=False)
+        sample_texts = [texts[i] for i in sample_indices]
+    else:
+        sample_texts = texts[:num_samples]
+
+    # Tokenize samples
+    sequences = tokenizer.transform(sample_texts)
+
+    # Get word mapping for interpretability
+    word_index = tokenizer.word2idx_
+    reverse_word_index = {v: k for k, v in word_index.items()}
+
+    # Set model to eval mode
+    model.eval()
+    device = next(model.parameters()).device
+
+    # Occlusion window size (1 for single tokens, 2 for pairs, etc.)
+    window_size = 1
+
+    for i, text in enumerate(sample_texts):
+        # Get sequence for this sample
+        sequence = sequences[i]
+        seq_length = len([idx for idx in sequence if idx > 0])
+
+        # Skip if sequence is empty
+        if seq_length == 0:
+            continue
+
+        # Create input tensor
+        sequence_array = np.array([sequence], dtype=np.int64)
+        input_tensor = torch.tensor(
+            sequence_array, dtype=torch.long, device=device)
+
+        # Get the original prediction
+        with torch.no_grad():
+            original_output = model(input_tensor).item()
+
+        # Calculate importance of each word by occluding it
+        importance_scores = np.zeros(seq_length)
+
+        # For each position, create a sliding window and replace with pad tokens
+        pad_token = 0  # Usually the padding token is 0
+
+        for j in range(seq_length - window_size + 1):
+            # Create modified input with this window occluded
+            modified = input_tensor.clone()
+            modified[0, j:j+window_size] = pad_token
+
+            # Get prediction
+            with torch.no_grad():
+                modified_output = model(modified).item()
+
+            # Importance is how much the prediction changes
+            delta = abs(original_output - modified_output)
+
+            # For window_size > 1, we attribute the change to each position
+            for k in range(window_size):
+                if j+k < seq_length:
+                    importance_scores[j+k] += delta / window_size
+
+        # Get words for visualization
+        words = [reverse_word_index.get(idx, "<PAD>")
+                 for idx in sequence[:seq_length] if idx > 0]
+        values = importance_scores[:len(words)]
+
+        # Store results
+        result = {
+            "text": text,
+            "words": words,
+            "importance_scores": values.tolist()
+        }
+        results.append(result)
+        
+        # Add to DataFrame data
+        for word_idx, (word, importance) in enumerate(zip(words, values)):
+            importance_data.append({
+                'sample_id': i,
+                'text': text,
+                'method': 'occlusion',
+                'word': word,
+                'position': word_idx,
+                'importance_score': importance
+            })
+
+        # Create visualization
+        plt.figure(figsize=(12, 6))
+        plt.bar(range(len(words)), values)
+        plt.xticks(range(len(words)), words, rotation=45)
+        plt.title(f'Occlusion Importance for Sample {i+1}')
+        plt.xlabel('Words')
+        plt.ylabel('Importance')
+        plt.tight_layout()
+        plt.savefig(os.path.join(
+            output_dir, f'occlusion_importance_{i+1}.png'))
+        plt.close()
+
+        # Also create a heatmap-style visualization with text
+        plt.figure(figsize=(12, 4))
+        # Normalize values for better visualization
+        norm_values = (values - values.min()) / \
+            (values.max() - values.min() + 1e-10)
+
+        # Create a color-mapped visualization
+        for j, (word, val) in enumerate(zip(words, norm_values)):
+            plt.text(j, 0.5, word,
+                     horizontalalignment='center',
+                     verticalalignment='center',
+                     fontsize=14 + val * 10,
+                     color=plt.cm.RdBu(val))
+
+        plt.xlim(-1, len(words))
+        plt.ylim(0, 1)
+        plt.axis('off')
+        plt.title(f'Word Importance Heatmap for Sample {i+1}')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'occlusion_heatmap_{i+1}.png'))
+        plt.close()
+
+    # Save feature importance data
+    with open(os.path.join(output_dir, 'occlusion_importance_results.json'), 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Save feature importance to CSV
+    importance_df = pd.DataFrame(importance_data)
+    csv_path = os.path.join(output_dir, 'feature_importance.csv')
+    if os.path.exists(csv_path):
+        existing_df = pd.read_csv(csv_path)
+        combined_df = pd.concat([existing_df, importance_df], ignore_index=True)
+        combined_df.to_csv(csv_path, index=False)
+    else:
+        importance_df.to_csv(csv_path, index=False)
+
+    return results
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -283,6 +773,11 @@ def parse_args():
     parser.add_argument('--threshold', type=float, default=0.5,
                         help='Threshold for binary classification \
                             (default: 0.5)')
+    parser.add_argument('--explanation_method', type=str, default='all',
+                        choices=['integrated_gradients', 'permutation', 'occlusion', 'all', 'none'],
+                        help='Method for generating feature importance explanations')
+    parser.add_argument('--explanation_samples', type=int, default=200,
+                        help='Number of samples to use for explanations (default: 200)')
     return parser.parse_args()
 
 
@@ -392,8 +887,41 @@ def main():
 
     output_path = os.path.join(args.output_dir, 'predictions.csv')
     pred_df.to_csv(output_path, index=False)
+    
+    # Generate explanations for model predictions
+    if args.explanation_method != 'none':
+        print(f"Generating feature importance explanations using {args.explanation_method}...")
+        
+        if args.explanation_method == 'integrated_gradients' or args.explanation_method == 'all':
+            print("Generating integrated gradients explanations...")
+            generate_integrated_gradients(model, tokenizer, test_texts, args.output_dir, args.explanation_samples)
+            
+        if args.explanation_method == 'permutation' or args.explanation_method == 'all':
+            print("Generating permutation importance explanations...")
+            generate_permutation_importance(model, tokenizer, test_texts, args.output_dir, args.explanation_samples)
+            
+        if args.explanation_method == 'occlusion' or args.explanation_method == 'all':
+            print("Generating occlusion importance explanations...")
+            generate_occlusion_importance(model, tokenizer, test_texts, args.output_dir, args.explanation_samples)
+    
+    # Save evaluation configuration
+    config_data = {
+        'test_data': args.test_data,
+        'model_dir': args.model_dir,
+        'text_column': args.text_column,
+        'label_column': args.label_column,
+        'id_column': args.id_column,
+        'threshold': args.threshold,
+        'batch_size': args.batch_size,
+        'explanation_method': args.explanation_method,
+        'evaluation_time': pd.Timestamp.now().isoformat(),
+        'num_samples': len(test_texts)
+    }
+    
+    with open(os.path.join(args.output_dir, 'evaluation_config.json'), 'w') as f:
+        json.dump(config_data, f, indent=4)
 
-    print(f"Evaluation complete. Results saved to {output_path}")
+    print(f"Evaluation complete. Results saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
