@@ -44,12 +44,17 @@ def analyze_reasoning_consistency(explanation, original_note):
     Returns:
         dict: Results of consistency analysis
     """
+    # Ensure both explanation and original_note are strings
+    if not isinstance(explanation, str):
+        explanation = str(explanation) if explanation is not None else ''
+    if not isinstance(original_note, str):
+        original_note = str(original_note) if original_note is not None else ''
+    
     # Convert to lowercase for case-insensitive matching
     exp_lower = explanation.lower()
     note_lower = original_note.lower()
     
-    # Find potential hallucinations (statements in explanation not in original note)
-    # This is a simple approach - a more sophisticated NLP approach would be better
+    # Proceed with the rest of the logic
     key_findings = []
     hallucinations = []
     unsupported_claims = []
@@ -107,7 +112,6 @@ def analyze_reasoning_consistency(explanation, original_note):
         'unsupported_claim_count': len(unsupported_claims),
         'overconfidence_count': len(overconfident_statements)
     }
-
 def analyze_reasoning_patterns(data_dict):
     """
     Analyze reasoning patterns across different prediction categories.
