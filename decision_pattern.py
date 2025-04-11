@@ -4,26 +4,86 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.tree import DecisionTreeClassifier, plot_tree
-from sklearn.model_selection import train_test_split
 import re
 import nltk
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-import spacy
 from collections import Counter
-import networkx as  nx
-from utils import load_and_filter_data
+import networkx as nx
 
-# Install necessary nltk packages
-nltk.download('punkt')
-nltk.download('stopwords')
+# Install necessary nltk packages if not already installed
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+
+def load_and_filter_data(file_path):
+    """
+    Load the dataset and create filtered DataFrames based on prediction correctness.
+    
+    Args:
+        file_path (str): Path to the CSV file containing prediction data.
+        
+    Returns:
+        dict: A dictionary containing:
+        - 'full_df': Original dataset with prediction_result column
+        - 'TP_data': True Positives
+        - 'TN_data': True Negatives
+        - 'FP_data': False Positives
+        - 'FN_data': False Negatives
+        - 'correct_predictions': All correct predictions
+        - 'incorrect_predictions': All incorrect predictions
+    """
+    # Load dataset
+    df = pd.read_csv(file_path)
+
+    # Ensure required columns exist
+    required_columns = {'patient_id', 'true_label', 'predicted_label', 'explanation', 'original_note'}
+    if not required_columns.issubset(df.columns):
+        missing_cols = required_columns - set(df.columns)
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    # Add prediction_result column
+    def classify_prediction(row):
+        if row['predicted_label'] == 1 and row['true_label'] == 1:
+            return 'TP'
+        elif row['predicted_label'] == 0 and row['true_label'] == 0:
+            return 'TN'
+        elif row['predicted_label'] == 1 and row['true_label'] == 0:
+            return 'FP'
+        elif row['predicted_label'] == 0 and row['true_label'] == 1:
+            return 'FN'
+        else:
+            return 'Unknown'
+            
+    df['prediction_result'] = df.apply(classify_prediction, axis=1)
+    
+    # Create filtered dataframes based on prediction result
+    TP_data = df[df['prediction_result'] == 'TP'].reset_index(drop=True)
+    TN_data = df[df['prediction_result'] == 'TN'].reset_index(drop=True)
+    FP_data = df[df['prediction_result'] == 'FP'].reset_index(drop=True)
+    FN_data = df[df['prediction_result'] == 'FN'].reset_index(drop=True)
+    
+    # Group by correct/incorrect for backward compatibility
+    correct_predictions = pd.concat([TP_data, TN_data]).reset_index(drop=True)
+    incorrect_predictions = pd.concat([FP_data, FN_data]).reset_index(drop=True)
+
+    return {
+        'full_df': df,
+        'TP_data': TP_data,
+        'TN_data': TN_data,
+        'FP_data': FP_data,
+        'FN_data': FN_data,
+        'correct_predictions': correct_predictions,
+        'incorrect_predictions': incorrect_predictions
+    }
 
 def extract_decision_features(explanation_text):
     """
     Extract key features and criteria mentioned in the explanation text.
     Returns a dictionary of features and their values/mentions.
     
-    Improved version with more precise regex patterns and better capture groups.
+    Args:
+        explanation_text (str): The LLM-generated explanation text
+        
+    Returns:
+        dict: Dictionary of features and their mentions
     """
     # Define patterns for common criteria
     patterns = {
@@ -43,65 +103,23 @@ def extract_decision_features(explanation_text):
         
         'weight_loss': r'(?:weight[\s-]*(?:loss|decrease|reduction|decline)|lost[\s-]*weight)[\s:]*((?:\d+\.?\d*\s*(?:%|percent|kg|lb|pounds)?)|(?:\b(?:significant|severe|moderate|mild|minimal|substantial|rapid|gradual|progressive|unintentional)\b))',
         
-        # Lab values - improved with more specific values and units
+        # Lab values
         'albumin': r'(?:albumin|serum[\s-]*albumin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l|g/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|hypoalbuminemia)\b))',
         
         'prealbumin': r'(?:prealbumin|transthyretin)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|mg/l|mg/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
         
         'hemoglobin': r'(?:hemoglobin|hgb|hb|haemoglobin)[\s:]*((?:\d+\.?\d*\s*(?:g/dl|g/l|g/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|anemia|anemic|anaemia|anaemic)\b))',
         
-        'lymphocyte': r'(?:lymphocyte|lymphocyte[\s-]*count|total[\s-]*lymphocyte[\s-]*count|tlc|wbc)[\s:]*((?:\d+\.?\d*\s*(?:k/μl|×10\^9/l|cells/mm3|/mm3|/μL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated|lymphopenia|lymphocytopenia)\b))',
+        # Clinical factors
+        'illness': r'\b(?:illness|infection|disease|sick|surgery|trauma|hospitalization|hospitalized|admitted|icu|intensive[\s-]*care|complication|recovery)\b',
         
-        'transferrin': r'(?:transferrin|iron[\s-]*binding[\s-]*capacity|tibc)[\s:]*((?:\d+\.?\d*\s*(?:mg/dl|μg/dl|mg/dL|μg/dL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|decreased|elevated)\b))',
+        'symptoms': r'\b(?:fatigue|weakness|appetite|tired|weight[\s-]*loss|muscle[\s-]*wasting|lethargy|malaise|exhaustion|tiredness)\b',
         
-        'crp': r'(?:crp|c[\s-]*reactive[\s-]*protein)[\s:]*((?:\d+\.?\d*\s*(?:mg/l|mg/dl|mg/dL|mg/L)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|elevated|positive|negative|inflammation)\b))',
+        # Nutritional intake
+        'intake': r'\b(?:intake|consumption|diet|oral[\s-]*intake|eating|meal|feeding|caloric|calorie|protein|carbohydrate|fat|nutrient)\b',
         
-        # Vitamin and mineral markers - expanded with specific vitamins and levels
-        'vitamin': r'(?:vitamin[\s-]*(?:a|b[1-9]|b12|c|d|e|k)|folate|folic[\s-]*acid|thiamine|riboflavin|niacin|cobalamin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|nmol/l|ng/mL|μg/dL|nmol/L|pg/mL)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|toxicity)\b))',
-        
-        'mineral': r'(?:(?:iron|zinc|calcium|magnesium|phosphorus|selenium|iodine|copper)[\s-]*(?:level|)|ferritin)[\s:]*((?:\d+\.?\d*\s*(?:ng/ml|μg/dl|mg/dl|mmol/l|ng/mL|μg/dL|mg/dL|mmol/L)?)|(?:<?\s*\d+\.?\d*)|(?:\b(?:low|normal|high|deficient|deficiency|adequate|excess|depleted)\b))',
-        
-        # Clinical factors - enhanced with more medical conditions
-        'illness': r'\b(?:illness|infection|disease|sick|surgery|trauma|hospitalization|hospitalized|admitted|icu|intensive[\s-]*care|complication|recovery|post[\s-]*op|procedure|comorbid|comorbidity|chronic|acute|cancer|tumor|sepsis|wound|injury|pneumonia|respiratory|immunocompromised|inflammation|inflammatory|organ[\s-]*failure|critical|diabetes|hiv|aids|renal failure|liver disease|hepatic|cirrhosis|pulmonary|cardiac|heart failure|copd|tuberculosis)\b',
-        
-        'socioeconomic': r'\b(?:socioeconomic|poverty|food[\s-]*(?:insecurity|desert|access)|economic|financial|unemployed|homeless|housing|instability|education|literacy|transportation|welfare|assistance|snap|wic|food[\s-]*stamps|food[\s-]*bank|meal[\s-]*program|social[\s-]*support|vulnerable|marginalized|disadvantaged|barrier|refugee|immigrant|low[\s-]*income|no[\s-]*insurance|lack[\s-]*of[\s-]*resources)\b',
-        
-        'symptoms': r'\b(?:fatigue|weakness|appetite|tired|weight[\s-]*loss|muscle[\s-]*wasting|lethargy|malaise|exhaustion|tiredness|cachexia|sarcopenia|frailty|thinness|emaciation|wasting|dehydration|swelling|lethargic|weak|tired|anorexia|lack[\s-]*of[\s-]*energy|hair[\s-]*loss|poor[\s-]*wound[\s-]*healing|skin[\s-]*changes|pallor|brittle[\s-]*nails|bruising|anasarca|kwashiorkor|marasmus|failure[\s-]*to[\s-]*thrive|reduced[\s-]*appetite|no[\s-]*appetite|early[\s-]*satiety|nausea|vomiting|diarrhea)\b',
-        
-        'medication': r'\b(?:medication|drug|treatment|therapy|side[\s-]*effect|chemotherapy|diuretic|antidepressant|antibiotic|corticosteroid|steroid|immunosuppressant|anticonvulsant|laxative|sedative|antipsychotic|nsaid|opioid|antacid|ppi|proton[\s-]*pump[\s-]*inhibitor|metformin|insulin|polypharmacy|appetite[\s-]*suppressant|stimulant|antiemetic|prescription|over[\s-]*the[\s-]*counter|supplement|herbal|regimen|dose|interaction|aspirin|tylenol|acetaminophen|ibuprofen|prednisone|methotrexate|warfarin)\b',
-        
-        # Functional status - expanded with more functional assessment terms
-        'functional': r'\b(?:functional|function|mobility|activity|exercise|physical[\s-]*activity|adl|activities[\s-]*of[\s-]*daily[\s-]*living|iadl|instrumental[\s-]*activities|independence|dependence|limitation|disability|impairment|weakness|strength|endurance|fatigue|energy|vitality|performance|capacity|rehabilitation|physical[\s-]*therapy|occupational[\s-]*therapy|walking|ambulation|bedridden|chair[\s-]*bound|transfer|gait|handgrip|grip[\s-]*strength|karnofsky|ecog|performance[\s-]*status|barthel[\s-]*index|frailty[\s-]*index|fried[\s-]*criteria)\b',
-        
-        # Nutritional intake - improved with specific diet components
-        'intake': r'\b(?:intake|consumption|diet|oral[\s-]*intake|eating|meal|feeding|caloric|calorie|protein|carbohydrate|fat|nutrient|macronutrient|micronutrient|diet[\s-]*quality|diet[\s-]*diversity|meal[\s-]*frequency|portion[\s-]*size|restrictive[\s-]*diet|elimination[\s-]*diet|food[\s-]*allergy|food[\s-]*intolerance|food[\s-]*selectivity|picky[\s-]*eating|food[\s-]*refusal|feeding[\s-]*difficulty|meal[\s-]*skipping|fasting|reduced[\s-]*intake|poor[\s-]*intake|decreased[\s-]*intake|inadequate[\s-]*intake|insufficient[\s-]*intake|not[\s-]*eating|poor[\s-]*appetite|enteral|parenteral|tube[\s-]*feeding|TPN|PEG|NPO)\b',
-        
-        # Mental health - expanded with more specific mental health conditions
-        'mental_health': r'\b(?:mental|psychological|psychiatric|mood|depression|anxiety|stress|trauma|ptsd|social[\s-]*isolation|loneliness|grief|bereavement|schizophrenia|bipolar|dementia|alzheimer|memory|confusion|disorientation|anorexia[\s-]*nervosa|bulimia|binge[\s-]*eating|avoidant[\s-]*food[\s-]*intake|pica|rumination|suicidal|self[\s-]*neglect|substance[\s-]*abuse|alcohol|addiction|emotional[\s-]*wellbeing|cognitive|autism|adhd|eating[\s-]*disorder|orthorexia|ocd|psychosis)\b',
-        
-        # Malabsorption - improved with more GI conditions
-        'malabsorption': r'\b(?:malabsorption|absorption|digestive|gastrointestinal|celiac|crohn|ulcerative[\s-]*colitis|ibd|inflammatory[\s-]*bowel[\s-]*disease|short[\s-]*bowel|intestinal[\s-]*resection|pancreatic[\s-]*insufficiency|cystic[\s-]*fibrosis|bile[\s-]*acid[\s-]*deficiency|steatorrhea|constipation|bloating|gas|abdominal[\s-]*pain|nausea|vomiting|dysphagia|odynophagia|gerd|reflux|gastritis|enteritis|colitis|gastroparesis|bariatric[\s-]*surgery|ostomy|tube[\s-]*feeding|parenteral[\s-]*nutrition|diarrhea|malabsorptive|nutrient[\s-]*absorption|ileus|bowel[\s-]*obstruction|dumping[\s-]*syndrome|lactose[\s-]*intolerance|gluten|IBS)\b',
-        
-        # Hydration - expanded with more specific hydration indicators
-        'hydration': r'\b(?:hydration|fluid|water|dehydration|hyperhydration|thirst|dry[\s-]*mouth|poor[\s-]*skin[\s-]*turgor|urine[\s-]*output|concentrated[\s-]*urine|fluid[\s-]*balance|oral[\s-]*intake|liquid[\s-]*consumption|drinking|beverage|iv[\s-]*fluid|intravenous|rehydration|fluid[\s-]*restriction|fluid[\s-]*overload|dehydrated|hypovolemic|hypervolemic|oliguria|anuria|polyuria|urine[\s-]*color|urine[\s-]*specific[\s-]*gravity|mucous[\s-]*membranes|osmolality)\b',
-        
-        # Edema - improved with more specific types
-        'edema': r'\b(?:edema|oedema|fluid[\s-]*retention|swelling|peripheral[\s-]*edema|dependent[\s-]*edema|pitting[\s-]*edema|non[\s-]*pitting[\s-]*edema|bilateral[\s-]*edema|pedal[\s-]*edema|ankle[\s-]*edema|leg[\s-]*swelling|sacral[\s-]*edema|ascites|anasarca|generalized[\s-]*edema|nutritional[\s-]*edema|hypoalbuminemic[\s-]*edema|protein[\s-]*deficiency[\s-]*edema|excess[\s-]*fluid|fluid[\s-]*accumulation|interstitial[\s-]*fluid|tissue[\s-]*swelling|puffy|waterlogging|periorbital[\s-]*edema|pulmonary[\s-]*edema)\b',
-        
-        # Physical assessment - expanded with more anthropometric and clinical assessment indicators
-        'physical_assessment': r'\b(?:physical[\s-]*assessment|clinical[\s-]*assessment|physical[\s-]*examination|clinical[\s-]*signs|visible[\s-]*ribs|protruding[\s-]*bones|temporal[\s-]*wasting|sunken[\s-]*eyes|sunken[\s-]*cheeks|thin[\s-]*limbs|loss[\s-]*of[\s-]*subcutaneous[\s-]*fat|hollow[\s-]*temples|prominent[\s-]*clavicle|prominent[\s-]*scapula|visible[\s-]*spine|visible[\s-]*pelvis|reduced[\s-]*fat[\s-]*pads|skin[\s-]*tenting|poor[\s-]*skin[\s-]*turgor|dry[\s-]*skin|hair[\s-]*changes|brittle[\s-]*nails|pressure[\s-]*ulcers|pressure[\s-]*sores|delayed[\s-]*wound[\s-]*healing|poor[\s-]*wound[\s-]*healing|muscle[\s-]*tone|muscle[\s-]*mass|anthropometric|bioimpedance|skinfold|triceps[\s-]*skinfold|biceps[\s-]*skinfold|subscapular[\s-]*skinfold|waist[\s-]*circumference|hip[\s-]*circumference|waist-to-hip[\s-]*ratio|neck[\s-]*circumference|calf[\s-]*circumference)\b',
-        
-        # Classification terms - improved with specific clinical classification systems
-        'malnutrition_class': r'\b(?:malnutrition|malnourished|undernourishment|undernutrition|protein[\s-]*energy[\s-]*malnutrition|protein[\s-]*calorie[\s-]*malnutrition|pcm|pem|marasmus|kwashiorkor|severe[\s-]*acute[\s-]*malnutrition|sam|moderate[\s-]*acute[\s-]*malnutrition|mam|mild[\s-]*malnutrition|moderate[\s-]*malnutrition|severe[\s-]*malnutrition|at[\s-]*risk[\s-]*for[\s-]*malnutrition|nutritional[\s-]*risk|nutritionally[\s-]*compromised|cachexia|wasting|starvation|failure[\s-]*to[\s-]*thrive|underweight|nutritionally[\s-]*deficient|aspen|academy|glim|criteria|subjective[\s-]*global[\s-]*assessment|sga|mini[\s-]*nutritional[\s-]*assessment|mna|nutrition[\s-]*risk[\s-]*screening|nrs|must|malnutrition[\s-]*universal[\s-]*screening[\s-]*tool|strongkids)\b',
-        
-        # Screening tools - new category for malnutrition screening tools
-        'screening_tools': r'\b(?:subjective[\s-]*global[\s-]*assessment|sga|mini[\s-]*nutritional[\s-]*assessment|mna|nutrition[\s-]*risk[\s-]*screening|nrs|must|malnutrition[\s-]*universal[\s-]*screening[\s-]*tool|strongkids|nutritional[\s-]*risk[\s-]*index|nri|geriatric[\s-]*nutritional[\s-]*risk[\s-]*index|gnri|pni|prognostic[\s-]*nutritional[\s-]*index|snaq|short[\s-]*nutritional[\s-]*assessment[\s-]*questionnaire|nutritional[\s-]*risk[\s-]*index|screening[\s-]*tool|nutrition[\s-]*screening)\b',
-        
-        # Nutrition intervention - new category for intervention terms
-        'intervention': r'\b(?:nutrition[\s-]*intervention|dietary[\s-]*intervention|nutrition[\s-]*support|oral[\s-]*nutritional[\s-]*supplement|ons|supplement|fortification|enrichment|enteral[\s-]*nutrition|parenteral[\s-]*nutrition|tube[\s-]*feeding|feeding[\s-]*tube|nasogastric|ng[\s-]*tube|peg|percutaneous[\s-]*endoscopic[\s-]*gastrostomy|jejunostomy|tpn|total[\s-]*parenteral[\s-]*nutrition|dietary[\s-]*counseling|nutrition[\s-]*education|meal[\s-]*plan|diet[\s-]*modification|feeding[\s-]*assistance|texture[\s-]*modification|thickened[\s-]*liquids|pureed|minced|soft[\s-]*diet|high[\s-]*protein|high[\s-]*calorie|high[\s-]*energy)\b',
-        
-        # Age-specific terms - new category for age-specific malnutrition terminology
-        'age_specific': r'\b(?:pediatric|paediatric|child|infant|adolescent|geriatric|elderly|older[\s-]*adult|senior|failure[\s-]*to[\s-]*thrive|ftt|growth[\s-]*faltering|stunting|wasting|underweight|weight-for-age|height-for-age|weight-for-height|bmi-for-age|weight[\s-]*percentile|height[\s-]*percentile|growth[\s-]*chart|growth[\s-]*curve|growth[\s-]*velocity|catch-up[\s-]*growth|sarcopenia|frailty|age-related|senile|elderly|anorexia[\s-]*of[\s-]*aging)\b'
+        # Classification terms
+        'malnutrition_class': r'\b(?:malnutrition|malnourished|undernourishment|undernutrition|protein[\s-]*energy[\s-]*malnutrition|protein[\s-]*calorie[\s-]*malnutrition)\b',
     }
 
     features = {}
@@ -126,545 +144,468 @@ def extract_decision_features(explanation_text):
             features[feature] = 'mentioned'
 
     # Check for key words indicating strong decisions
-    if re.search(r'\b(?:clear|clearly|definite|definitely|obvious|strong|evidence|confirms|confirmed|diagnostic|apparent|certain|conclusive|unmistakable|evident|pronounced|marked|beyond doubt)\b', explanation_text, re.IGNORECASE):
+    if re.search(r'\b(?:clear|clearly|definite|definitely|obvious|strong|evidence|confirms|confirmed|diagnostic)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'high'
-    elif re.search(r'\b(?:suggests|suggest|indicative|may|might|could|possible|possibly|probable|probably|likely|consistent with|suspicious for|suggestive|compatible with|concerning for)\b', explanation_text, re.IGNORECASE):
+    elif re.search(r'\b(?:suggests|suggest|indicative|may|might|could|possible|possibly|probable|probably|likely)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'medium'
-    elif re.search(r'\b(?:unclear|not clear|uncertain|unsure|insufficient|limited|data|more information|cannot determine|cannot assess|difficult to determine|equivocal|inconclusive|borderline|questionable|doubtful|ambiguous)\b', explanation_text, re.IGNORECASE):
+    elif re.search(r'\b(?:unclear|not clear|uncertain|unsure|insufficient|limited|data|more information|cannot determine)\b', explanation_text, re.IGNORECASE):
         features['confidence'] = 'low'
 
-    # Extract specific values based on simpler patterns for numeric features
-    numeric_patterns = {
-        'BMI_value': r'(?:BMI|body mass index)\s*(?:is|of|:)?\s*([\d.]+)',
-        'weight_for_height_zscore': r'(?:weight[- ]for[- ]height)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)',
-        'BMI_for_age_zscore': r'(?:BMI[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)',
-        'MUAC_value': r'(?:MUAC|mid[- ]upper arm circumference)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:cm|mm)?',
-        'albumin_value': r'(?:albumin|serum albumin)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:g/dl|g/l)?',
-        'hemoglobin_value': r'(?:hemoglobin|haemoglobin|serum haemoglobin|serum hemoglobin)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:g/dl|g/l)?',
-        'weight_value': r'weight\s*(?:is|of|:)?\s*([\d.]+)\s*(?:kg|lb|pounds)?',
-        'weight_loss_percent': r'(?:weight loss|lost)\s*(?:is|of|:)?\s*([\d.]+)\s*(?:%|percent)?',
-        'length_height_for_age_zscore': r'(?:length/height[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:)?\s*([-\d.]+)'
-    }
-
-    # Extract numeric values
-    for feature, pattern in numeric_patterns.items():
-        match = re.search(pattern, explanation_text, re.IGNORECASE)
-        if match and match.group(1):
-            try:
-                # Convert to float if possible
-                features[feature] = float(match.group(1))
-            except ValueError:
-                # If it's not a valid float, just store the string
-                features[feature] = match.group(1)
-
-    # Check for classification framework mentions
-    framework_patterns = {
-        'ASPEN': r'\b(?:ASPEN|Academy|A\.S\.P\.E\.N\.)\b',
-        'GLIM': r'\b(?:GLIM|Global Leadership Initiative)\b',
-        'ESPEN': r'\b(?:ESPEN|European Society)\b',
-        'WHO': r'\b(?:WHO|World Health Organization)\b',
-        'SGA': r'\b(?:SGA|Subjective Global Assessment)\b',
-        'MNA': r'\b(?:MNA|Mini Nutritional Assessment)\b',
-        'MUST': r'\b(?:MUST|Malnutrition Universal Screening Tool)\b'
-    }
-
-    for framework, pattern in framework_patterns.items():
-        if re.search(pattern, explanation_text, re.IGNORECASE):
-            features[f'framework_{framework}'] = 'mentioned'
-
     # Extract yes/no decision indicators
-    if re.search(r'\b(?:is malnourished|has malnutrition|suffers from malnutrition|diagnosis of malnutrition|malnutrition is present|evidence of malnutrition)\b', explanation_text, re.IGNORECASE):
+    if re.search(r'\b(?:is malnourished|has malnutrition|suffers from malnutrition|diagnosis of malnutrition|malnutrition is present)\b', explanation_text, re.IGNORECASE):
         features['decision_indicator'] = 'yes'
-    elif re.search(r'\b(?:no malnutrition|not malnourished|does not have malnutrition|absence of malnutrition|no evidence of malnutrition|no signs of malnutrition|adequately nourished|well nourished)\b', explanation_text, re.IGNORECASE):
+    elif re.search(r'\b(?:no malnutrition|not malnourished|does not have malnutrition|absence of malnutrition|no evidence of malnutrition)\b', explanation_text, re.IGNORECASE):
         features['decision_indicator'] = 'no'
 
     return features
 
-def build_decision_tree_from_explanations(df):
+def analyze_decision_patterns(data_dict):
     """
-    Process explanations to extract decision features and build a decision tree
-    """
-    # Extract features from explanations
-    features_list = []
-    for index, row in df.iterrows():
-        features = extract_decision_features(row['explanation'])
-        features['prediction'] = row['predicted_label']
-        features['actual'] = row['true_label']
-        features['correct'] = row['predicted_label'] == row['true_label']
-        features_list.append(features)
-
-    # Convert to DataFrame
-    features_df = pd.DataFrame(features_list)
-
-    # Fill NaN values
-    features_df = features_df.fillna('not_mentioned')
-
-    # Convert categorical features to one-hot encoding
-    categorical_cols = [col for col in features_df.columns if col not in ['prediction', 'actual', 'correct']]
-    features_encoded = pd.get_dummies(features_df[categorical_cols])
-
-    # Train a decision tree to model the LLM's decision process
-    X = features_encoded
-    y = features_df['prediction']  # Predict the LLM's prediction
-
-    # Train with a small depth to make visualization meaningful
-    model = DecisionTreeClassifier(max_depth=4, random_state=42)
-    model.fit(X, y)
-
-    return model, features_encoded.columns, features_df
-
-def visualize_explanation_elements(df):
-    """
-    Visualize the frequency of different elements appearing in explanations
-    """
-    # Separate correct and incorrect predictions
-    correct_explanations = df[df['true_label'] == df['predicted_label']]['explanation']
-    incorrect_explanations = df[df['true_label'] != df['predicted_label']]['explanation']
-
-    # Create a combined text for word frequency analysis
-    all_text = ' '.join(df['explanation'])
-    correct_text = ' '.join(correct_explanations)
-    incorrect_text = ' '.join(incorrect_explanations)
-
-    # Process the text
-    vectorizer = CountVectorizer(stop_words='english', max_features=30)
-
-    # Get word frequencies
-    all_word_freq = vectorizer.fit_transform([all_text]).toarray()[0]
-    all_words = vectorizer.get_feature_names_out()
-
-    # Fit on all text to use same vocabulary
-    vectorizer.fit([all_text])
-
-    correct_word_freq = vectorizer.transform([correct_text]).toarray()[0]
-    incorrect_word_freq = vectorizer.transform([incorrect_text]).toarray()[0]
-
-    # Create DataFrame for easier plotting
-    word_freq_df = pd.DataFrame({
-        'word': all_words,
-        'all_freq': all_word_freq,
-        'correct_freq': correct_word_freq,
-        'incorrect_freq': incorrect_word_freq
-    })
-
-    # Sort by total frequency
-    word_freq_df = word_freq_df.sort_values('all_freq', ascending=False)
-
-    # Plot the frequencies
-    plt.figure(figsize=(15, 8))
-
-    plt.subplot(1, 2, 1)
-    sns.barplot(x='all_freq', y='word', data=word_freq_df.head(15))
-    plt.title('Most Common Words in All Explanations')
-    plt.xlabel('Frequency')
-
-    plt.subplot(1, 2, 2)
-    comparison_df = word_freq_df.head(15).melt(id_vars='word',
-                                              value_vars=['correct_freq', 'incorrect_freq'],
-                                              var_name='prediction_type',
-                                              value_name='frequency')
-    sns.barplot(x='frequency', y='word', hue='prediction_type', data=comparison_df)
-    plt.title('Word Frequency: Correct vs Incorrect Predictions')
-    plt.xlabel('Frequency')
-    plt.savefig('explanation_word_frequencies.png')
-    plt.close()
-
-    return word_freq_df
-
-def create_decision_flow_diagram(features_df):
-    """
-    Create a decision flow diagram based on frequently co-occurring features
-    extracted from malnutrition assessment explanations
+    Analyze decision patterns across different prediction outcomes.
     
-    Parameters:
-    -----------
-    features_df : pandas.DataFrame
-        DataFrame containing features extracted from malnutrition assessments
+    Args:
+        data_dict (dict): Dictionary containing DataFrames with prediction results
         
     Returns:
-    --------
-    G : networkx.DiGraph
-        The directed graph representing the decision flow
-    pos : dict
-        Node positions for visualization
+        dict: Analysis results
+    """
+    # Extract features from explanations for each category
+    categories = ['TP_data', 'TN_data', 'FP_data', 'FN_data']
+    all_features = {}
+    
+    for category in categories:
+        if category in data_dict and not data_dict[category].empty:
+            features_list = []
+            for _, row in data_dict[category].iterrows():
+                features = extract_decision_features(row['explanation'])
+                features['category'] = category
+                features['patient_id'] = row['patient_id']
+                features_list.append(features)
+            
+            all_features[category] = pd.DataFrame(features_list)
+    
+    # Count feature mentions by category
+    feature_counts = {}
+    all_feature_names = set()
+    
+    for category, df in all_features.items():
+        if not df.empty:
+            # Get all columns except 'category' and 'patient_id'
+            feature_cols = [col for col in df.columns if col not in ['category', 'patient_id']]
+            all_feature_names.update(feature_cols)
+            
+            # Count non-null values for each feature
+            feature_counts[category] = {
+                feature: sum(df[feature].notna()) for feature in feature_cols if feature in df
+            }
+    
+    # Create a comparison DataFrame
+    comparison_data = []
+    for feature in all_feature_names:
+        row = {'feature': feature}
+        for category in categories:
+            if category in feature_counts:
+                # Calculate percentage of records in the category that mention this feature
+                n_records = len(data_dict[category])
+                count = feature_counts[category].get(feature, 0)
+                percentage = (count / n_records * 100) if n_records > 0 else 0
+                row[f'{category}_count'] = count
+                row[f'{category}_pct'] = percentage
+        comparison_data.append(row)
+    
+    feature_comparison_df = pd.DataFrame(comparison_data)
+    
+    # Create visualizations
+    if not feature_comparison_df.empty:
+        # Select top features for visualization
+        top_features = feature_comparison_df.copy()
+        
+        # Calculate sum of percentages across categories for sorting
+        top_features['total_pct'] = sum(
+            top_features.get(f'{cat}_pct', 0) for cat in categories if f'{cat}_pct' in top_features
+        )
+        
+        # Sort and get top 15 features
+        top_features = top_features.sort_values('total_pct', ascending=False).head(15)
+        
+        # Plot feature comparison
+        plt.figure(figsize=(12, 10))
+        
+        # Reshape for seaborn
+        plot_data = []
+        for _, row in top_features.iterrows():
+            for category in categories:
+                if f'{category}_pct' in row:
+                    plot_data.append({
+                        'Feature': row['feature'],
+                        'Category': category,
+                        'Percentage': row[f'{category}_pct']
+                    })
+        
+        plot_df = pd.DataFrame(plot_data)
+        
+        # Create grouped bar chart
+        sns.barplot(x='Percentage', y='Feature', hue='Category', data=plot_df)
+        plt.title('Decision Features by Prediction Category')
+        plt.xlabel('Percentage of Mentions')
+        plt.tight_layout()
+        plt.savefig('decision_features_comparison.png')
+        plt.close()
+        
+        # Create heatmap for feature comparison
+        plt.figure(figsize=(14, 12))
+        
+        # Prepare data for heatmap
+        heatmap_data = top_features.set_index('feature')
+        heatmap_cols = [col for col in heatmap_data.columns if col.endswith('_pct')]
+        heatmap_data = heatmap_data[heatmap_cols]
+        
+        # Rename columns for better display
+        heatmap_data.columns = [col.replace('_pct', '') for col in heatmap_data.columns]
+        
+        # Create the heatmap
+        sns.heatmap(heatmap_data, annot=True, cmap='YlGnBu', fmt='.1f')
+        plt.title('Feature Importance Heatmap by Category')
+        plt.tight_layout()
+        plt.savefig('feature_importance_heatmap.png')
+        plt.close()
+    
+    # Analyze differences between correct and incorrect predictions
+    correct_features = pd.concat([all_features.get('TP_data', pd.DataFrame()), 
+                                  all_features.get('TN_data', pd.DataFrame())])
+    
+    incorrect_features = pd.concat([all_features.get('FP_data', pd.DataFrame()), 
+                                   all_features.get('FN_data', pd.DataFrame())])
+    
+    # Compare confidence levels
+    confidence_comparison = {}
+    
+    if not correct_features.empty and 'confidence' in correct_features.columns:
+        confidence_comparison['correct'] = correct_features['confidence'].value_counts(normalize=True)
+    
+    if not incorrect_features.empty and 'confidence' in incorrect_features.columns:
+        confidence_comparison['incorrect'] = incorrect_features['confidence'].value_counts(normalize=True)
+    
+    if confidence_comparison:
+        confidence_df = pd.DataFrame(confidence_comparison).fillna(0)
+        
+        # Visualize confidence distribution
+        plt.figure(figsize=(10, 6))
+        confidence_df.plot(kind='bar')
+        plt.title('Confidence Levels: Correct vs Incorrect Predictions')
+        plt.ylabel('Proportion')
+        plt.xlabel('Confidence Level')
+        plt.tight_layout()
+        plt.savefig('confidence_comparison.png')
+        plt.close()
+    
+    # Create confusion patterns analysis
+    # How often do decision features align with the final prediction?
+    decision_alignment = {category: {} for category in categories}
+    
+    for category, df in all_features.items():
+        if not df.empty and 'decision_indicator' in df.columns:
+            expected_indicator = 'yes' if category in ['TP_data', 'FP_data'] else 'no'
+            alignment_count = sum(df['decision_indicator'] == expected_indicator)
+            total = sum(df['decision_indicator'].notna())
+            if total > 0:
+                decision_alignment[category]['aligned'] = alignment_count / total * 100
+                decision_alignment[category]['misaligned'] = 100 - decision_alignment[category]['aligned']
+    
+    # Create analysis summary
+    return {
+        'feature_comparison': feature_comparison_df,
+        'confidence_comparison': confidence_comparison,
+        'decision_alignment': decision_alignment,
+        'all_features': all_features
+    }
+
+def create_decision_flow_diagram(features_df, category, output_filename):
+    """
+    Create a decision flow diagram showing the reasoning path for a prediction category
+    
+    Args:
+        features_df (DataFrame): DataFrame with extracted features
+        category (str): The prediction category (TP, TN, FP, FN)
+        output_filename (str): Filename for the output image
+        
+    Returns:
+        tuple: (NetworkX graph, position dictionary)
     """
     import networkx as nx
     import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap
-    import numpy as np
     
-    # Extract features only for correct predictions
-    correct_features = features_df[features_df['correct'] == True]
-
     # Create a graph
     G = nx.DiGraph()
-
+    
     # Add start node
     G.add_node("START")
-
-    # Identify key features from the extract_decision_features function
-    key_features = [
-        # Anthropometric measurements
-        'bmi', 'weight_height', 'muac', 'z_score', 
-        # Growth parameters
-        'percentile', 'growth', 'weight_loss',
-        # Lab values
-        'albumin', 'prealbumin', 'hemoglobin', 'lymphocyte', 'transferrin', 'crp',
-        # Vitamin and mineral markers
-        'vitamin', 'mineral',
-        # Clinical factors
-        'illness', 'socioeconomic', 'symptoms', 'medication',
-        # Functional status
-        'functional',
-        # Nutritional intake
-        'intake',
-        # Mental health
-        'mental_health',
-        # Malabsorption
-        'malabsorption',
-        # Hydration
-        'hydration',
-        # Edema
-        'edema',
-        # Physical assessment
-        'physical_assessment',
-        # Classification terms
-        'malnutrition_class',
-        # Confidence level
-        'confidence',
-        # Severity if available
-        'severity'
-    ]
-
-    # Count feature occurrences per outcome
-    yes_predictions = correct_features[correct_features['prediction'] == 'yes']
-    no_predictions = correct_features[correct_features['prediction'] == 'no']
-
-    yes_feature_counts = {}
-    no_feature_counts = {}
-
-    for feature in key_features:
-        if feature in correct_features.columns:
-            yes_feature_counts[feature] = sum(yes_predictions[feature].notna() & 
-                                            (yes_predictions[feature] != 'not_mentioned'))
-            no_feature_counts[feature] = sum(no_predictions[feature].notna() & 
-                                           (no_predictions[feature] != 'not_mentioned'))
-
+    
+    # Add target node based on category
+    if category in ['TP_data', 'FP_data']:
+        target_node = "YES (Malnutrition)"
+    else:
+        target_node = "NO (No Malnutrition)"
+    
+    # Count feature occurrences
+    feature_counts = {}
+    for col in features_df.columns:
+        if col not in ['category', 'patient_id']:
+            # Count non-null values
+            feature_counts[col] = sum(features_df[col].notna())
+    
     # Sort features by frequency
-    yes_features_sorted = sorted(yes_feature_counts.items(), key=lambda x: x[1], reverse=True)
-    no_features_sorted = sorted(no_feature_counts.items(), key=lambda x: x[1], reverse=True)
-
-    # Filter to only include features that occur at least once
-    yes_features_sorted = [(f, c) for f, c in yes_features_sorted if c > 0]
-    no_features_sorted = [(f, c) for f, c in no_features_sorted if c > 0]
-
-    # Determine how many features to include in each path (up to 5 or available features)
-    yes_path_length = min(5, len(yes_features_sorted))
-    no_path_length = min(5, len(no_features_sorted))
-
-    # Add connections for "yes" prediction path
-    if yes_features_sorted:
-        G.add_edge("START", yes_features_sorted[0][0], weight=yes_features_sorted[0][1])
-        for i in range(yes_path_length - 1):
-            G.add_edge(yes_features_sorted[i][0], yes_features_sorted[i+1][0],
-                      weight=min(yes_features_sorted[i][1], yes_features_sorted[i+1][1]))
-        if yes_path_length > 0:
-            G.add_edge(yes_features_sorted[yes_path_length-1][0], "YES",
-                      weight=yes_features_sorted[yes_path_length-1][1])
-
-    # Add connections for "no" prediction path
-    if no_features_sorted:
-        G.add_edge("START", no_features_sorted[0][0], weight=no_features_sorted[0][1])
-        for i in range(no_path_length - 1):
-            G.add_edge(no_features_sorted[i][0], no_features_sorted[i+1][0],
-                      weight=min(no_features_sorted[i][1], no_features_sorted[i+1][1]))
-        if no_path_length > 0:
-            G.add_edge(no_features_sorted[no_path_length-1][0], "NO",
-                      weight=no_features_sorted[no_path_length-1][1])
-
-    # Add cross-connections between paths where appropriate
-    # Find common features between yes and no paths
-    yes_features_set = set([f for f, _ in yes_features_sorted])
-    no_features_set = set([f for f, _ in no_features_sorted])
-    common_features = yes_features_set.intersection(no_features_set)
+    sorted_features = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
     
-    # Connect common features with appropriate weights
-    for feature in common_features:
-        yes_weight = yes_feature_counts[feature]
-        no_weight = no_feature_counts[feature]
+    # Take top 10 features
+    top_features = [f for f, c in sorted_features[:10] if c > 0]
+    
+    # Build the graph structure
+    if top_features:
+        G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
         
-        # Connect to the outcome with higher weight
-        if yes_weight > no_weight * 1.5:  # Significantly more common in yes predictions
-            if feature in [f for f, _ in yes_features_sorted[:yes_path_length]]:
-                G.add_edge(feature, "YES", weight=yes_weight)
-        elif no_weight > yes_weight * 1.5:  # Significantly more common in no predictions
-            if feature in [f for f, _ in no_features_sorted[:no_path_length]]:
-                G.add_edge(feature, "NO", weight=no_weight)
-
-    # Create the figure with a white background
-    plt.figure(figsize=(18, 14), facecolor='white')
+        for i in range(len(top_features) - 1):
+            G.add_edge(top_features[i], top_features[i+1], 
+                      weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
+        
+        G.add_edge(top_features[-1], target_node, weight=feature_counts[top_features[-1]])
     
-    # Use a hierarchical layout for better visualization of the flow
+    # Add decision indicator if available
+    if 'decision_indicator' in features_df.columns:
+        indicator_counts = features_df['decision_indicator'].value_counts()
+        
+        if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
+            if 'yes' not in G.nodes():
+                G.add_node('Explicit YES')
+            G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
+            G.add_edge('Explicit YES', target_node, weight=indicator_counts['yes'])
+        
+        if 'no' in indicator_counts and indicator_counts['no'] > 0:
+            if 'no' not in G.nodes():
+                G.add_node('Explicit NO')
+            G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
+            G.add_edge('Explicit NO', target_node, weight=indicator_counts['no'])
+    
+    # Add confidence level if available
+    if 'confidence' in features_df.columns:
+        confidence_counts = features_df['confidence'].value_counts()
+        
+        for level, count in confidence_counts.items():
+            if count > 0:
+                node_name = f'Confidence: {level}'
+                G.add_node(node_name)
+                G.add_edge("START", node_name, weight=count)
+                G.add_edge(node_name, target_node, weight=count)
+    
+    # Visualize the graph
+    plt.figure(figsize=(14, 10))
+    
+    # Use a hierarchical layout
     try:
         pos = nx.nx_pydot.graphviz_layout(G, prog='dot')
     except:
-        try:
-            # Try another layout option if graphviz 'dot' fails
-            pos = nx.nx_pydot.graphviz_layout(G, prog='fdp') 
-        except:
-            # Fallback to spring layout if graphviz is not available
-            pos = nx.spring_layout(G, seed=42, k=0.5)  # Adjust k for better node separation
-
-    # Create a custom colormap for nodes based on their role
-    node_types = {}
-    for node in G.nodes():
-        if node == "START":
-            node_types[node] = "start"
-        elif node == "YES":
-            node_types[node] = "yes"
-        elif node == "NO":
-            node_types[node] = "no"
-        else:
-            # Check if it's in both paths, yes path, or no path
-            if node in yes_features_set and node in no_features_set:
-                node_types[node] = "shared"
-            elif node in yes_features_set:
-                node_types[node] = "yes_feature"
-            elif node in no_features_set:
-                node_types[node] = "no_feature"
-            else:
-                node_types[node] = "other"
-
+        # Fallback to spring layout
+        pos = nx.spring_layout(G, seed=42)
+    
+    # Node colors
     node_colors = []
     for node in G.nodes():
-        if node_types[node] == "start":
+        if node == "START":
             node_colors.append("#3498db")  # Blue
-        elif node_types[node] == "yes":
-            node_colors.append("#2ecc71")  # Green
-        elif node_types[node] == "no":
-            node_colors.append("#e74c3c")  # Red
-        elif node_types[node] == "shared":
+        elif node == target_node:
+            node_colors.append("#2ecc71" if "YES" in node else "#e74c3c")  # Green or Red
+        elif "Confidence" in node:
             node_colors.append("#f39c12")  # Orange
-        elif node_types[node] == "yes_feature":
-            node_colors.append("#a3e4d7")  # Light green
-        elif node_types[node] == "no_feature":
-            node_colors.append("#f5b7b1")  # Light red
+        elif node in ["Explicit YES", "Explicit NO"]:
+            node_colors.append("#9b59b6")  # Purple
         else:
-            node_colors.append("#bdc3c7")  # Light gray
-
-    # Node sizes based on importance and occurrence counts
+            node_colors.append("#a3e4d7")  # Light green
+    
+    # Node sizes based on importance
     node_sizes = []
     for node in G.nodes():
-        if node in ["YES", "NO", "START"]:
-            node_sizes.append(4000)
+        if node in ["START", target_node, "Explicit YES", "Explicit NO"]:
+            node_sizes.append(3000)
+        elif "Confidence" in node:
+            node_sizes.append(2500)
         else:
-            # Size based on frequency in either yes or no paths
-            count = yes_feature_counts.get(node, 0) + no_feature_counts.get(node, 0)
-            # Scale from 1500 to 3000 based on count
-            max_count = max(
-                max(count for f, count in yes_feature_counts.items() if count > 0), 
-                max(count for f, count in no_feature_counts.items() if count > 0)
-            ) if yes_feature_counts and no_feature_counts else 1
-            node_sizes.append(1500 + (count / max_count) * 1500)
-
+            # Size based on frequency
+            count = feature_counts.get(node, 0)
+            max_count = max(feature_counts.values()) if feature_counts else 1
+            node_sizes.append(1500 + (count / max_count) * 1000)
+    
     # Get edge weights for line thickness
     edges = G.edges()
     weights = [G[u][v]['weight'] for u, v in edges]
     max_weight = max(weights) if weights else 1
-    
-    # Edge colors based on source and target
-    edge_colors = []
-    for u, v in edges:
-        if v == "YES":
-            edge_colors.append("#2ecc71")  # Green
-        elif v == "NO":
-            edge_colors.append("#e74c3c")  # Red
-        elif node_types.get(u) == "start":
-            edge_colors.append("#3498db")  # Blue
-        elif node_types.get(u) == "shared":
-            edge_colors.append("#f39c12")  # Orange
-        elif node_types.get(u) == "yes_feature":
-            edge_colors.append("#a3e4d7")  # Light green
-        elif node_types.get(u) == "no_feature":
-            edge_colors.append("#f5b7b1")  # Light red
-        else:
-            edge_colors.append("#95a5a6")  # Gray
-
-    # Scale line width based on weights
-    normalized_weights = [1.5 + 3.5 * (w / max_weight) for w in weights]
     
     # Draw the network
     nx.draw(G, pos, 
             with_labels=True, 
             node_color=node_colors,
             node_size=node_sizes, 
-            font_size=11, 
+            font_size=10, 
             font_weight='bold',
-            font_color='black',
-            width=normalized_weights, 
-            edge_color=edge_colors,
+            width=[1.0 + 3.0 * (w / max_weight) for w in weights], 
+            edge_color='gray',
             arrows=True, 
-            arrowsize=20,
-            connectionstyle='arc3,rad=0.1')  # Curved edges for better visibility
-            
-    # Add edge labels showing counts
+            arrowsize=15)
+    
+    # Add edge labels
     edge_labels = {(u, v): f"{G[u][v]['weight']}" for u, v in G.edges()}
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
     
-    # Position edge labels closer to their edges
-    label_pos = nx.draw_networkx_edge_labels(
-        G, pos, 
-        edge_labels=edge_labels, 
-        font_size=9,
-        font_weight='bold',
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
-        label_pos=0.5  # Position labels at the middle of edges
-    )
-
-    # Add a title
-    plt.title("Malnutrition Assessment Decision Flow Diagram", fontsize=20, pad=20)
-    
-    # Add a legend for node types
-    legend_elements = [
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#3498db", markersize=15, label='Start'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#2ecc71", markersize=15, label='Yes (Malnutrition)'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#e74c3c", markersize=15, label='No (No Malnutrition)'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#f39c12", markersize=15, label='Shared Feature'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#a3e4d7", markersize=15, label='Yes Path Feature'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor="#f5b7b1", markersize=15, label='No Path Feature')
-    ]
-    plt.legend(handles=legend_elements, loc='lower right', fontsize=12)
-    
-    # Add a description
-    plt.figtext(0.5, 0.01, 
-                "Node size represents feature frequency. Edge numbers show occurrence count. " +
-                "Edges show decision flow patterns.", 
-                ha='center', fontsize=12)
-
-    # Remove axis
+    # Add title
+    plt.title(f"Decision Flow Diagram for {category}", fontsize=16)
     plt.axis('off')
-    
-    # Handle the tight_layout warning by using bbox_inches when saving
-    plt.savefig('malnutrition_decision_flow_diagram.png', dpi=300, bbox_inches='tight', facecolor='white')
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     plt.close()
-
+    
     return G, pos
 
-def analyze_explanations(data_dict):
+def analyze_feature_differences(data_dict, analysis_results):
     """
-    Analyze explanations from LLM outputs to understand decision patterns
+    Analyze feature differences between correct and incorrect predictions
+    
+    Args:
+        data_dict (dict): Dictionary containing DataFrames with prediction results
+        analysis_results (dict): Previous analysis results
+        
+    Returns:
+        DataFrame: Feature difference analysis
     """
-    # Extract full dataset
-    df = data_dict['full_df']
-
-    # First, let's explore word frequencies in explanations
-    word_freq_df = visualize_explanation_elements(df)
-
-    # Extract decision features from explanations
-    model, feature_names, features_df = build_decision_tree_from_explanations(df)
-
-    # Visualize the decision tree that explains the LLM's process
-    plt.figure(figsize=(20, 10))
-    plot_tree(model, feature_names=feature_names, class_names=['no', 'yes'],
-              filled=True, rounded=True, fontsize=10)
-    plt.title("Decision Tree of LLM's Classification Process", fontsize=16)
-    plt.savefig('llm_decision_tree.png')
-    plt.close()
-
-    # Create a more intuitive decision flow diagram
-    decision_graph = create_decision_flow_diagram(features_df)
-
-    # Analyze feature importance for correct vs incorrect predictions
-    correct_df = data_dict['correct_predictions']
-    incorrect_df = data_dict['incorrect_predictions']
-
-    # Extract features from both sets
-    correct_features = []
-    for _, row in correct_df.iterrows():
-        features = extract_decision_features(row['explanation'])
-        features['prediction'] = row['predicted_label']
-        correct_features.append(features)
-
-    incorrect_features = []
-    for _, row in incorrect_df.iterrows():
-        features = extract_decision_features(row['explanation'])
-        features['prediction'] = row['predicted_label']
-        incorrect_features.append(features)
-
-    # Convert to DataFrames
-    correct_features_df = pd.DataFrame(correct_features).fillna('not_mentioned')
-    incorrect_features_df = pd.DataFrame(incorrect_features).fillna('not_mentioned')
-
+    # Create structure for feature analysis
+    all_features = analysis_results['all_features']
+    
+    # Combine TP and TN features
+    correct_features = pd.concat([
+        all_features.get('TP_data', pd.DataFrame()),
+        all_features.get('TN_data', pd.DataFrame())
+    ])
+    
+    # Combine FP and FN features
+    incorrect_features = pd.concat([
+        all_features.get('FP_data', pd.DataFrame()),
+        all_features.get('FN_data', pd.DataFrame())
+    ])
+    
+    # Handle empty DataFrames
+    if correct_features.empty or incorrect_features.empty:
+        return pd.DataFrame()
+    
     # Count feature mentions
-    correct_mentions = {col: sum(correct_features_df[col] != 'not_mentioned')
-                       for col in correct_features_df.columns if col != 'prediction'}
+    correct_mentions = {}
+    for col in correct_features.columns:
+        if col not in ['category', 'patient_id']:
+            correct_mentions[col] = sum(correct_features[col].notna())
+    
+    incorrect_mentions = {}
+    for col in incorrect_features.columns:
+        if col not in ['category', 'patient_id']:
+            incorrect_mentions[col] = sum(incorrect_features[col].notna())
+    
+    # Create comparison DataFrame
+    all_features = set(list(correct_mentions.keys()) + list(incorrect_mentions.keys()))
+    
+    feature_diff = []
+    for feature in all_features:
+        correct_count = correct_mentions.get(feature, 0)
+        incorrect_count = incorrect_mentions.get(feature, 0)
+        
+        correct_pct = correct_count / len(correct_features) * 100 if len(correct_features) > 0 else 0
+        incorrect_pct = incorrect_count / len(incorrect_features) * 100 if len(incorrect_features) > 0 else 0
+        
+        diff = correct_pct - incorrect_pct
+        
+        feature_diff.append({
+            'feature': feature,
+            'correct_count': correct_count,
+            'incorrect_count': incorrect_count,
+            'correct_pct': correct_pct,
+            'incorrect_pct': incorrect_pct,
+            'diff': diff
+        })
+    
+    # Create DataFrame and sort by absolute difference
+    diff_df = pd.DataFrame(feature_diff)
+    diff_df = diff_df.sort_values('diff', key=abs, ascending=False)
+    
+    # Visualize the differences
+    if not diff_df.empty:
+        plt.figure(figsize=(12, 8))
+        top_diff = diff_df.head(10)
+        
+        sns.barplot(x='diff', y='feature', data=top_diff)
+        plt.axvline(x=0, color='black', linestyle='--')
+        plt.title('Feature Importance Difference: Correct vs Incorrect Predictions')
+        plt.xlabel('Difference in Percentage Points (Correct - Incorrect)')
+        plt.tight_layout()
+        plt.savefig('feature_difference_analysis.png')
+        plt.close()
+    
+    return diff_df
 
-    incorrect_mentions = {col: sum(incorrect_features_df[col] != 'not_mentioned')
-                         for col in incorrect_features_df.columns if col != 'prediction'}
-
-    # Create feature importance comparison
-    feature_comparison = pd.DataFrame({
-        'feature': list(set(list(correct_mentions.keys()) + list(incorrect_mentions.keys()))),
-        'correct_mentions': [correct_mentions.get(f, 0) for f in set(list(correct_mentions.keys()) + list(incorrect_mentions.keys()))],
-        'incorrect_mentions': [incorrect_mentions.get(f, 0) for f in set(list(correct_mentions.keys()) + list(incorrect_mentions.keys()))]
-    })
-
-    # Calculate percentage of mentions
-    feature_comparison['correct_pct'] = feature_comparison['correct_mentions'] / len(correct_df) * 100
-    feature_comparison['incorrect_pct'] = feature_comparison['incorrect_mentions'] / len(incorrect_df) * 100 if len(incorrect_df) > 0 else 0
-
-    # Calculate difference
-    feature_comparison['difference'] = feature_comparison['correct_pct'] - feature_comparison['incorrect_pct']
-
-    # Sort by absolute difference
-    feature_comparison = feature_comparison.sort_values('difference', key=abs, ascending=False)
-
-    # Visualize feature importance difference
-    plt.figure(figsize=(12, 8))
-    sns.barplot(x='difference', y='feature', data=feature_comparison.head(10))
-    plt.title('Feature Importance Difference: Correct vs Incorrect Predictions', fontsize=16)
-    plt.axvline(x=0, color='black', linestyle='--')
-    plt.xlabel('Difference in Mention Percentage (Correct - Incorrect)')
-    plt.savefig('feature_importance_difference.png')
-    plt.close()
-
-    return {
-        'word_frequencies': word_freq_df,
-        'decision_tree_model': model,
-        'feature_names': feature_names,
-        'features_df': features_df,
-        'feature_comparison': feature_comparison,
-        'decision_graph': decision_graph
-    }
-
-def main(file_path):
+def analyze_llm_explanations(file_path):
     """
-    Main function to load data and analyze decision process
+    Main function to analyze LLM explanations
+    
+    Args:
+        file_path (str): Path to the CSV file with LLM predictions
+        
+    Returns:
+        dict: Analysis results
     """
-    # Load the data
+    # Load and prepare data
     data_dict = load_and_filter_data(file_path)
+    
+    # Extract decision patterns
+    decision_patterns = analyze_decision_patterns(data_dict)
+    
+    # Create decision flow diagrams for each category
+    for category in ['TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        if category in data_dict and not data_dict[category].empty:
+            if category in decision_patterns['all_features']:
+                create_decision_flow_diagram(
+                    decision_patterns['all_features'][category],
+                    category,
+                    f'decision_flow_{category}.png'
+                )
+    
+    # Analyze feature differences
+    feature_differences = analyze_feature_differences(data_dict, decision_patterns)
+    
+    # Print summary statistics
+    print("\n===== LLM Explanation Analysis =====")
+    print(f"Total samples: {len(data_dict['full_df'])}")
+    
+    for category in ['TP_data', 'TN_data', 'FP_data', 'FN_data']:
+        if category in data_dict:
+            print(f"{category}: {len(data_dict[category])} cases " + 
+                  f"({len(data_dict[category])/len(data_dict['full_df'])*100:.1f}%)")
+    
+    print("\n===== Decision Pattern Summary =====")
+    if feature_differences is not None and not feature_differences.empty:
+        print("\nTop features more common in CORRECT predictions:")
+        top_correct = feature_differences[feature_differences['diff'] > 0].head(5)
+        for _, row in top_correct.iterrows():
+            print(f"- {row['feature']}: +{row['diff']:.1f}% difference")
+        
+        print("\nTop features more common in INCORRECT predictions:")
+        top_incorrect = feature_differences[feature_differences['diff'] < 0].head(5)
+        for _, row in top_incorrect.iterrows():
+            print(f"- {row['feature']}: {row['diff']:.1f}% difference")
+    
+    # Output analysis results
+    results = {
+        'data': data_dict,
+        'decision_patterns': decision_patterns,
+        'feature_differences': feature_differences
+    }
+    
+    return results
 
-    # Analyze explanations
-    analysis_results = analyze_explanations(data_dict)
-
-    # Print summary of findings
-    print("\n==== LLM Decision Process Analysis ====")
-    print(f"Total samples analyzed: {len(data_dict['full_df'])}")
-    print(f"Correct predictions: {len(data_dict['correct_predictions'])} ({len(data_dict['correct_predictions'])/len(data_dict['full_df'])*100:.2f}%)")
-    print(f"Incorrect predictions: {len(data_dict['incorrect_predictions'])} ({len(data_dict['incorrect_predictions'])/len(data_dict['full_df'])*100:.2f}%)")
-
-    print("\n==== Top Decision Features ====")
-    top_features = analysis_results['feature_comparison'].head(5)
-    print(top_features[['feature', 'correct_pct', 'incorrect_pct', 'difference']])
-
-    print("\n==== Decision Tree Created ====")
-    print("Decision tree visualization saved as 'llm_decision_tree.png'")
-    print("Decision flow diagram saved as 'decision_flow_diagram.png'")
-    print("Word frequency analysis saved as 'explanation_word_frequencies.png'")
-    print("Feature importance comparison saved as 'feature_importance_difference.png'")
-
-    return analysis_results
-
+# Main execution
 if __name__ == "__main__":
-    # Replace with your actual file path
-    file_path = "./llama_zero_shot/predictions.csv"
-    results = main(file_path)
+    file_path = "./predictions.csv"  # Update with actual file path
+    analysis_results = analyze_llm_explanations(file_path)
