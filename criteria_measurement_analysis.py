@@ -767,8 +767,7 @@ MEASUREMENT ANALYSIS SUMMARY
     # Threshold performance
     for group in ['TP_data', 'TN_data', 'FP_data', 'FN_data']:
         thresholds = comparative_results['correct_vs_incorrect'][f'{group}_thresholds']
-        report_sections.append(f"
-Measurement performance in {group.replace('_', ' ')}:")
+        report_sections.append(f"Measurement performance in {group.replace('_', ' ')}:")
         
         for measure, stats in thresholds.items():
             if 'error' not in stats:
