@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+# Removed seaborn import as it's not necessary for the plotting style anymore
 import re
 from scipy import stats
 from statsmodels.stats.proportion import proportion_confint
@@ -28,10 +28,11 @@ from utils import (
 )
 
 # Set plotting style
-plt.style.use('seaborn')
-sns.set_palette("Set2")
+plt.style.use('ggplot')  # Use a valid style like 'ggplot'
+# sns.set_palette("Set2")  # Removed seaborn's set_palette call since sns is no longer needed
 plt.rcParams['figure.figsize'] = [12, 8]
 plt.rcParams['font.size'] = 12
+
 def analyze_reasoning_consistency(explanation, original_note):
     """
     Analyze the consistency between the explanation and original note.
