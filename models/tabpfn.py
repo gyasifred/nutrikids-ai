@@ -130,9 +130,26 @@ def evaluate_model(
     plt.close()
     print(f"Confusion matrix saved to: {cm_filename}")
     
+    # Save raw confusion matrix data to CSV
+    cm_df = pd.DataFrame(cm, columns=['Predicted_Negative', 'Predicted_Positive'], 
+                         index=['Actual_Negative', 'Actual_Positive'])
+    cm_data_filename = os.path.join(output_dir, f"{model_name}_confusion_matrix_data_{timestamp}.csv")
+    cm_df.to_csv(cm_data_filename)
+    print(f"Confusion matrix data saved to: {cm_data_filename}")
+    
+    # Calculate and save ROC curve data
+    fpr, tpr, thresholds_roc = roc_curve(y_test, pos_proba)
+    roc_data = pd.DataFrame({
+        'false_positive_rate': fpr,
+        'true_positive_rate': tpr,
+        'thresholds': np.append(thresholds_roc, [1.0])  # Add 1.0 as the last threshold
+    })
+    roc_data_filename = os.path.join(output_dir, f"{model_name}_roc_curve_data_{timestamp}.csv")
+    roc_data.to_csv(roc_data_filename, index=False)
+    print(f"ROC curve data saved to: {roc_data_filename}")
+    
     # Plot and save ROC curve
     plt.figure(figsize=(8, 6))
-    fpr, tpr, _ = roc_curve(y_test, pos_proba)
     plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc:.3f})')
     plt.plot([0, 1], [0, 1], 'k--')
     plt.xlabel('False Positive Rate')
@@ -143,6 +160,76 @@ def evaluate_model(
     plt.savefig(roc_filename)
     plt.close()
     print(f"ROC curve saved to: {roc_filename}")
+    
+    # Calculate and save Precision-Recall curve data
+    precision_curve, recall_curve, thresholds_pr = precision_recall_curve(y_test, pos_proba)
+    avg_precision = average_precision_score(y_test, pos_proba)
+    pr_data = pd.DataFrame({
+        'precision': precision_curve,
+        'recall': recall_curve,
+        'thresholds': np.append(thresholds_pr, [1.0])  # Add 1.0 as the last threshold
+    })
+    pr_data_filename = os.path.join(output_dir, f"{model_name}_precision_recall_curve_data_{timestamp}.csv")
+    pr_data.to_csv(pr_data_filename, index=False)
+    print(f"Precision-Recall curve data saved to: {pr_data_filename}")
+    
+    # Plot and save Precision-Recall curve
+    plt.figure(figsize=(8, 6))
+    plt.plot(recall_curve, precision_curve, label=f'PR Curve (AP = {avg_precision:.3f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc='lower left')
+    pr_filename = os.path.join(output_dir, f"{model_name}_precision_recall_curve_{timestamp}.png")
+    plt.savefig(pr_filename)
+    plt.close()
+    print(f"Precision-Recall curve saved to: {pr_filename}")
+    
+    # Save calibration curve data (reliability diagram)
+    n_bins = 10
+    bin_counts, bin_edges = np.histogram(pos_proba, bins=n_bins, range=(0, 1))
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    # Calculate fraction of positives in each bin
+    bin_positives = np.zeros(n_bins)
+    for i in range(n_bins):
+        bin_mask = (pos_proba >= bin_edges[i]) & (pos_proba < bin_edges[i+1])
+        if np.sum(bin_mask) > 0:
+            bin_positives[i] = np.mean(y_test[bin_mask])
+        else:
+            bin_positives[i] = np.nan
+    
+    calibration_data = pd.DataFrame({
+        'bin_centers': bin_centers,
+        'fraction_of_positives': bin_positives,
+        'bin_counts': bin_counts
+    })
+    calibration_data_filename = os.path.join(output_dir, f"{model_name}_calibration_curve_data_{timestamp}.csv")
+    calibration_data.to_csv(calibration_data_filename, index=False)
+    print(f"Calibration curve data saved to: {calibration_data_filename}")
+    
+    # Plot and save calibration curve
+    plt.figure(figsize=(8, 6))
+    plt.plot(bin_centers, bin_positives, marker='o', label='Calibration Curve')
+    plt.plot([0, 1], [0, 1], 'k--', label='Perfect Calibration')
+    plt.xlabel('Mean Predicted Probability')
+    plt.ylabel('Fraction of Positives')
+    plt.title('Calibration Curve (Reliability Diagram)')
+    plt.legend(loc='lower right')
+    calibration_filename = os.path.join(output_dir, f"{model_name}_calibration_curve_{timestamp}.png")
+    plt.savefig(calibration_filename)
+    plt.close()
+    print(f"Calibration curve saved to: {calibration_filename}")
+    
+    # Save raw prediction data
+    prediction_data = pd.DataFrame({
+        'actual': y_test,
+        'predicted': y_pred,
+        'probability': pos_proba
+    })
+    predictions_filename = os.path.join(output_dir, f"{model_name}_predictions_{timestamp}.csv")
+    prediction_data.to_csv(predictions_filename, index=False)
+    print(f"Raw predictions saved to: {predictions_filename}")
     
     # Feature importance analysis (for interpretability)
     # TabPFN doesn't provide direct feature importances,
@@ -189,7 +276,7 @@ def evaluate_model(
         feature_imp_df.to_csv(feature_imp_filename, index=False)
         print(f"Feature importance saved to: {feature_imp_filename}")
         
-        # Plot top 20 features (or all if less than 15)
+        # Plot top 20 features (or all if less than 20)
         n_top_features = min(20, len(feature_names))
         plt.figure(figsize=(10, 8))
         sns.barplot(x='importance', y='feature', data=feature_imp_df.head(n_top_features))
@@ -230,7 +317,14 @@ def evaluate_model(
         'feature_importance': feature_imp_df,
         'metrics_file': metrics_filename,
         'confusion_matrix_file': cm_filename,
+        'confusion_matrix_data_file': cm_data_filename,
         'roc_curve_file': roc_filename,
+        'roc_curve_data_file': roc_data_filename,
+        'precision_recall_curve_file': pr_filename,
+        'precision_recall_curve_data_file': pr_data_filename,
+        'calibration_curve_file': calibration_filename,
+        'calibration_curve_data_file': calibration_data_filename,
+        'predictions_file': predictions_filename,
         'classification_report_file': cr_filename,
         'feature_importance_file': feature_imp_filename,
         'feature_importance_plot_file': feature_imp_plot_filename,
@@ -245,7 +339,6 @@ def evaluate_model(
     print(f"F1 Score: {f1:.4f}")
     
     return results
-
 
 from sklearn.inspection import permutation_importance
 
