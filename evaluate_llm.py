@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 from unsloth import FastLanguageModel
 from transformers import BitsAndBytesConfig
-
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from models.llm_models import (
     MalnutritionPromptBuilder,
     extract_malnutrition_decision,
@@ -377,12 +377,25 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                     temperature=args.temperature,
                     do_sample=args.temperature > 0,
                     use_cache=True,
-                    pad_token_id=tokenizer.eos_token_id
+                    pad_token_id=tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
+                    output_scores=True 
                 )
             
+            # Get the generated tokens and their scores
+            sequences = output.sequences
+            scores = output.scores
+            
+            # Calculate probabilities for each generated token
+            probs = torch.stack(scores, dim=1).softmax(-1)
+            
+            # Get the probability of the generated sequence
+            sequence_probs = probs.gather(2, sequences[:,1:].unsqueeze(-1)).squeeze(-1)
+            avg_prob = sequence_probs.mean(dim=1).cpu().numpy()
+    
             # Decode the output - only the generated part
             input_length = inputs.shape[1]
-            response_tokens = output[0][input_length:]
+            response_tokens = sequences[0][input_length:]
             response = tokenizer.decode(response_tokens, skip_special_tokens=True)
             
             # Extract decision and explanation from text response
@@ -396,7 +409,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
         except Exception as e:
             print(f"Error generating response: {str(e)}")
             # Return default values in case of error
-            batch_results.append((0, f"Error processing text: {str(e)}"))
+            batch_results.append((0, "Error occurred during processing"))
     
     return batch_results
     
@@ -474,12 +487,13 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             # Store results
             for i in range(len(batch_texts)):
                 try:
-                    predicted_label, explanation = batch_results[i]
+                    predicted_label, explanation, pred_score = batch_results[i]
                     
                     results.append({
                         "patient_id": batch_ids[i],
                         "true_label": batch_true_labels[i],
                         "predicted_label": predicted_label,
+                        "prediction_score": pred_score,
                         "explanation": explanation
                     })
                 except Exception as e:
@@ -489,6 +503,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "patient_id": batch_ids[i],
                         "true_label": batch_true_labels[i],
                         "predicted_label": -1,
+                        "prediction_score": -1,
                         "explanation": f"Error: {str(e)}"
                     })
     
@@ -503,8 +518,22 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
     elif len(eval_df) < len(df):
         print(f"Warning: Only {len(eval_df)} out of {len(df)} records were processed successfully.")
     
+    # Evaluate model performance
+    if len(eval_df) > 0:
+        y_true = eval_df["true_label"].tolist()
+        y_pred = eval_df["predicted_label"].tolist()
+        y_scores = eval_df["prediction_score"].tolist()  # Get probability scores
+        
+        print("Computing evaluation metrics...")
+        try:
+            metrics = evaluate_predictions(y_true, y_pred, y_scores)  # Pass scores
+            # Add metrics to results_df as attributes or save separately as needed
+            for metric_name, metric_value in metrics.items():
+                results_df.attrs[metric_name] = metric_value
+        except Exception as e:
+            print(f"Error computing evaluation metrics: {e}")
+    
     return results_df
-
 
 def parse_arguments():
     """Parse command line arguments for the evaluation script."""
