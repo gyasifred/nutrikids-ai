@@ -98,7 +98,8 @@ def load_model_and_tokenizer(base_model, model_path, args):
             # Force GPU usage if available instead of "auto" mapping
             "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
             "use_flash_attention_2": args.use_flash_attention,
-            "use_cache": True  # Enable caching for inference
+            "use_cache": True,  # Enable caching for inference
+            "max_seq_length": args.max_seq_length  # Set model's maximum sequence length
         }
         # Add quantization settings
         if quantization_config is not None:
@@ -142,8 +143,8 @@ def get_model_max_length(model, tokenizer):
     Returns:
         int: Maximum sequence length the model can handle
     """
-    # Always return the fixed max_seq_length
-    return 4096
+    # Return the configured max_seq_length
+    return model.config.max_seq_length
 
 
 def truncate_text(text, tokenizer, max_tokens):
@@ -193,12 +194,12 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Explicitly use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
-    # Fixed model max length to 4096
-    model_max_length = 4096
+    # Get model's maximum sequence length
+    model_max_length = args.max_seq_length
     
     # Calculate reserved tokens
     few_shot_token_estimate = 750 * args.few_shot_count
-    reserved_tokens = args.max_new_tokens + few_shot_token_estimate + 400
+    reserved_tokens = args.max_length + few_shot_token_estimate + 400
     max_patient_note_tokens = model_max_length - reserved_tokens
     
     print(f"Model max length: {model_max_length}, Reserved tokens: {reserved_tokens}")
@@ -231,7 +232,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Handle prompt length adjustments
             full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
             
-            if full_prompt_length + args.max_new_tokens > model_max_length:
+            if full_prompt_length + args.max_length > model_max_length:
                 if args.few_shot_count > 0:
                     reduced_examples = max(0, args.few_shot_count - 1)
                     print(f"Warning: Prompt too long ({full_prompt_length} tokens). Reducing examples from {args.few_shot_count} to {reduced_examples}")
@@ -250,8 +251,8 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                     
                     full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
                 
-                if full_prompt_length + args.max_new_tokens > model_max_length:
-                    needed_reduction = (full_prompt_length + args.max_new_tokens) - model_max_length + 100
+                if full_prompt_length + args.max_length > model_max_length:
+                    needed_reduction = (full_prompt_length + args.max_length) - model_max_length + 100
                     new_max_tokens = max(2048, max_patient_note_tokens - needed_reduction)
                     
                     print(f"Warning: Further truncating text to {new_max_tokens} tokens")
@@ -285,18 +286,18 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 return_tensors="pt"
             ).to(device)
             
-            # Adjust max_new_tokens if needed
-            if inputs.shape[1] + args.max_new_tokens > model_max_length:
-                print(f"Warning: Final input still too long: {inputs.shape[1]} tokens. Reducing max_new_tokens.")
-                adjusted_max_new_tokens = max(512, model_max_length - inputs.shape[1] - 50)
+            # Adjust max_length if needed
+            if inputs.shape[1] + args.max_length > model_max_length:
+                print(f"Warning: Final input still too long: {inputs.shape[1]} tokens. Reducing max_length.")
+                adjusted_max_length = max(256, model_max_length - inputs.shape[1] - 50)
             else:
-                adjusted_max_new_tokens = args.max_new_tokens
+                adjusted_max_length = args.max_length
             
             # Generate response
             with torch.no_grad():
                 output = model.generate(
                     input_ids=inputs,
-                    max_new_tokens=adjusted_max_new_tokens,
+                    max_new_tokens=adjusted_max_length,
                     temperature=args.temperature,
                     do_sample=args.temperature > 0,
                     use_cache=True,
@@ -521,6 +522,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             print(f"Error computing evaluation metrics: {e}")
     
     return results_df
+
 def parse_arguments():
     """Parse command line arguments for the evaluation script."""
     parser = argparse.ArgumentParser(
@@ -569,8 +571,8 @@ def parse_arguments():
                         help="Use Flash Attention 2 if available")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
-    parser.add_argument("--max_new_tokens", type=int, default=2048,
-                        help="Maximum number of new tokens to generate")
+    parser.add_argument("--max_length", type=int, default=256,
+                        help="Maximum number of tokens to generate (default: 256)")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
     parser.add_argument("--batch_size", type=int, default=16,
@@ -588,7 +590,7 @@ def parse_arguments():
     parser.add_argument("--gpu_id", type=int, default=0,
                         help="GPU ID to use if multiple GPUs are available (default: 0)")
 
-    # Fixed maximum sequence length
+    # Maximum sequence length the model can handle
     parser.add_argument("--max_seq_length", type=int, default=4096,
                         help="Maximum sequence length the model can handle (default: 4096)")
 
@@ -602,8 +604,6 @@ def parse_arguments():
         args.force_bf16 = False
 
     return args
-
-
 def main():
     """Main function to run the evaluation pipeline."""
     args = parse_arguments()
@@ -685,14 +685,26 @@ def main():
     # Evaluate model performance
     y_true = eval_df["true_label"].tolist()
     y_pred = eval_df["predicted_label"].tolist()
-
-    print("Computing evaluation metrics...")
-    try:
-        # Only pass true and predicted labels
-        metrics = evaluate_predictions(y_true, y_pred)
-    except Exception as e:
-        print(f"Error computing evaluation metrics: {e}")
-        raise
+    
+    # Include prediction scores if available
+    if "prediction_score" in eval_df.columns:
+        y_scores = eval_df["prediction_score"].tolist()
+        print("Computing evaluation metrics with confidence scores...")
+        try:
+            # Pass scores for ROC and PR curve calculations
+            metrics = evaluate_predictions(y_true, y_pred, y_scores)
+        except Exception as e:
+            print(f"Error computing evaluation metrics with scores: {e}")
+            # Fallback to basic metrics without scores
+            metrics = evaluate_predictions(y_true, y_pred)
+    else:
+        print("Computing basic evaluation metrics...")
+        try:
+            # Only pass true and predicted labels
+            metrics = evaluate_predictions(y_true, y_pred)
+        except Exception as e:
+            print(f"Error computing evaluation metrics: {e}")
+            raise
 
     # Generate and save plots
     print("Generating evaluation plots...")
@@ -710,15 +722,21 @@ def main():
     except Exception as e:
         print(f"Error saving metrics to CSV: {e}")
 
-    # Save metrics to JSON - Remove probability-based metrics
+    # Save metrics to JSON - Remove probability-based metrics that can't be serialized
     metrics_json = {
         'accuracy': float(metrics['accuracy']),
         'precision': float(metrics['precision']),
         'recall': float(metrics['recall']),
         'f1': float(metrics['f1']),
-        'confusion_matrix': metrics['confusion_matrix'],
+        'confusion_matrix': metrics['confusion_matrix'].tolist() if hasattr(metrics['confusion_matrix'], 'tolist') else metrics['confusion_matrix'],
         'classification_report': metrics['classification_report']
     }
+    
+    # Add ROC AUC and PR AUC if available
+    if 'roc_auc' in metrics:
+        metrics_json['roc_auc'] = float(metrics['roc_auc'])
+    if 'pr_auc' in metrics:
+        metrics_json['pr_auc'] = float(metrics['pr_auc'])
 
     try:
         metrics_json_path = os.path.join(args.output_dir, "metrics.json")
@@ -733,7 +751,6 @@ def main():
         print_metrics_report(metrics)
     
     print("Evaluation complete!")
-
 
 
 if __name__ == "__main__":
