@@ -16,6 +16,7 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
+    auc,
     average_precision_score,
     confusion_matrix,
     classification_report,
@@ -162,7 +163,6 @@ def evaluate_predictions(
             print(f"Error calculating ROC/PR curves: {e}")
     
     return metrics
-
 
 def save_metrics_to_csv(metrics, metrics_csv_path):
     """Save metrics to CSV file.
