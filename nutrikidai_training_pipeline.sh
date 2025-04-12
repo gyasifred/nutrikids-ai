@@ -52,10 +52,10 @@ export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
    #"unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
-   "unsloth/gemma-7b-it-bnb-4bit"
    "meta-llama/Llama-3.3-70B-Instruct"
-   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
    "unsloth/Phi-4"
+   "unsloth/gemma-7b-it-bnb-4bit"
+   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
    )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS_EPOCH_2"
 
