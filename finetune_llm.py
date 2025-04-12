@@ -270,8 +270,7 @@ def create_peft_model(base_model, args):
         use_gradient_checkpointing=True,
         random_state=args.seed,
         use_rslora=True,
-        loftq_config=None,
-        full_finetuning=True  # Added full_finetuning parameter
+        loftq_config=None
     )
 
     # Enable gradient checkpointing for efficient training
