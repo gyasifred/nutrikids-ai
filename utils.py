@@ -2736,33 +2736,59 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    # Set a consistent color palette
-    palette = {"yes": "#E63946", "no": "#457B9D"}
+    # Check which values are in the 'malnutrition' column
+    unique_values = sentiment_df['malnutrition'].unique()
+    
+    # Determine if we have numeric or string categories
+    if all(val in ['0', '1'] or val in [0, 1] for val in unique_values):
+        # Convert numeric values to strings if needed
+        sentiment_df['malnutrition'] = sentiment_df['malnutrition'].astype(str)
+        # Map numeric values to descriptive strings
+        sentiment_df['malnutrition_label'] = sentiment_df['malnutrition'].map({'0': 'no', '1': 'yes'})
+        # Set a consistent color palette
+        palette = {"yes": "#E63946", "no": "#457B9D"}
+        # Use the label for visualization
+        hue_col = 'malnutrition_label'
+    else:
+        # Assume we already have string values
+        hue_col = 'malnutrition'
+        # Set a consistent color palette
+        palette = {"yes": "#E63946", "no": "#457B9D"}
     
     # Distribution plot with improved aesthetics
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Use violin plot for better distribution visualization
+    # Use violin plot with explicit hue parameter
     sns.violinplot(
-        data=sentiment_df, x='malnutrition', y='sentiment',
-        inner='quartile', palette=palette, ax=ax
+        data=sentiment_df, x=hue_col, y='sentiment',
+        hue=hue_col, inner='quartile', palette=palette, ax=ax,
+        legend=False  # Avoid duplicate legend
     )
     
     # Add individual data points with jitter
     sns.stripplot(
-        data=sentiment_df, x='malnutrition', y='sentiment',
-        size=4, alpha=0.3, jitter=True, 
-        palette=palette, ax=ax
+        data=sentiment_df, x=hue_col, y='sentiment',
+        hue=hue_col, size=4, alpha=0.3, jitter=True, 
+        palette=palette, ax=ax, legend=False
     )
     
     # Add mean markers
-    for status, color in zip(['yes', 'no'], palette.values()):
-        mean_val = sentiment_df[sentiment_df['malnutrition'] == status]['sentiment'].mean()
-        ax.scatter(
-            0 if status == 'yes' else 1, mean_val,
-            marker='o', s=100, color='white', edgecolor='black', zorder=3,
-            label=f'Mean ({status}): {mean_val:.3f}'
-        )
+    for i, status in enumerate(['yes', 'no']):
+        status_value = status
+        if hue_col == 'malnutrition_label':
+            # Get the corresponding data
+            group_data = sentiment_df[sentiment_df['malnutrition_label'] == status]
+        else:
+            # Get the corresponding data
+            group_data = sentiment_df[sentiment_df['malnutrition'] == status]
+        
+        if not group_data.empty:
+            mean_val = group_data['sentiment'].mean()
+            ax.scatter(
+                i, mean_val,
+                marker='o', s=100, color='white', edgecolor='black', zorder=3,
+                label=f'Mean ({status}): {mean_val:.3f}'
+            )
     
     # Add p-value annotation if available
     p_value = sentiment_results.get('p_value')
@@ -2821,7 +2847,7 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
             data=sentiment_df_with_length, 
             x='text_length', 
             y='sentiment',
-            hue='malnutrition',
+            hue=hue_col,
             palette=palette,
             alpha=0.7,
             s=80,
@@ -2829,15 +2855,19 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
         )
         
         # Add trend lines
-        for status, color in palette.items():
-            group_data = sentiment_df_with_length[sentiment_df_with_length['malnutrition'] == status]
+        for i, status in enumerate(['yes', 'no']):
+            if hue_col == 'malnutrition_label':
+                group_data = sentiment_df_with_length[sentiment_df_with_length['malnutrition_label'] == status]
+            else:
+                group_data = sentiment_df_with_length[sentiment_df_with_length['malnutrition'] == status]
+                
             if len(group_data) > 1:  # Need at least 2 points for regression
                 sns.regplot(
                     x='text_length',
                     y='sentiment',
                     data=group_data,
                     scatter=False,
-                    color=color,
+                    color=palette[status],
                     line_kws={'linewidth': 2},
                     ax=ax2
                 )
@@ -2895,8 +2925,12 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
                     ax.axis('off')
             
             # Generate word clouds for each group
-            malnutrition_yes = sentiment_df[sentiment_df['malnutrition'] == 'yes']
-            malnutrition_no = sentiment_df[sentiment_df['malnutrition'] == 'no']
+            if hue_col == 'malnutrition_label':
+                malnutrition_yes = sentiment_df[sentiment_df['malnutrition_label'] == 'yes']
+                malnutrition_no = sentiment_df[sentiment_df['malnutrition_label'] == 'no']
+            else:
+                malnutrition_yes = sentiment_df[sentiment_df['malnutrition'] == 'yes']
+                malnutrition_no = sentiment_df[sentiment_df['malnutrition'] == 'no']
             
             # Get explanation text for each group
             if isinstance(explanations, dict):
@@ -2928,7 +2962,7 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
     sns.kdeplot(
         data=sentiment_df, 
         x='sentiment',
-        hue='malnutrition',
+        hue=hue_col,
         fill=True,
         common_norm=False,
         palette=palette,
@@ -2938,15 +2972,21 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
     )
     
     # Add vertical lines for medians
-    for status, color in palette.items():
-        median_val = sentiment_df[sentiment_df['malnutrition'] == status]['sentiment'].median()
-        ax5.axvline(
-            x=median_val,
-            color=color,
-            linestyle='--',
-            linewidth=2,
-            label=f'Median ({status}): {median_val:.3f}'
-        )
+    for i, status in enumerate(['yes', 'no']):
+        if hue_col == 'malnutrition_label':
+            group_data = sentiment_df[sentiment_df['malnutrition_label'] == status]
+        else:
+            group_data = sentiment_df[sentiment_df['malnutrition'] == status]
+            
+        if not group_data.empty:
+            median_val = group_data['sentiment'].median()
+            ax5.axvline(
+                x=median_val,
+                color=palette[status],
+                linestyle='--',
+                linewidth=2,
+                label=f'Median ({status}): {median_val:.3f}'
+            )
     
     ax5.set_title('Sentiment Distribution by Malnutrition Status', fontsize=16, fontweight='bold')
     ax5.set_xlabel('Sentiment Score', fontsize=14)
@@ -2965,57 +3005,74 @@ def plot_sentiment_analysis(sentiment_results, output_dir=None):
     # Calculate descriptive statistics
     stats_data = []
     for status in ['yes', 'no']:
-        group_data = sentiment_df[sentiment_df['malnutrition'] == status]['sentiment']
-        stats_data.append({
-            'Status': status,
-            'Mean': group_data.mean(),
-            'Median': group_data.median(),
-            'Std Dev': group_data.std(),
-            'Min': group_data.min(),
-            'Max': group_data.max(),
-            'Count': len(group_data)
-        })
+        if hue_col == 'malnutrition_label':
+            group_data = sentiment_df[sentiment_df['malnutrition_label'] == status]['sentiment']
+        else:
+            group_data = sentiment_df[sentiment_df['malnutrition'] == status]['sentiment']
+            
+        if not group_data.empty:
+            stats_data.append({
+                'Status': status,
+                'Mean': group_data.mean(),
+                'Median': group_data.median(),
+                'Std Dev': group_data.std(),
+                'Min': group_data.min(),
+                'Max': group_data.max(),
+                'Count': len(group_data)
+            })
     
     # Remove axis
     ax6.axis('off')
     
-    # Create a table with statistics
-    table_data = [[f"{stat}" if idx == 0 else f"{value:.3f}" if isinstance(value, float) else f"{value}" 
-                  for idx, (stat, value) in enumerate(row.items())] 
-                 for row in stats_data]
-    
-    # Add headers
-    table_headers = list(stats_data[0].keys())
-    
-    # Create table
-    table = ax6.table(
-        cellText=table_data,
-        colLabels=table_headers,
-        loc='center',
-        cellLoc='center',
-        colColours=[palette.get(status, '#F0F0F0') for status in ['yes', 'no', '#F0F0F0', '#F0F0F0', '#F0F0F0', '#F0F0F0', '#F0F0F0']]
-    )
-    
-    # Style the table
-    table.auto_set_font_size(False)
-    table.set_fontsize(12)
-    table.scale(1.2, 2)
-    
-    # Add a title
-    plt.suptitle('Descriptive Statistics - Sentiment by Malnutrition Status', 
-                fontsize=16, fontweight='bold', y=0.98)
+    if stats_data:
+        # Create a table with statistics
+        table_data = [[f"{stat}" if idx == 0 else f"{value:.3f}" if isinstance(value, float) else f"{value}" 
+                      for idx, (stat, value) in enumerate(row.items())] 
+                     for row in stats_data]
+        
+        # Add headers
+        table_headers = list(stats_data[0].keys())
+        
+        # Create table
+        table = ax6.table(
+            cellText=table_data,
+            colLabels=table_headers,
+            loc='center',
+            cellLoc='center',
+            colColours=[palette.get(status, '#F0F0F0') for status in ['yes', 'no', '#F0F0F0', '#F0F0F0', '#F0F0F0', '#F0F0F0', '#F0F0F0']][:len(table_headers)]
+        )
+        
+        # Style the table
+        table.auto_set_font_size(False)
+        table.set_fontsize(12)
+        table.scale(1.2, 2)
+        
+        # Add a title
+        plt.suptitle('Descriptive Statistics - Sentiment by Malnutrition Status', 
+                    fontsize=16, fontweight='bold', y=0.98)
+    else:
+        ax6.text(0.5, 0.5, "No data available for statistics", 
+                horizontalalignment='center',
+                verticalalignment='center',
+                fontsize=14)
     
     if output_dir:
         plt.savefig(f"{output_dir}/sentiment_statistics.png", dpi=300, bbox_inches='tight')
     
     figures['statistics'] = fig5
     
+    # Handle the SmallSampleWarning by adding a check for minimum sample size
+    # This prevents the warning but allows the function to continue
+    for status in unique_values:
+        group = sentiment_df[sentiment_df['malnutrition'] == status]
+        if len(group) < 2:  # Most statistical tests require at least 2 data points
+            print(f"Warning: Sample size for malnutrition={status} is too small ({len(group)}). Some statistical visualizations may be limited.")
+    
     # Close all figures to prevent display in notebooks if not needed
     if not plt.isinteractive():
         plt.close('all')
     
     return figures
-    
 def get_named_entities(explanations):
     """
     Extract medical named entities from explanations.
