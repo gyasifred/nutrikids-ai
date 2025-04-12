@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import unsloth
 # Set the environment variable for Unsloth logits before any imports
@@ -22,7 +21,7 @@ from models.llm_models import (
     plot_evaluation_metrics,
     save_metrics_to_csv,
     print_metrics_report,
-    WeightedSFTTrainer  # Import the WeightedSFTTrainer from llm_models
+    WeightedSFTTrainer  
 )
 
 
@@ -57,8 +56,8 @@ def parse_arguments():
                         help="Per-device training batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    parser.add_argument("--max_seq_length", type=int, default=2048,
-                        help="Maximum sequence length for tokenization")
+    parser.add_argument("--max_seq_length", type=int, default=None,
+                        help="Override model's default maximum sequence length (optional)")
     parser.add_argument("--epochs", type=int, default=2,
                         help="Number of training epochs")
     
@@ -204,8 +203,12 @@ def load_model_and_tokenizer(args, quantization_config):
         # Load the model with the appropriate parameters
         base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
         
+        # Get the model's actual maximum sequence length
+        model_max_seq_length = base_model.config.max_position_embeddings
+        print(f"Model's native maximum sequence length: {model_max_seq_length}")
+        
         print("Model and tokenizer loaded successfully.")
-        return base_model, tokenizer, fp16, bf16
+        return base_model, tokenizer, fp16, bf16, model_max_seq_length
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
@@ -277,17 +280,21 @@ def create_peft_model(base_model, args):
 
     return model
 
-def get_sft_config(args, fp16, bf16):
+def get_sft_config(args, fp16, bf16, max_seq_length):
     """Configure SFT training arguments.
 
     Args:
         args: Command line arguments
         fp16: Whether to use FP16 precision
         bf16: Whether to use BF16 precision
+        max_seq_length: The maximum sequence length to use (from model config)
 
     Returns:
         SFTConfig: Configuration for SFT training
     """
+    # Use provided max_seq_length if explicitly specified, otherwise use model's native max length
+    seq_length = args.max_seq_length if args.max_seq_length is not None else max_seq_length
+    
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "warmup_steps": 5,
@@ -304,7 +311,7 @@ def get_sft_config(args, fp16, bf16):
         "report_to": args.report_to,
         "save_strategy": "steps",
         "save_steps": 10,
-        "max_seq_length": args.max_seq_length,
+        "max_seq_length": seq_length,
         "dataset_num_proc": 4,
         "packing": False,
         "num_train_epochs": args.epochs
@@ -320,6 +327,7 @@ def get_sft_config(args, fp16, bf16):
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
+    print(f"Using sequence length: {seq_length} (from model's native max length)")
     print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
 
@@ -340,6 +348,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         Tuple: (train_dataset, eval_dataset)
     """
     print("Preparing datasets...")
+    print(f"Using model's maximum sequence length: {max_seq_length}")
 
     # Load and prepare training data
     train_data = MalnutritionDataset(train_data_path, note_col, label_col)
@@ -408,15 +417,15 @@ def main():
     # Get quantization config
     quantization_config = get_quantization_config(args)
 
-    # Load model and tokenizer with precision detection
-    base_model, tokenizer, fp16, bf16 = load_model_and_tokenizer(
+    # Load model and tokenizer with precision detection and get max sequence length
+    base_model, tokenizer, fp16, bf16, model_max_seq_length = load_model_and_tokenizer(
         args, quantization_config
     )
 
     # Initialize prompt builder
     prompt_builder = MalnutritionPromptBuilder(args.examples_data)
 
-    # Load and prepare datasets with tokenization
+    # Load and prepare datasets with tokenization, using model's native max sequence length
     train_dataset, eval_dataset = prepare_datasets(
         args.train_data, 
         args.val_data, 
@@ -424,14 +433,14 @@ def main():
         tokenizer,
         args.text_column, 
         args.label_column,
-        args.max_seq_length
+        model_max_seq_length
     )
 
     # Create PEFT/LoRA model
     model = create_peft_model(base_model, args)
 
-    # Get SFT config with correct precision settings and gradient accumulation disabled
-    sft_config = get_sft_config(args, fp16, bf16)
+    # Get SFT config with correct precision settings, model's native max sequence length, and gradient accumulation disabled
+    sft_config = get_sft_config(args, fp16, bf16, model_max_seq_length)
 
     # Initialize SFT trainer with weighted loss
     trainer_kwargs = {
@@ -530,6 +539,7 @@ Training parameters:
 - LoRA alpha: {args.lora_alpha}
 - Positive class weight: {args.pos_weight}
 - Gradient accumulation: Disabled
+- Sequence length: {model_max_seq_length} (model's native maximum)
 
 ## Usage
 This directory contains two versions of the model:
