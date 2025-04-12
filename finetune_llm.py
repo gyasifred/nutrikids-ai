@@ -67,9 +67,9 @@ def parse_arguments():
                         help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
-    parser.add_argument("--lora_r", type=int, default=8,
+    parser.add_argument("--lora_r", type=int, default=16,
                         help="LoRA r parameter (rank)")
-    parser.add_argument("--lora_alpha", type=int, default=32,
+    parser.add_argument("--lora_alpha", type=int, default=16,
                         help="LoRA alpha parameter (scaling)")
     parser.add_argument("--target_modules", type=str, default=None,
                         help="Comma-separated list of target modules for LoRA")
@@ -261,7 +261,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=0,
+        lora_dropout=0.2,
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
