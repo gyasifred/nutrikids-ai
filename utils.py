@@ -45,6 +45,7 @@ import joblib
 # Download NLTK stopwords (if not already downloaded)
 nltk.download('stopwords', quiet=True)
 nltk.download('punkt_tab')
+nltk.download('wordnet')
 ############################################################
 # Text Preprocessing Classes
 ############################################################
