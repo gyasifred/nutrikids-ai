@@ -135,7 +135,15 @@ def evaluate_predictions(
         'precision_curve': [],
         'recall_curve': [],
         'auc': 0.0,
-        'avg_precision': 0.0
+        'avg_precision': 0.0,
+        # Store the raw data for reuse in other tools
+        'raw_data': {
+            'y_true': y_true,
+            'y_true_binary': y_true_binary.tolist(),
+            'y_pred': y_pred,
+            'y_pred_binary': y_pred_binary.tolist(),
+            'y_scores': y_scores if y_scores is not None else []
+        }
     }
     
     # Calculate ROC and PR curves if we have probability scores
@@ -171,6 +179,8 @@ def save_metrics_to_csv(metrics, metrics_csv_path):
         metrics (Dict[str, Any]): Dictionary containing evaluation metrics
         metrics_csv_path (str): Path to save metrics CSV
     """
+    output_dir = os.path.dirname(metrics_csv_path)
+    
     # Save basic metrics
     basic_metrics = {
         'Metric': ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'AUC', 'Average Precision'],
@@ -184,11 +194,28 @@ def save_metrics_to_csv(metrics, metrics_csv_path):
         ]
     }
     pd.DataFrame(basic_metrics).to_csv(metrics_csv_path, index=False)
+    print(f"Basic metrics saved to {metrics_csv_path}")
+    
+    # Save raw prediction data for reuse in other tools
+    if 'raw_data' in metrics:
+        # Create DataFrame with raw predictions
+        raw_data = pd.DataFrame({
+            'y_true_original': metrics['raw_data']['y_true'],
+            'y_true_binary': metrics['raw_data']['y_true_binary'],
+            'y_pred_original': metrics['raw_data']['y_pred'],
+            'y_pred_binary': metrics['raw_data']['y_pred_binary']
+        })
+        
+        # Add scores if available
+        if len(metrics['raw_data']['y_scores']) > 0:
+            raw_data['y_scores'] = metrics['raw_data']['y_scores']
+        
+        raw_data_path = os.path.join(output_dir, 'raw_predictions.csv')
+        raw_data.to_csv(raw_data_path, index=False)
+        print(f"Raw prediction data saved to {raw_data_path}")
     
     # Save raw ROC curve data
     if 'fpr' in metrics and len(metrics['fpr']) > 0:
-        output_dir = os.path.dirname(metrics_csv_path)
-        
         # ROC curve data
         roc_data = pd.DataFrame({
             'False Positive Rate': metrics['fpr'],
@@ -219,7 +246,6 @@ def save_metrics_to_csv(metrics, metrics_csv_path):
             cm_csv_path = os.path.join(output_dir, 'confusion_matrix.csv')
             cm_data.to_csv(cm_csv_path)
             print(f"Confusion matrix saved to {cm_csv_path}")
-
 
 def plot_evaluation_metrics(metrics, output_dir):
     """Generate and save evaluation metric plots.
