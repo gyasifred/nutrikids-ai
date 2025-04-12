@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import networkx as nx
 from dotenv import load_dotenv, find_dotenv
+from pathlib import Path
 
 # NLP libraries
 import nltk
