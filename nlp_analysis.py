@@ -33,7 +33,6 @@ except Exception as e:
     raise RuntimeError("spaCy language model 'en_core_web_sm' not found. Please install it via: python -m spacy download en_core_web_sm") from e
 
 # Set plotting style
-plt.style.use('seaborn')
 sns.set_palette("Set2")
 plt.rcParams['figure.figsize'] = [12, 8]
 plt.rcParams['font.size'] = 12
