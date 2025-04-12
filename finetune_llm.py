@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import unsloth
 # Set the environment variable for Unsloth logits before any imports
