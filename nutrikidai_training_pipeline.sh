@@ -388,10 +388,9 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --batch_size 4 \
     --learning_rate 2e-4 \
     # --max_steps 500 \
-    --max_seq_length 8000 \
-    --epochs 5 \
-    --lora_r 16 \
-    --lora_alpha 16 \
+    --max_seq_length 4096 \
+    --lora_r 8 \
+    --lora_alpha 32 \
     --seed 42 \
     --use_flash_attention \
     $BIT_FLAG
