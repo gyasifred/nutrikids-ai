@@ -57,7 +57,7 @@ LLM_MODELS=(
    "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
    )
-LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_MODELS_EPOCH_2"
+LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM"
 
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -389,9 +389,9 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --learning_rate 2e-4 \
     # --max_steps 500 \
     --max_seq_length 2048 \
-    --epochs 2 \
-    --lora_r 8 \
-    --lora_alpha 32 \
+    --epochs 5 \
+    --lora_r 16 \
+    --lora_alpha 16 \
     --seed 42 \
     --use_flash_attention \
     $BIT_FLAG
