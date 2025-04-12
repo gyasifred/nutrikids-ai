@@ -199,7 +199,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     
     # Calculate reserved tokens
     few_shot_token_estimate = 750 * args.few_shot_count
-    reserved_tokens = args.max_length + few_shot_token_estimate + 400
+    reserved_tokens = args.max_length + few_shot_token_estimate + 50
     max_patient_note_tokens = model_max_length - reserved_tokens
     
     print(f"Model max length: {model_max_length}, Reserved tokens: {reserved_tokens}")
