@@ -266,7 +266,8 @@ def create_peft_model(base_model, args):
         use_gradient_checkpointing=True,
         random_state=args.seed,
         use_rslora=True,
-        loftq_config=None
+        loftq_config=None,
+        full_finetuning=True  # Added full_finetuning parameter
     )
 
     # Enable gradient checkpointing for efficient training
@@ -275,7 +276,6 @@ def create_peft_model(base_model, args):
         model.enable_input_require_grads()
 
     return model
-
 
 def get_sft_config(args, fp16, bf16):
     """Configure SFT training arguments.
