@@ -15,7 +15,7 @@
 # -------------------- Default Parameters --------------------
 
 # Test data and evaluation settings
-TEST_CSV="data/test.csv"
+TEST_CSV="csv_files/gs_note_test_bal.csv"
 TEXT_COLUMN="txt"
 LABEL_COLUMN="label"
 ID_COLUMN="DEID"
@@ -42,8 +42,8 @@ LLM_MODELS=(
 MODEL_PATH="trained_models/LLM_MODELS_EPOCH_2"
 
 # Output directories
-PRE_EVAL_DIR="LLM_pre_eval"
-POST_EVAL_DIR="LLM_post_eval"
+PRE_EVAL_DIR="LLM_pre_gs"
+POST_EVAL_DIR="LLM_post_gs"
 
 # -------------------- Command-Line Arguments Parsing --------------------
 while [[ "$#" -gt 0 ]]; do
