@@ -265,7 +265,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=0.2,
+        lora_dropout=0,
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
@@ -399,6 +399,45 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
     return train_tokenized, eval_tokenized
 
 
+def calculate_max_seq_length(data_path, tokenizer, note_col, label_col, prompt_builder, model_max_length, buffer_percentage=10):
+    """Calculate the maximum sequence length needed for the dataset.
+    
+    Args:
+        data_path (str): Path to the data CSV
+        tokenizer: Model tokenizer
+        note_col (str): Name of the text column
+        label_col (str): Name of the label column
+        prompt_builder: MalnutritionPromptBuilder instance
+        model_max_length (int): Model's maximum supported length
+        buffer_percentage (int): Additional buffer as percentage to add
+        
+    Returns:
+        int: Recommended sequence length for the dataset
+    """
+    print("Calculating maximum sequence length from dataset...")
+    
+    # Load dataset
+    data = MalnutritionDataset(data_path, note_col, label_col)
+    formatted_data = data.prepare_training_data(prompt_builder)
+    
+    # Find the maximum sequence length
+    max_length = 0
+    for example in formatted_data:
+        tokenized = tokenizer.encode(example["text"])
+        max_length = max(max_length, len(tokenized))
+    
+    # Add a buffer to account for potential variations
+    recommended_length = int(max_length * (1 + buffer_percentage/100))
+    
+    # Cap at model's maximum length
+    final_length = min(recommended_length, model_max_length)
+    
+    print(f"Dataset maximum token length: {max_length}")
+    print(f"Recommended length with {buffer_percentage}% buffer: {recommended_length}")
+    print(f"Final sequence length (capped by model limit): {final_length}")
+    
+    return final_length
+
 def main():
     """Main function to run the training pipeline."""
     # Parse command line arguments
@@ -425,8 +464,23 @@ def main():
 
     # Initialize prompt builder
     prompt_builder = MalnutritionPromptBuilder(args.examples_data)
+    
+    # Calculate optimal sequence length from dataset if not manually specified
+    if args.max_seq_length is None:
+        max_seq_length = calculate_max_seq_length(
+            args.train_data,
+            tokenizer,
+            args.text_column,
+            args.label_column,
+            prompt_builder,
+            model_max_seq_length,
+            buffer_percentage=10  # Add 10% buffer to account for variations
+        )
+    else:
+        max_seq_length = args.max_seq_length
+        print(f"Using manually specified sequence length: {max_seq_length}")
 
-    # Load and prepare datasets with tokenization, using model's native max sequence length
+    # Load and prepare datasets with tokenization, using the calculated max sequence length
     train_dataset, eval_dataset = prepare_datasets(
         args.train_data, 
         args.val_data, 
@@ -434,14 +488,14 @@ def main():
         tokenizer,
         args.text_column, 
         args.label_column,
-        model_max_seq_length
+        max_seq_length  # Use the calculated or manually specified length
     )
 
     # Create PEFT/LoRA model
     model = create_peft_model(base_model, args)
 
-    # Get SFT config with correct precision settings, model's native max sequence length, and gradient accumulation disabled
-    sft_config = get_sft_config(args, fp16, bf16, model_max_seq_length)
+    # Get SFT config with correct precision settings and the calculated max sequence length
+    sft_config = get_sft_config(args, fp16, bf16, max_seq_length)
 
     # Initialize SFT trainer with weighted loss
     trainer_kwargs = {
@@ -460,6 +514,7 @@ def main():
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     print(f"Using positive class weight: {args.pos_weight}")
+    print(f"Using sequence length: {max_seq_length} (calculated from dataset)")
     print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
 
@@ -473,27 +528,6 @@ def main():
     # Save the tokenizer
     print("Saving tokenizer...")
     tokenizer.save_pretrained(args.model_output)
-    
-    # # Save a merged model version (LoRA weights merged into base model)
-    # merged_model_path = os.path.join(args.model_output, "merged")
-    # os.makedirs(merged_model_path, exist_ok=True)
-    
-    # print(f"Creating merged model (LoRA + base) at {merged_model_path}...")
-    # try:
-    #     # Comment out the merging code
-    #     """
-    #     # Merge LoRA weights into base model
-    #     merged_model = trainer.model.merge_and_unload()
-        
-    #     # Save the merged model
-    #     merged_model.save_pretrained(merged_model_path)
-    #     tokenizer.save_pretrained(merged_model_path)
-    #     print("Merged model saved successfully.")
-    #     """
-    #     print("Merged model creation skipped.")
-    # except Exception as e:
-    #     print(f"Warning: Could not create merged model: {e}")
-    #     print("Continuing with adapter-only model.")
     
     # Clean up checkpoint files
     print("Cleaning up checkpoint files...")
@@ -540,14 +574,10 @@ Training parameters:
 - LoRA alpha: {args.lora_alpha}
 - Positive class weight: {args.pos_weight}
 - Gradient accumulation: Disabled
-- Sequence length: {model_max_seq_length} (model's native maximum)
+- Sequence length: {max_seq_length} (calculated from dataset with 10% buffer)
 
 ## Usage
-This directory contains two versions of the model:
-1. LoRA adapter only (main directory)
-2. Merged model (in the 'merged' subdirectory)
-
-For inference, the merged model is typically easier to use as it doesn't require loading a separate base model.
+This directory contains the LoRA adapter weights for the model.
 """
     
     with open(os.path.join(args.model_output, "README.md"), "w") as f:
@@ -555,8 +585,6 @@ For inference, the merged model is typically easier to use as it doesn't require
 
     print("Fine-tuning complete!")
     print(f"Model saved to: {args.model_output}")
-    print(f"Merged model saved to: {os.path.join(args.model_output, 'merged')}")
-
 
 if __name__ == "__main__":
     main()
