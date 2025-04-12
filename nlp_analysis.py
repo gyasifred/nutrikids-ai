@@ -101,18 +101,64 @@ def analyze_evidence_support(explanations, notes):
     import re
     import numpy as np
     
-    # Common clinical indicators that might be used as evidence
-    clinical_indicators = [
-        'bmi', 'weight', 'height', 'malnutrition', 'nutrient', 'deficiency', 
-        'protein', 'calorie', 'intake', 'diet', 'supplement', 'feeding',
-        'appetite', 'vitamin', 'mineral', 'albumin', 'loss', 'gain',
-        'underweight', 'overweight', 'obese', 'thin', 'emaciated'
-    ]
+    # Expanded clinical indicators organized by category
+    clinical_indicators = {
+        # Anthropometric measurements
+        'anthropometric': [
+            'bmi', 'weight', 'height', 'weight-for-height', 'muac', 'mid-upper arm circumference',
+            'weight loss', 'weight gain', 'underweight', 'overweight', 'obese', 'thin', 'emaciated',
+            'percentile', 'z-score', 'triceps skinfold', 'muscle mass', 'body composition'
+        ],
+        
+        # Clinical symptoms
+        'clinical': [
+            'muscle wasting', 'fatigue', 'weakness', 'lethargy', 'skin changes', 'hair changes',
+            'edema', 'dermatitis', 'glossitis', 'stomatitis', 'poor wound healing', 'bruising',
+            'pallor', 'dry skin', 'brittle nails', 'hair loss', 'muscle atrophy', 'sarcopenia'
+        ],
+        
+        # Dietary factors
+        'dietary': [
+            'caloric intake', 'protein intake', 'diet', 'supplement', 'feeding', 'appetite',
+            'meal', 'nutrition', 'nutrient', 'malnutrition', 'deficiency', 'vitamin', 'mineral',
+            'food insecurity', 'limited access', 'poor diet', 'inadequate intake', 'fasting',
+            'anorexia', 'tube feeding', 'tpn', 'parenteral nutrition', 'enteral nutrition'
+        ],
+        
+        # Medical conditions
+        'medical': [
+            'chronic illness', 'gastrointestinal', 'infection', 'malabsorption', 'diarrhea',
+            'vomiting', 'nausea', 'constipation', 'dysphagia', 'gastroparesis', 'celiac',
+            'crohn', 'ulcerative colitis', 'pancreatic insufficiency', 'liver disease',
+            'cancer', 'diabetes', 'respiratory disease', 'renal disease', 'hiv', 'tuberculosis'
+        ],
+        
+        # Lab values
+        'labs': [
+            'albumin', 'prealbumin', 'transferrin', 'total protein', 'lymphocyte count',
+            'cholesterol', 'hemoglobin', 'hematocrit', 'ferritin', 'folate', 'b12',
+            'vitamin d', 'zinc', 'magnesium', 'calcium', 'nitrogen balance'
+        ],
+        
+        # Risk factors
+        'risk_factors': [
+            'medications', 'polypharmacy', 'depression', 'anxiety', 'cognitive impairment',
+            'dementia', 'socioeconomic', 'poverty', 'homelessness', 'social isolation',
+            'elderly', 'pediatric', 'pregnancy', 'alcohol', 'substance abuse', 'surgery',
+            'hospitalization', 'immobility', 'disability'
+        ]
+    }
+    
+    # Flatten the dictionary for easier searching
+    all_indicators = []
+    for category in clinical_indicators.values():
+        all_indicators.extend(category)
     
     results = {
         'score': [],
         'evidence_count': [],
-        'unsupported_claims': []
+        'unsupported_claims': [],
+        'category_coverage': []  # New metric to track which categories are covered
     }
     
     for exp, note in zip(explanations, notes):
@@ -124,10 +170,18 @@ def analyze_evidence_support(explanations, notes):
         unsupported_indicators = 0
         unsupported_claims = []
         
-        for indicator in clinical_indicators:
+        # Track which categories are covered in the explanation
+        covered_categories = set()
+        
+        for indicator in all_indicators:
             if indicator in exp_lower:
                 if indicator in note_lower:
                     supported_indicators += 1
+                    # Find which category this indicator belongs to
+                    for category, indicators in clinical_indicators.items():
+                        if indicator in indicators:
+                            covered_categories.add(category)
+                            break
                 else:
                     unsupported_indicators += 1
                     unsupported_claims.append(indicator)
@@ -137,16 +191,23 @@ def analyze_evidence_support(explanations, notes):
             support_score = supported_indicators / (supported_indicators + unsupported_indicators)
         else:
             support_score = 0
-            
+        
+        # 3. Calculate category coverage (percentage of categories mentioned)
+        category_coverage = len(covered_categories) / len(clinical_indicators)
+        
         results['score'].append(support_score)
         results['evidence_count'].append(supported_indicators)
         results['unsupported_claims'].append(unsupported_claims)
+        results['category_coverage'].append(category_coverage)
     
     # Calculate average evidence support score
     results['mean_support_score'] = np.mean(results['score'])
     
     # Calculate percentage of explanations with low evidence support (<0.5)
     results['low_support_rate'] = sum(1 for score in results['score'] if score < 0.5) / len(results['score'])
+    
+    # Calculate average category coverage
+    results['mean_category_coverage'] = np.mean(results['category_coverage'])
     
     return results
 
