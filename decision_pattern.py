@@ -335,7 +335,7 @@ def analyze_decision_patterns(data_dict):
 
 def create_decision_flow_diagram(features_df, category, output_filename):
     """
-    Create a decision flow diagram showing the reasoning path for a prediction category
+    Create a more structured top-down decision flow diagram showing the reasoning path
     
     Args:
         features_df (DataFrame): DataFrame with extracted features
@@ -347,6 +347,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     """
     import networkx as nx
     import matplotlib.pyplot as plt
+    import numpy as np
     
     # Create a graph
     G = nx.DiGraph()
@@ -367,6 +368,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
             target_node = "YES (Malnutrition)"
         else:
             target_node = "NO (No Malnutrition)"
+        G.add_node(target_node)
     
     # Count feature occurrences
     feature_counts = {}
@@ -378,65 +380,44 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     # Sort features by frequency
     sorted_features = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
     
-    # Take top 10 features
-    top_features = [f for f, c in sorted_features[:10] if c > 0]
+    # Take top features - limited to improve readability
+    top_features = [f for f, c in sorted_features[:8] if c > 0]
     
-    # Build the graph structure
-    if category == 'full_df':
-        # For full dataset, split flows to both YES and NO nodes
-        if top_features:
-            G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
-            
-            for i in range(len(top_features) - 1):
-                G.add_edge(top_features[i], top_features[i+1], 
-                          weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
-            
-            # Split the flow proportionally based on predicted labels
-            yes_count = sum(features_df['predicted_label'] == 1)
-            no_count = sum(features_df['predicted_label'] == 0)
-            
-            # Connect last feature to both target nodes
-            G.add_edge(top_features[-1], yes_node, weight=yes_count)
-            G.add_edge(top_features[-1], no_node, weight=no_count)
-    else:
-        # Original logic for individual categories
-        if top_features:
-            G.add_edge("START", top_features[0], weight=feature_counts[top_features[0]])
-            
-            for i in range(len(top_features) - 1):
-                G.add_edge(top_features[i], top_features[i+1], 
-                          weight=min(feature_counts[top_features[i]], feature_counts[top_features[i+1]]))
-            
-            G.add_edge(top_features[-1], target_node, weight=feature_counts[top_features[-1]])
+    # Create node hierarchy with explicit levels
+    level_nodes = {
+        0: ["START"],
+        1: [],  # Decision indicators and confidence nodes
+        2: [],  # Top features
+        3: []   # Outcome nodes
+    }
     
     # Add decision indicator if available
     if 'decision_indicator' in features_df.columns:
         indicator_counts = features_df['decision_indicator'].value_counts()
         
-        if category == 'full_df':
-            # For full dataset, route yes/no indicators to appropriate target nodes
-            if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
-                G.add_node('Explicit YES')
-                G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
+        if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
+            G.add_node('Explicit YES')
+            level_nodes[1].append('Explicit YES')
+            G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
+            
+            if category == 'full_df':
                 G.add_edge('Explicit YES', yes_node, weight=indicator_counts['yes'])
+            else:
+                target = "YES (Malnutrition)" if category in ['TP_data', 'FP_data'] else "NO (No Malnutrition)"
+                G.add_edge('Explicit YES', target, weight=indicator_counts['yes'])
+        
+        if 'no' in indicator_counts and indicator_counts['no'] > 0:
+            G.add_node('Explicit NO')
+            level_nodes[1].append('Explicit NO')
+            G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
             
-            if 'no' in indicator_counts and indicator_counts['no'] > 0:
-                G.add_node('Explicit NO')
-                G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
+            if category == 'full_df':
                 G.add_edge('Explicit NO', no_node, weight=indicator_counts['no'])
-        else:
-            # Original logic for individual categories
-            if 'yes' in indicator_counts and indicator_counts['yes'] > 0:
-                G.add_node('Explicit YES')
-                G.add_edge("START", 'Explicit YES', weight=indicator_counts['yes'])
-                G.add_edge('Explicit YES', target_node, weight=indicator_counts['yes'])
-            
-            if 'no' in indicator_counts and indicator_counts['no'] > 0:
-                G.add_node('Explicit NO')
-                G.add_edge("START", 'Explicit NO', weight=indicator_counts['no'])
-                G.add_edge('Explicit NO', target_node, weight=indicator_counts['no'])
+            else:
+                target = "YES (Malnutrition)" if category in ['TP_data', 'FP_data'] else "NO (No Malnutrition)"
+                G.add_edge('Explicit NO', target, weight=indicator_counts['no'])
     
-    # Add confidence level if available
+    # Add confidence levels if available
     if 'confidence' in features_df.columns:
         confidence_counts = features_df['confidence'].value_counts()
         
@@ -444,28 +425,63 @@ def create_decision_flow_diagram(features_df, category, output_filename):
             if count > 0:
                 node_name = f'Confidence: {level}'
                 G.add_node(node_name)
+                level_nodes[1].append(node_name)
                 G.add_edge("START", node_name, weight=count)
                 
                 if category == 'full_df':
-                    # For full dataset, split confidence flows based on predicted labels
                     high_confidence_yes = sum((features_df['confidence'] == level) & (features_df['predicted_label'] == 1))
                     high_confidence_no = sum((features_df['confidence'] == level) & (features_df['predicted_label'] == 0))
                     
-                    G.add_edge(node_name, yes_node, weight=high_confidence_yes)
-                    G.add_edge(node_name, no_node, weight=high_confidence_no)
+                    if high_confidence_yes > 0:
+                        G.add_edge(node_name, yes_node, weight=high_confidence_yes)
+                    if high_confidence_no > 0:
+                        G.add_edge(node_name, no_node, weight=high_confidence_no)
                 else:
-                    # Original logic
-                    G.add_edge(node_name, target_node, weight=count)
+                    target = "YES (Malnutrition)" if category in ['TP_data', 'FP_data'] else "NO (No Malnutrition)"
+                    G.add_edge(node_name, target, weight=count)
+    
+    # Add top features to the graph
+    for feature in top_features:
+        G.add_node(feature)
+        level_nodes[2].append(feature)
+        G.add_edge("START", feature, weight=feature_counts[feature])
+        
+        if category == 'full_df':
+            # Split the flow proportionally based on predicted labels for features
+            feature_yes_count = sum((features_df[feature].notna()) & (features_df['predicted_label'] == 1))
+            feature_no_count = sum((features_df[feature].notna()) & (features_df['predicted_label'] == 0))
+            
+            if feature_yes_count > 0:
+                G.add_edge(feature, yes_node, weight=feature_yes_count)
+            if feature_no_count > 0:
+                G.add_edge(feature, no_node, weight=feature_no_count)
+        else:
+            target = "YES (Malnutrition)" if category in ['TP_data', 'FP_data'] else "NO (No Malnutrition)"
+            G.add_edge(feature, target, weight=feature_counts[feature])
+    
+    # Add outcome nodes to the last level
+    if category == 'full_df':
+        level_nodes[3].extend([yes_node, no_node])
+    else:
+        target = "YES (Malnutrition)" if category in ['TP_data', 'FP_data'] else "NO (No Malnutrition)"
+        level_nodes[3].append(target)
+    
+    # Create positions for a top-down tree layout
+    pos = {}
+    
+    # Position nodes by level
+    for level, nodes in level_nodes.items():
+        n_nodes = len(nodes)
+        if n_nodes > 0:
+            # Space nodes horizontally
+            for i, node in enumerate(nodes):
+                # Set x position to distribute nodes evenly
+                x_pos = (i - (n_nodes - 1) / 2) * (10.0 / max(n_nodes, 1))
+                y_pos = -level * 5  # Set y position based on level
+                pos[node] = np.array([x_pos, y_pos])
     
     # Visualize the graph
-    plt.figure(figsize=(14, 10))
-    
-    # Use a hierarchical layout
-    try:
-        pos = nx.nx_pydot.graphviz_layout(G, prog='dot')
-    except:
-        # Fallback to spring layout
-        pos = nx.spring_layout(G, seed=42)
+    plt.figure(figsize=(16, 12))
     
     # Node colors
     node_colors = []
@@ -484,9 +500,9 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     # Node sizes based on importance
     node_sizes = []
     for node in G.nodes():
-        if node in ["START", "YES (Malnutrition)", "NO (No Malnutrition)", "Explicit YES", "Explicit NO"]:
+        if node in ["START", "YES (Malnutrition)", "NO (No Malnutrition)"]:
             node_sizes.append(3000)
-        elif "Confidence" in node:
+        elif "Confidence" in node or node in ["Explicit YES", "Explicit NO"]:
             node_sizes.append(2500)
         else:
             # Size based on frequency
@@ -504,23 +520,24 @@ def create_decision_flow_diagram(features_df, category, output_filename):
             with_labels=True, 
             node_color=node_colors,
             node_size=node_sizes, 
-            font_size=10, 
+            font_size=11, 
             font_weight='bold',
             width=[1.0 + 3.0 * (w / max_weight) for w in weights], 
             edge_color='gray',
             arrows=True, 
-            arrowsize=15)
+            arrowsize=15,
+            connectionstyle='arc3,rad=0.1')  # Curved edges for better visibility
     
     # Add edge labels
     edge_labels = {(u, v): f"{G[u][v]['weight']}" for u, v in G.edges()}
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=9)
     
     # Add title
-    category_name = "Full Dataset" if category == "full_df" else category
-    plt.title(f"Decision Flow Diagram for {category_name}", fontsize=16)
+    category_name = "Full Dataset" if category == "full_df" else category.replace('_data', '')
+    plt.title(f"Decision Flow Diagram for {category_name}", fontsize=18)
     plt.axis('off')
     
-    # Replace tight_layout() with a more appropriate way to save the figure
+    # Save with better resolution
     plt.savefig(output_filename, dpi=300, bbox_inches='tight', pad_inches=0.5)
     plt.close()
     
