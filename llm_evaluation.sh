@@ -26,24 +26,24 @@ BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 # Evaluation parameters
 SEED=42
 MAX_NEW_TOKENS=256
-TEMPERATURE=0.2
+TEMPERATURE=0.1
 BATCH_SIZE=4
 
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
    #"unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
-   "unsloth/gemma-7b-it-bnb-4bit"
+   # "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
-   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
-   "unsloth/Phi-4"
+   # "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+   # "unsloth/Phi-4"
    )
 # Adapter model path: if provided, it will be used in post-evaluation.
-MODEL_PATH="trained_models/LLM_MODELS_EPOCH_2"
+MODEL_PATH="trained_models/LLM"
 
 # Output directories
-PRE_EVAL_DIR="LLM_pre_gs"
-POST_EVAL_DIR="LLM_post_gs"
+PRE_EVAL_DIR="LLM_eval_pre"
+POST_EVAL_DIR="LLM_eval_post"
 
 # -------------------- Command-Line Arguments Parsing --------------------
 while [[ "$#" -gt 0 ]]; do
@@ -139,7 +139,6 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --id_column \"$ID_COLUMN\" \
     --output_dir \"$MODEL_OUTPUT_DIR\" \
     --few_shot_count \"$FEW_SHOT_COUNT\" \
-    --max_new_tokens \"$MAX_NEW_TOKENS\" \
     --temperature \"$TEMPERATURE\" \
     --batch_size \"$BATCH_SIZE\" \
     --seed \"$SEED\" $BIT_FLAG"
@@ -184,7 +183,6 @@ if [ -n "$MODEL_PATH" ]; then
       --id_column \"$ID_COLUMN\" \
       --output_dir \"$MODEL_OUTPUT_DIR\" \
       --few_shot_count \"$FEW_SHOT_COUNT\" \
-      --max_new_tokens \"$MAX_NEW_TOKENS\" \
       --temperature \"$TEMPERATURE\" \
       --batch_size \"$BATCH_SIZE\" \
       --seed \"$SEED\" $BIT_FLAG"
