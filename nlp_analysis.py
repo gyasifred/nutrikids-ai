@@ -120,6 +120,11 @@ def cohen_d(x, y):
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     nx, ny = len(x), len(y)
+    
+    # Check for sufficient sample sizes
+    if nx < 2 or ny < 2:
+        return 0.0  # Return 0 instead of NaN for insufficient samples
+        
     # Pooled standard deviation (using unbiased variance ddof=1)
     vx, vy = x.var(ddof=1), y.var(ddof=1)
     pooled_std = np.sqrt(((nx - 1) * vx + (ny - 1) * vy) / (nx + ny - 2)) if (nx + ny) > 2 else 0.0
@@ -272,31 +277,68 @@ def statistical_analysis(df):
     results = {}
     # Determine prediction groups for binary classification
     if 'true_label' in df.columns and 'pred_label' in df.columns:
+        # Rename pred_label to predicted_label if needed
+        if 'predicted_label' in df.columns:
+            df['pred_label'] = df['predicted_label']
+            
         true = df['true_label'].astype(int)
         pred = df['pred_label'].astype(int)
+        
         groups = {
             'TP': df[(true == 1) & (pred == 1)],
             'FP': df[(true == 0) & (pred == 1)],
             'TN': df[(true == 0) & (pred == 0)],
             'FN': df[(true == 1) & (pred == 0)]
         }
-        # Compute mean scores per group
-        results['alignment_means'] = {g: grp['alignment_score'].mean() for g, grp in groups.items()}
-        results['evidence_means'] = {g: grp['evidence_support_score'].mean() for g, grp in groups.items()}
+        
+        # Check if groups have sufficient samples before computing means
+        results['alignment_means'] = {}
+        results['evidence_means'] = {}
+        for g, grp in groups.items():
+            if len(grp) > 0:
+                results['alignment_means'][g] = grp['alignment_score'].mean()
+                results['evidence_means'][g] = grp['evidence_support_score'].mean()
+            else:
+                results['alignment_means'][g] = np.nan
+                results['evidence_means'][g] = np.nan
+                print(f"Warning: Group {g} has no samples. Means will be NaN.")
 
         comparisons = {}
-        # Compare predicted positive cases: TP vs FP
-        if len(groups['TP']) > 1 and len(groups['FP']) > 1:
-            t_stat, p_val = ttest_ind(groups['TP']['alignment_score'], groups['FP']['alignment_score'], equal_var=False)
-            comparisons['Align_TP_vs_FP'] = {'t_stat': t_stat, 'p_value': p_val, 'cohen_d': cohen_d(groups['TP']['alignment_score'], groups['FP']['alignment_score'])}
-            t_stat2, p_val2 = ttest_ind(groups['TP']['evidence_support_score'], groups['FP']['evidence_support_score'], equal_var=False)
-            comparisons['Evidence_TP_vs_FP'] = {'t_stat': t_stat2, 'p_value': p_val2, 'cohen_d': cohen_d(groups['TP']['evidence_support_score'], groups['FP']['evidence_support_score'])}
-        # Compare predicted negative cases: TN vs FN
-        if len(groups['TN']) > 1 and len(groups['FN']) > 1:
-            t_stat, p_val = ttest_ind(groups['TN']['alignment_score'], groups['FN']['alignment_score'], equal_var=False)
-            comparisons['Align_TN_vs_FN'] = {'t_stat': t_stat, 'p_value': p_val, 'cohen_d': cohen_d(groups['TN']['alignment_score'], groups['FN']['alignment_score'])}
-            t_stat2, p_val2 = ttest_ind(groups['TN']['evidence_support_score'], groups['FN']['evidence_support_score'], equal_var=False)
-            comparisons['Evidence_TN_vs_FN'] = {'t_stat': t_stat2, 'p_value': p_val2, 'cohen_d': cohen_d(groups['TN']['evidence_support_score'], groups['FN']['evidence_support_score'])}
+        # Compare predicted positive cases: TP vs FP (only if both have sufficient samples)
+        if len(groups['TP']) > 2 and len(groups['FP']) > 2:
+            try:
+                t_stat, p_val = ttest_ind(groups['TP']['alignment_score'], groups['FP']['alignment_score'], equal_var=False)
+                comparisons['Align_TP_vs_FP'] = {'t_stat': t_stat, 'p_value': p_val, 'cohen_d': cohen_d(groups['TP']['alignment_score'], groups['FP']['alignment_score'])}
+            except Exception as e:
+                print(f"Warning: Failed to perform t-test for alignment TP vs FP: {e}")
+                comparisons['Align_TP_vs_FP'] = {'t_stat': np.nan, 'p_value': np.nan, 'cohen_d': 0.0}
+            
+            try:
+                t_stat2, p_val2 = ttest_ind(groups['TP']['evidence_support_score'], groups['FP']['evidence_support_score'], equal_var=False)
+                comparisons['Evidence_TP_vs_FP'] = {'t_stat': t_stat2, 'p_value': p_val2, 'cohen_d': cohen_d(groups['TP']['evidence_support_score'], groups['FP']['evidence_support_score'])}
+            except Exception as e:
+                print(f"Warning: Failed to perform t-test for evidence support TP vs FP: {e}")
+                comparisons['Evidence_TP_vs_FP'] = {'t_stat': np.nan, 'p_value': np.nan, 'cohen_d': 0.0}
+        else:
+            print(f"Warning: Insufficient samples for TP vs FP comparison. TP: {len(groups['TP'])}, FP: {len(groups['FP'])}")
+            
+        # Compare predicted negative cases: TN vs FN (only if both have sufficient samples)
+        if len(groups['TN']) > 2 and len(groups['FN']) > 2:
+            try:
+                t_stat, p_val = ttest_ind(groups['TN']['alignment_score'], groups['FN']['alignment_score'], equal_var=False)
+                comparisons['Align_TN_vs_FN'] = {'t_stat': t_stat, 'p_value': p_val, 'cohen_d': cohen_d(groups['TN']['alignment_score'], groups['FN']['alignment_score'])}
+            except Exception as e:
+                print(f"Warning: Failed to perform t-test for alignment TN vs FN: {e}")
+                comparisons['Align_TN_vs_FN'] = {'t_stat': np.nan, 'p_value': np.nan, 'cohen_d': 0.0}
+                
+            try:
+                t_stat2, p_val2 = ttest_ind(groups['TN']['evidence_support_score'], groups['FN']['evidence_support_score'], equal_var=False)
+                comparisons['Evidence_TN_vs_FN'] = {'t_stat': t_stat2, 'p_value': p_val2, 'cohen_d': cohen_d(groups['TN']['evidence_support_score'], groups['FN']['evidence_support_score'])}
+            except Exception as e:
+                print(f"Warning: Failed to perform t-test for evidence support TN vs FN: {e}")
+                comparisons['Evidence_TN_vs_FN'] = {'t_stat': np.nan, 'p_value': np.nan, 'cohen_d': 0.0}
+        else:
+            print(f"Warning: Insufficient samples for TN vs FN comparison. TN: {len(groups['TN'])}, FN: {len(groups['FN'])}")
 
         results['comparisons'] = comparisons
     return results
@@ -307,15 +349,43 @@ def correlation_analysis(df):
     Returns a dict with correlation coefficients and p-values for each pair of metrics.
     """
     corr_results = {}
+    # Check if we have sufficient data points for correlation analysis
+    min_samples = 3  # Minimum samples needed for correlation
+    
+    if len(df) < min_samples:
+        print(f"Warning: Insufficient samples for correlation analysis ({len(df)} < {min_samples})")
+        return {
+            'align_vs_hallucination': {'pearson_r': np.nan, 'p_value': np.nan},
+            'align_vs_evidence': {'pearson_r': np.nan, 'p_value': np.nan},
+            'evidence_vs_hallucination': {'pearson_r': np.nan, 'p_value': np.nan}
+        }
+        
     align = df['alignment_score']
     hall = df['hallucination_score']
     evid = df['evidence_support_score']
-    r1, p1 = pearsonr(align, hall)
-    corr_results['align_vs_hallucination'] = {'pearson_r': r1, 'p_value': p1}
-    r2, p2 = pearsonr(align, evid)
-    corr_results['align_vs_evidence'] = {'pearson_r': r2, 'p_value': p2}
-    r3, p3 = pearsonr(evid, hall)
-    corr_results['evidence_vs_hallucination'] = {'pearson_r': r3, 'p_value': p3}
+    
+    # Perform correlation analysis with error handling
+    try:
+        r1, p1 = pearsonr(align, hall)
+        corr_results['align_vs_hallucination'] = {'pearson_r': r1, 'p_value': p1}
+    except Exception as e:
+        print(f"Warning: Failed to compute correlation between alignment and hallucination: {e}")
+        corr_results['align_vs_hallucination'] = {'pearson_r': np.nan, 'p_value': np.nan}
+        
+    try:
+        r2, p2 = pearsonr(align, evid)
+        corr_results['align_vs_evidence'] = {'pearson_r': r2, 'p_value': p2}
+    except Exception as e:
+        print(f"Warning: Failed to compute correlation between alignment and evidence: {e}")
+        corr_results['align_vs_evidence'] = {'pearson_r': np.nan, 'p_value': np.nan}
+        
+    try:
+        r3, p3 = pearsonr(evid, hall)
+        corr_results['evidence_vs_hallucination'] = {'pearson_r': r3, 'p_value': p3}
+    except Exception as e:
+        print(f"Warning: Failed to compute correlation between evidence and hallucination: {e}")
+        corr_results['evidence_vs_hallucination'] = {'pearson_r': np.nan, 'p_value': np.nan}
+        
     return corr_results
 
 def generate_evidence_visualizations(df, category_coverage_rate, category_support_rate, stats_results, cat_note_count, cat_expl_count, cat_coverage_count, output_dir='figures/nlp/evidence_enhanced'):
@@ -329,6 +399,11 @@ def generate_evidence_visualizations(df, category_coverage_rate, category_suppor
     """
     os.makedirs(output_dir, exist_ok=True)
 
+    # Only proceed if dataframe has sufficient samples
+    if len(df) < 1:
+        print(f"Warning: Not generating visualizations for empty dataframe in {output_dir}")
+        return
+
     # Histograms for alignment, hallucination, and evidence support
     metrics = [
         ('alignment_score', 'Alignment Score'),
@@ -336,6 +411,11 @@ def generate_evidence_visualizations(df, category_coverage_rate, category_suppor
         ('evidence_support_score', 'Evidence Support Score')
     ]
     for col, label in metrics:
+        # Skip if column is empty or all values are NaN
+        if col not in df.columns or df[col].isna().all():
+            print(f"Warning: Skipping histogram for {col} due to missing data")
+            continue
+            
         fig, ax = plt.subplots(figsize=(6, 4))
         sns.histplot(df[col], bins=20, kde=False, ax=ax, color='steelblue')
         ax.set_title(f"Distribution of {label}s")
@@ -352,64 +432,78 @@ def generate_evidence_visualizations(df, category_coverage_rate, category_suppor
         ('evidence_support_score', 'hallucination_score')
     ]
     for x_col, y_col in scatter_pairs:
+        # Check if we have valid data for both columns
+        if (x_col not in df.columns or y_col not in df.columns or 
+            df[x_col].isna().all() or df[y_col].isna().all() or
+            len(df) < 3):  # Need at least 3 points for meaningful scatter
+            print(f"Warning: Skipping scatter plot for {x_col} vs {y_col} due to insufficient data")
+            continue
+            
         fig, ax = plt.subplots(figsize=(5, 5))
         sns.scatterplot(x=df[x_col], y=df[y_col], ax=ax, color='purple', alpha=0.7)
         ax.set_title(f"{x_col.replace('_score','').capitalize()} vs {y_col.replace('_score','').capitalize()}")
         ax.set_xlabel(x_col)
         ax.set_ylabel(y_col)
         # Annotate Pearson r on plot
-        if df[x_col].count() > 1 and df[y_col].count() > 1:
-            r_val = df[x_col].corr(df[y_col])
-            ax.text(0.05, 0.95, f"r = {r_val:.2f}", transform=ax.transAxes,
-                    fontsize=9, verticalalignment='top')
+        if df[x_col].count() > 2 and df[y_col].count() > 2:  # Need at least 3 non-NA values
+            try:
+                r_val = df[x_col].corr(df[y_col])
+                ax.text(0.05, 0.95, f"r = {r_val:.2f}", transform=ax.transAxes,
+                        fontsize=9, verticalalignment='top')
+            except Exception as e:
+                print(f"Warning: Failed to compute correlation for plot: {e}")
         plt.tight_layout()
         fig.savefig(f"{output_dir}/scatter_{x_col}_vs_{y_col}.png")
         plt.close(fig)
 
     # Category-level bar plots for coverage and support rates
     cats = list(category_coverage_rate.keys())
-    # Preserve a consistent category order (the original insertion order of categories in category_analysis)
-    cov_values = [category_coverage_rate.get(cat, 0) for cat in cats]
-    sup_values = [category_support_rate.get(cat, 0) for cat in cats]
+    # Skip if no category data is available
+    if not cats:
+        print("Warning: No category data available for bar plots")
+    else:
+        # Preserve a consistent category order (the original insertion order of categories in category_analysis)
+        cov_values = [category_coverage_rate.get(cat, 0) for cat in cats]
+        sup_values = [category_support_rate.get(cat, 0) for cat in cats]
 
-    # Coverage rate bar plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x=cats, y=cov_values, ax=ax, color='skyblue', order=cats)
-    ax.set_title("Category Coverage Rate (Note -> Explanation)")
-    ax.set_ylabel("Coverage (fraction of evidence mentioned)")
-    ax.set_xlabel("Evidence Category")
-    ax.set_ylim(0, 1)
-    for p in ax.patches:
-        height = p.get_height()
-        ax.annotate(f"{height*100:.0f}%", (p.get_x() + p.get_width()/2, height),
-                    ha='center', va='bottom', fontsize=8)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    fig.savefig(f"{output_dir}/category_coverage_rates.png")
-    plt.close(fig)
+        # Coverage rate bar plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x=cats, y=cov_values, ax=ax, color='skyblue', order=cats)
+        ax.set_title("Category Coverage Rate (Note -> Explanation)")
+        ax.set_ylabel("Coverage (fraction of evidence mentioned)")
+        ax.set_xlabel("Evidence Category")
+        ax.set_ylim(0, 1)
+        for p in ax.patches:
+            height = p.get_height()
+            ax.annotate(f"{height*100:.0f}%", (p.get_x() + p.get_width()/2, height),
+                        ha='center', va='bottom', fontsize=8)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        fig.savefig(f"{output_dir}/category_coverage_rates.png")
+        plt.close(fig)
 
-    # Support rate bar plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x=cats, y=sup_values, ax=ax, color='lightgreen', order=cats)
-    ax.set_title("Category Support Rate (Explanation -> Note)")
-    ax.set_ylabel("Support (fraction of mentions supported)")
-    ax.set_xlabel("Evidence Category")
-    ax.set_ylim(0, 1)
-    for p in ax.patches:
-        height = p.get_height()
-        ax.annotate(f"{height*100:.0f}%", (p.get_x() + p.get_width()/2, height),
-                    ha='center', va='bottom', fontsize=8)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    fig.savefig(f"{output_dir}/category_support_rates.png")
-    plt.close(fig)
+        # Support rate bar plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x=cats, y=sup_values, ax=ax, color='lightgreen', order=cats)
+        ax.set_title("Category Support Rate (Explanation -> Note)")
+        ax.set_ylabel("Support (fraction of mentions supported)")
+        ax.set_xlabel("Evidence Category")
+        ax.set_ylim(0, 1)
+        for p in ax.patches:
+            height = p.get_height()
+            ax.annotate(f"{height*100:.0f}%", (p.get_x() + p.get_width()/2, height),
+                        ha='center', va='bottom', fontsize=8)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        fig.savefig(f"{output_dir}/category_support_rates.png")
+        plt.close(fig)
 
     # Effect size bar plot for group comparisons (Cohen's d)
     comp = stats_results.get('comparisons', {})
     labels = []
     values = []
     for comp_name, stats in comp.items():
-        if 'cohen_d' in stats:
+        if 'cohen_d' in stats and not np.isnan(stats['cohen_d']):
             labels.append(comp_name)
             values.append(stats['cohen_d'])
     if labels:
@@ -428,44 +522,62 @@ def generate_evidence_visualizations(df, category_coverage_rate, category_suppor
         plt.close(fig)
 
     # Heatmap for category coverage by prediction group
-    if 'true_label' in df.columns and 'pred_label' in df.columns:
+    if 'true_label' in df.columns and ('pred_label' in df.columns or 'predicted_label' in df.columns):
+        # Handle different column names
+        pred_col = 'pred_label' if 'pred_label' in df.columns else 'predicted_label'
+        
         group_masks = {
-            'TP': (df['true_label'] == 1) & (df['pred_label'] == 1),
-            'FP': (df['true_label'] == 0) & (df['pred_label'] == 1),
-            'TN': (df['true_label'] == 0) & (df['pred_label'] == 0),
-            'FN': (df['true_label'] == 1) & (df['pred_label'] == 0)
+            'TP': (df['true_label'] == 1) & (df[pred_col] == 1),
+            'FP': (df['true_label'] == 0) & (df[pred_col] == 1),
+            'TN': (df['true_label'] == 0) & (df[pred_col] == 0),
+            'FN': (df['true_label'] == 1) & (df[pred_col] == 0)
         }
-        group_cov_matrix = pd.DataFrame(index=clinical_indicators.keys(), columns=['TP', 'FP', 'TN', 'FN'], dtype=float)
-        for group, mask in group_masks.items():
-            df_group = df[mask]
-            notes_g = df_group['original_note'].fillna('').astype(str).str.lower()
-            expls_g = df_group['explanation'].fillna('').astype(str).str.lower()
-            for cat, keywords in clinical_indicators.items():
-                cov_count = 0
-                note_count = 0
-                for i in range(len(df_group)):
-                    note_text = notes_g.iloc[i]
-                    expl_text = expls_g.iloc[i]
-                    has_note = any(kw in note_text for kw in keywords)
-                    has_expl = any(kw in expl_text for kw in keywords)
-                    if has_note:
-                        note_count += 1
-                    if has_note and has_expl:
-                        cov_count += 1
-                if note_count > 0:
-                    group_cov_matrix.loc[cat, group] = cov_count / note_count
-                else:
-                    group_cov_matrix.loc[cat, group] = np.nan
+        
+        # Check if we have any samples in each group
+        valid_groups = [g for g, mask in group_masks.items() if df[mask].shape[0] > 0]
+        
+        if not valid_groups:
+            print("Warning: No valid prediction groups for heatmap")
+        else:
+            group_cov_matrix = pd.DataFrame(index=clinical_indicators.keys(), columns=valid_groups, dtype=float)
+            
+            for group in valid_groups:
+                mask = group_masks[group]
+                df_group = df[mask]
+                
+                # Skip if group is empty
+                if len(df_group) == 0:
+                    continue
+                    
+                notes_g = df_group['original_note'].fillna('').astype(str).str.lower()
+                expls_g = df_group['explanation'].fillna('').astype(str).str.lower()
+                
+                for cat, keywords in clinical_indicators.items():
+                    cov_count = 0
+                    note_count = 0
+                    for i in range(len(df_group)):
+                        note_text = notes_g.iloc[i]
+                        expl_text = expls_g.iloc[i]
+                        has_note = any(kw in note_text for kw in keywords)
+                        has_expl = any(kw in expl_text for kw in keywords)
+                        if has_note:
+                            note_count += 1
+                        if has_note and has_expl:
+                            cov_count += 1
+                    if note_count > 0:
+                        group_cov_matrix.loc[cat, group] = cov_count / note_count
+                    else:
+                        group_cov_matrix.loc[cat, group] = np.nan
 
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(group_cov_matrix * 100, annot=True, fmt=".0f", cmap="YlGnBu",
-                    mask=group_cov_matrix.isna(), cbar_kws={'label': 'Coverage (%)'}, ax=ax)
-        ax.set_title("Evidence Coverage by Category and Prediction Group")
-        ax.set_ylabel("Evidence Category")
-        ax.set_xlabel("Prediction Group")
-        plt.tight_layout()
-        fig.savefig(f"{output_dir}/category_coverage_heatmap.png")
-        plt.close(fig)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(group_cov_matrix * 100, annot=True, fmt=".0f", cmap="YlGnBu",
+                        mask=group_cov_matrix.isna(), cbar_kws={'label': 'Coverage (%)'}, ax=ax)
+            ax.set_title("Evidence Coverage by Category and Prediction Group")
+            ax.set_ylabel("Evidence Category")
+            ax.set_xlabel("Prediction Group")
+            plt.tight_layout()
+            fig.savefig(f"{output_dir}/category_coverage_heatmap.png")
+            plt.close(fig)
 
 def main():
     # ------------------------------------------------
