@@ -183,20 +183,33 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
-    # Get model's maximum sequence length
-    model_max_length = args.max_seq_length
+    # Get model's true maximum sequence length - this is critical
+    # Don't rely on args.max_seq_length, which could be wrong
+    model_max_length = min(model.config.max_seq_length, 2048)  # Cap at 2048 to be safe
+    print(f"Using model_max_length: {model_max_length}")
     
-    # More efficient token reservation
-    # Reserve space for the generation and a small buffer for prompt formatting
+    # Reserve tokens for generation and prompt formatting
     generation_reserve = args.max_length
-    prompt_formatting_reserve = 200  
+    prompt_formatting_reserve = 200
+    
+    # Max tokens available for patient note
+    max_note_tokens = model_max_length - generation_reserve - prompt_formatting_reserve
     
     batch_results = []
     
     for text in batch_texts:
         try:
-            # Dynamically calculate the token limits based on available context window
-            # Start with few-shot examples = args.few_shot_count
+            # First, check token count of raw text
+            text_token_count = len(tokenizer.encode(text, add_special_tokens=False))
+            
+            # Truncate text if too long, before building prompt
+            if text_token_count > max_note_tokens:
+                print(f"Truncating patient note from {text_token_count} to {max_note_tokens} tokens")
+                text_tokens = tokenizer.encode(text, add_special_tokens=False)[:max_note_tokens]
+                text = tokenizer.decode(text_tokens)
+                print(f"Truncated note length: {len(tokenizer.encode(text, add_special_tokens=False))} tokens")
+            
+            # Dynamically adjust few-shot examples based on available context
             current_few_shot_count = args.few_shot_count
             
             while True:
@@ -217,42 +230,58 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 prompt_token_length = len(tokenizer.encode(prompt, add_special_tokens=True))
                 total_required_length = prompt_token_length + generation_reserve
                 
-                # If prompt fits within model context, proceed
+                # If prompt fits, proceed
                 if total_required_length <= model_max_length:
+                    print(f"Final prompt length: {prompt_token_length} tokens + {generation_reserve} for generation = {total_required_length}/{model_max_length}")
                     break
                 
-                # If reducing few-shot examples could help, do that first
+                # If still too long, reduce few-shot examples
                 if current_few_shot_count > 0:
                     current_few_shot_count -= 1
                     print(f"Reducing few-shot examples to {current_few_shot_count} to fit context window")
                     continue
                 
-                # If we're out of few-shot examples and still too long, truncate the note
-                original_token_length = len(tokenizer.encode(text, add_special_tokens=False))
-                max_note_length = model_max_length - prompt_formatting_reserve - generation_reserve
+                # If zero few-shot and still too long, truncate text further
+                current_text_tokens = len(tokenizer.encode(text, add_special_tokens=False))
+                new_max_tokens = max(1, current_text_tokens - (total_required_length - model_max_length) - 50)  # 50 extra as buffer
                 
-                # Only truncate if necessary
-                if original_token_length > max_note_length:
-                    print(f"Truncating patient note from {original_token_length} to {max_note_length} tokens")
-                    # Simple truncation keeping the beginning of the note
-                    text_tokens = tokenizer.encode(text, add_special_tokens=False)[:max_note_length]
+                if new_max_tokens < current_text_tokens:
+                    print(f"Further truncating note from {current_text_tokens} to {new_max_tokens} tokens")
+                    text_tokens = tokenizer.encode(text, add_special_tokens=False)[:new_max_tokens]
                     text = tokenizer.decode(text_tokens)
-                    break
+                    continue
+                
+                # Emergency truncation of prompt if still too long
+                print("WARNING: Falling back to emergency prompt truncation")
+                prompt_template = "Analyze this patient note for malnutrition: "
+                text_tokens = tokenizer.encode(text, add_special_tokens=False)
+                available_tokens = model_max_length - len(tokenizer.encode(prompt_template, add_special_tokens=True)) - generation_reserve
+                truncated_text_tokens = text_tokens[:available_tokens]
+                prompt = prompt_template + tokenizer.decode(truncated_text_tokens)
+                break
             
             # Prepare chat format messages
             messages = [
                 {"role": "user", "content": prompt}
             ]
             
-            # Apply chat template
+            # Apply chat template and verify length before processing
             inputs = tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
                 return_tensors="pt"
-            ).to(device)
+            )
             
-            # Generate response with full generation length
+            # Final safety check - truncate if still too long
+            if inputs.shape[1] > model_max_length - generation_reserve:
+                print(f"WARNING: Final input still too long ({inputs.shape[1]} tokens), truncating to {model_max_length - generation_reserve}")
+                inputs = inputs[:, :model_max_length - generation_reserve]
+            
+            # Move to device
+            inputs = inputs.to(device)
+            
+            # Generate response
             with torch.no_grad():
                 output = model.generate(
                     input_ids=inputs,
@@ -331,6 +360,8 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             
         except Exception as e:
             print(f"Error generating response: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Print full traceback for debugging
             batch_results.append((0, "Error occurred during processing", 0.5))
     
     return batch_results
