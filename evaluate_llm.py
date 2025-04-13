@@ -184,8 +184,6 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
     # Get model's true maximum sequence length - use the correct attribute
-    # LlamaConfig uses max_position_embeddings, not max_seq_length
-    # Also check for context_length, which some models might use
     if hasattr(model.config, 'max_position_embeddings'):
         model_max_length = min(model.config.max_position_embeddings, 2048)
     elif hasattr(model.config, 'context_length'):
@@ -195,8 +193,6 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     else:
         # Fallback to tokenizer's model max length
         model_max_length = min(tokenizer.model_max_length, 2048)
-    
-    print(f"Using model_max_length: {model_max_length}")
     
     # Reserve tokens for generation and prompt formatting
     generation_reserve = args.max_length
@@ -214,10 +210,8 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             
             # Truncate text if too long, before building prompt
             if text_token_count > max_note_tokens:
-                print(f"Truncating patient note from {text_token_count} to {max_note_tokens} tokens")
                 text_tokens = tokenizer.encode(text, add_special_tokens=False)[:max_note_tokens]
                 text = tokenizer.decode(text_tokens)
-                print(f"Truncated note length: {len(tokenizer.encode(text, add_special_tokens=False))} tokens")
             
             # Dynamically adjust few-shot examples based on available context
             current_few_shot_count = args.few_shot_count
@@ -242,13 +236,11 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 
                 # If prompt fits, proceed
                 if total_required_length <= model_max_length:
-                    print(f"Final prompt length: {prompt_token_length} tokens + {generation_reserve} for generation = {total_required_length}/{model_max_length}")
                     break
                 
                 # If still too long, reduce few-shot examples
                 if current_few_shot_count > 0:
                     current_few_shot_count -= 1
-                    print(f"Reducing few-shot examples to {current_few_shot_count} to fit context window")
                     continue
                 
                 # If zero few-shot and still too long, truncate text further
@@ -256,13 +248,11 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 new_max_tokens = max(1, current_text_tokens - (total_required_length - model_max_length) - 50)  # 50 extra as buffer
                 
                 if new_max_tokens < current_text_tokens:
-                    print(f"Further truncating note from {current_text_tokens} to {new_max_tokens} tokens")
                     text_tokens = tokenizer.encode(text, add_special_tokens=False)[:new_max_tokens]
                     text = tokenizer.decode(text_tokens)
                     continue
                 
                 # Emergency truncation of prompt if still too long
-                print("WARNING: Falling back to emergency prompt truncation")
                 prompt_template = "Analyze this patient note for malnutrition: "
                 text_tokens = tokenizer.encode(text, add_special_tokens=False)
                 available_tokens = model_max_length - len(tokenizer.encode(prompt_template, add_special_tokens=True)) - generation_reserve
@@ -285,7 +275,6 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             
             # Final safety check - truncate if still too long
             if inputs.shape[1] > model_max_length - generation_reserve:
-                print(f"WARNING: Final input still too long ({inputs.shape[1]} tokens), truncating to {model_max_length - generation_reserve}")
                 inputs = inputs[:, :model_max_length - generation_reserve]
             
             # Move to device
@@ -369,10 +358,8 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             batch_results.append((binary_decision, explanation, float(confidence_score)))
             
         except Exception as e:
-            print(f"Error generating response: {str(e)}")
-            import traceback
-            traceback.print_exc()  # Print full traceback for debugging
-            batch_results.append((0, "Error occurred during processing", 0.5))
+            # Only keep minimal error reporting
+            batch_results.append((0, f"Error: {str(e)}", 0.5))
     
     return batch_results
     
