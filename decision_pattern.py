@@ -381,7 +381,7 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     sorted_features = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
     
     # Take top features - limited to improve readability
-    top_features = [f for f, c in sorted_features[:8] if c > 0]
+    top_features = [f for f, c in sorted_features[:14] if c > 0]
     
     # Create node hierarchy with explicit levels
     level_nodes = {
