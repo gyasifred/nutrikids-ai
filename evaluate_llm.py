@@ -183,9 +183,19 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
-    # Get model's true maximum sequence length - this is critical
-    # Don't rely on args.max_seq_length, which could be wrong
-    model_max_length = min(model.config.max_seq_length, 2048)  # Cap at 2048 to be safe
+    # Get model's true maximum sequence length - use the correct attribute
+    # LlamaConfig uses max_position_embeddings, not max_seq_length
+    # Also check for context_length, which some models might use
+    if hasattr(model.config, 'max_position_embeddings'):
+        model_max_length = min(model.config.max_position_embeddings, 2048)
+    elif hasattr(model.config, 'context_length'):
+        model_max_length = min(model.config.context_length, 2048)
+    elif hasattr(model.config, 'max_length'):
+        model_max_length = min(model.config.max_length, 2048)
+    else:
+        # Fallback to tokenizer's model max length
+        model_max_length = min(tokenizer.model_max_length, 2048)
+    
     print(f"Using model_max_length: {model_max_length}")
     
     # Reserve tokens for generation and prompt formatting
