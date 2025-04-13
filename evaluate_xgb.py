@@ -28,7 +28,7 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 import seaborn as sns 
 from utils import load_xgbartifacts
-
+import shap
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, 
@@ -89,53 +89,37 @@ def evaluate_xgb_model(
 ):
     """
     Comprehensive model evaluation with multiple metrics and visualizations.
-    
-    Args:
-        model: Trained XGBoost model
-        X_test: Test features
-        y_test: Test labels
-        feature_names: Optional list of feature names
-        output_dir: Directory to save evaluation results
-        model_name: Name of the model for file naming
-        id_series: Optional series of IDs for the test data
-    
-    Returns:
-        dict: Comprehensive evaluation metrics
+    Now includes SHAP-based feature importance.
     """
-    # Ensure output directory exists
+    import shap  # Local import to avoid dependency issues
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Predictions
+
     y_pred = model.predict(X_test)
     y_pred_proba = model.predict_proba(X_test)
-    
-    # Evaluation metrics with zero_division handling
+
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
         'precision': precision_score(y_test, y_pred, average='weighted', zero_division=1),
         'recall': recall_score(y_test, y_pred, average='weighted', zero_division=1),
         'f1_score': f1_score(y_test, y_pred, average='weighted', zero_division=1)
     }
-    
-    # Log class distribution to help diagnose the issue
+
     unique_true_labels = np.unique(y_test)
     unique_pred_labels = np.unique(y_pred)
     logging.info(f"Unique true labels: {unique_true_labels}")
     logging.info(f"Unique predicted labels: {unique_pred_labels}")
-    
-    # Check if there are any missing classes in predictions
+
     missing_classes = set(unique_true_labels) - set(unique_pred_labels)
     if missing_classes:
         logging.warning(f"Missing predicted classes: {missing_classes}")
-    
-    # Try computing ROC AUC if binary classification
-    try:
-        if len(np.unique(y_test)) == 2:
+
+    if len(np.unique(y_test)) == 2:
+        try:
             metrics['roc_auc'] = roc_auc_score(y_test, y_pred_proba[:, 1])
-    except Exception as e:
-        logging.warning(f"Could not compute ROC AUC: {e}")
-    
-    # Confusion Matrix
+        except Exception as e:
+            logging.warning(f"Could not compute ROC AUC: {e}")
+
+    # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
@@ -145,11 +129,10 @@ def evaluate_xgb_model(
     cm_path = os.path.join(output_dir, f'{model_name}_confusion_matrix.png')
     plt.savefig(cm_path)
     plt.close()
-    
-    # Classification Report
+
     class_report = classification_report(y_test, y_pred, output_dict=True)
-    
-    # Feature Importance (if available)
+
+    # Feature importances (standard XGBoost)
     if feature_names is not None:
         plt.figure(figsize=(12, 8))
         feature_importance = model.feature_importances_
@@ -162,17 +145,42 @@ def evaluate_xgb_model(
         importance_path = os.path.join(output_dir, f'{model_name}_feature_importance.png')
         plt.savefig(importance_path, bbox_inches='tight')
         plt.close()
-        
-        # Save feature importances to CSV
+
         importance_df = pd.DataFrame({
             'feature': feature_names,
             'importance': feature_importance
-        })
-        importance_df = importance_df.sort_values('importance', ascending=False)
+        }).sort_values('importance', ascending=False)
         importance_csv_path = os.path.join(output_dir, f'{model_name}_feature_importance.csv')
         importance_df.to_csv(importance_csv_path, index=False)
         logging.info(f"Feature importances saved to {importance_csv_path}")
-    
+
+        # ---- SHAP Values ----
+        logging.info("Computing SHAP values...")
+        try:
+            explainer = shap.Explainer(model, X_test)
+            shap_values = explainer(X_test)
+
+            shap_df = pd.DataFrame(
+                np.abs(shap_values.values).mean(axis=0),
+                index=feature_names,
+                columns=["mean_abs_shap"]
+            ).sort_values(by="mean_abs_shap", ascending=False)
+
+            shap_csv_path = os.path.join(output_dir, f"{model_name}_shap_importance.csv")
+            shap_df.to_csv(shap_csv_path)
+            logging.info(f"SHAP feature importances saved to {shap_csv_path}")
+
+            # Optional SHAP beeswarm plot
+            shap_plot_path = os.path.join(output_dir, f"{model_name}_shap_summary.png")
+            shap.plots.beeswarm(shap_values, show=False)
+            plt.tight_layout()
+            plt.savefig(shap_plot_path)
+            plt.close()
+            logging.info(f"SHAP summary plot saved to {shap_plot_path}")
+
+        except Exception as e:
+            logging.warning(f"SHAP analysis failed: {e}")
+            
     # ROC Curve and data (for binary classification)
     if len(np.unique(y_test)) == 2:
         fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba[:, 1])
@@ -308,50 +316,38 @@ def evaluate_xgb_model(
     predictions_df.to_csv(predictions_path, index=False)
     logging.info(f"Predictions with probabilities saved to {predictions_path}")
     
-    # Save confusion matrix as CSV
+    # Save confusion matrix
     cm_df = pd.DataFrame(cm)
     cm_csv_path = os.path.join(output_dir, f'{model_name}_confusion_matrix.csv')
     cm_df.to_csv(cm_csv_path, index=False, header=False)
-    logging.info(f"Confusion matrix saved to {cm_csv_path}")
-    
-    # Save classification report as CSV
+
+    # Classification report CSV
     class_report_df = pd.DataFrame(class_report).transpose()
     report_csv_path = os.path.join(output_dir, f'{model_name}_classification_report.csv')
     class_report_df.to_csv(report_csv_path)
-    logging.info(f"Classification report saved to {report_csv_path}")
-    
-    # Save results
+
     results = {
         'metrics': metrics,
         'confusion_matrix': cm.tolist(),
         'classification_report': class_report,
         'confusion_matrix_path': cm_path,
         'exported_files': {
-            'predictions': predictions_path,
             'confusion_matrix_csv': cm_csv_path,
-            'classification_report_csv': report_csv_path
+            'classification_report_csv': report_csv_path,
         }
     }
-    
-    # Add paths of ROC and PR curve data files if they exist
-    if len(np.unique(y_test)) == 2:
-        results['exported_files']['roc_curve_data'] = roc_csv_path
-        results['exported_files']['precision_recall_curve_data'] = pr_csv_path
-    elif len(np.unique(y_test)) > 2:
-        results['exported_files']['ovr_roc_curve_data'] = ovr_roc_csv_path
-        results['exported_files']['class_probabilities'] = probs_csv_path
-    
+
     if feature_names is not None:
         results['exported_files']['feature_importance_csv'] = importance_csv_path
-    
-    # Save evaluation results
+        results['exported_files']['shap_importance_csv'] = shap_csv_path
+        results['exported_files']['shap_summary_plot'] = shap_plot_path
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_path = os.path.join(output_dir, f'{model_name}_evaluation_{timestamp}.json')
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=4, default=str)
-    
+
     logging.info(f"Evaluation results saved to {results_path}")
-    
     return results
 def main():
     # Argument parsing
