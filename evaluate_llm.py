@@ -487,6 +487,87 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
     
     return results_df
 
+def parse_arguments():
+    """Parse command line arguments for the evaluation script."""
+    parser = argparse.ArgumentParser(
+        description="Evaluate malnutrition detection model on a test dataset"
+    )
+
+    # Model arguments
+    parser.add_argument("--model_path", type=str, default=None,
+                        help="Path to the fine-tuned model adapter weights (optional). "
+                             "If not provided, the base model is used for inference.")
+    parser.add_argument("--base_model", type=str, default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
+                        help="Base model that was fine-tuned or to be used for inference")
+
+    # Test data arguments
+    parser.add_argument("--test_csv", type=str, required=True,
+                        help="Path to CSV file with test data (patient notes and labels)")
+    parser.add_argument("--text_column", type=str, default="txt",
+                        help="Column name in CSV containing patient notes")
+    parser.add_argument("--id_column", type=str, default="DEID",
+                        help="Column name in CSV containing patient IDs")
+    parser.add_argument("--label_column", type=str, default="label",
+                        help="Column name in CSV containing true labels")
+
+    # Few-shot settings
+    parser.add_argument("--examples_data", type=str, default=None,
+                        help="Path to few-shot examples CSV data (optional)")
+    parser.add_argument("--few_shot_count", type=int, default=0,
+                        help="Number of few-shot examples to use (default: 0 for zero-shot)")
+    parser.add_argument("--balanced_examples", action="store_true",
+                        help="Whether to balance positive/negative few-shot examples")
+
+    # Output arguments
+    parser.add_argument("--output_dir", type=str, default="./LLM_pre_evaluation",
+                        help="Directory to save evaluation results")
+    parser.add_argument("--print_report", action="store_true",
+                        help="Print evaluation report to terminal")
+
+    # Quantization options
+    parser.add_argument("--load_in_8bit", action="store_true", default=False,
+                        help="Load model in 8-bit precision")
+    parser.add_argument("--load_in_4bit", action="store_true", default=True,
+                        help="Load model in 4-bit precision")
+
+    # Model settings
+    parser.add_argument("--use_flash_attention", action="store_true",
+                        help="Use Flash Attention 2 if available")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility")
+    parser.add_argument("--max_length", type=int, default=256,
+                        help="Maximum number of tokens to generate (default: 256)")
+    parser.add_argument("--temperature", type=float, default=0.1,
+                        help="Temperature for sampling")
+    parser.add_argument("--batch_size", type=int, default=16,
+                        help="Batch size for processing (default: 16)")
+                        
+    # Force precision if needed
+    parser.add_argument("--force_fp16", action="store_true",
+                        help="Force using FP16 precision")
+    parser.add_argument("--force_bf16", action="store_true",
+                        help="Force using BF16 precision if supported")
+
+    # Device arguments
+    parser.add_argument("--force_cpu", action="store_true",
+                        help="Force using CPU even if GPU is available")
+    parser.add_argument("--gpu_id", type=int, default=0,
+                        help="GPU ID to use if multiple GPUs are available (default: 0)")
+
+    # Maximum sequence length the model can handle
+    parser.add_argument("--max_seq_length", type=int, default=4096,
+                        help="Maximum sequence length the model can handle (default: 4096)")
+
+    args = parser.parse_args()
+
+    if args.load_in_8bit:
+        args.load_in_4bit = False
+    
+    if args.force_fp16 and args.force_bf16:
+        print("Warning: Both --force_fp16 and --force_bf16 specified. Using --force_fp16.")
+        args.force_bf16 = False
+
+    return args
 def main():
     """Main function to run the evaluation pipeline."""
     args = parse_arguments()
@@ -527,26 +608,8 @@ def main():
         if torch.cuda.is_available():
             print("Note: GPU is available but not being used due to --force_cpu flag")
 
-    # Create output directory with proper error handling
-    try:
-        # Convert to absolute path to ensure clarity
-        output_dir = os.path.abspath(args.output_dir)
-        # Create all necessary parent directories
-        os.makedirs(output_dir, exist_ok=True)
-        print(f"Output directory created/verified: {output_dir}")
-        
-        # Verify directory is writable
-        test_file = os.path.join(output_dir, "test_write.tmp")
-        with open(test_file, 'w') as f:
-            f.write("test")
-        os.remove(test_file)
-        print("Directory is writable")
-    except Exception as e:
-        # Fall back to current directory if there's any issue
-        print(f"Error with output directory: {e}")
-        print("Falling back to current directory")
-        output_dir = os.path.abspath(".")
-        print(f"Using fallback output directory: {output_dir}")
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialize prompt builder
     try:
@@ -571,26 +634,10 @@ def main():
         print(f"Error during model evaluation: {e}")
         raise
 
-    # Save predictions to CSV with error handling
-    predictions_path = os.path.join(output_dir, "predictions.csv")
-    try:
-        results_df.to_csv(predictions_path, index=False)
-        print(f"Predictions saved to {predictions_path}")
-    except Exception as e:
-        print(f"Error saving predictions to {predictions_path}: {e}")
-        # Try saving to current directory with a timestamp
-        import datetime
-        fallback_name = f"predictions_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        fallback_path = os.path.join(".", fallback_name)
-        try:
-            print(f"Attempting to save to {fallback_path}")
-            results_df.to_csv(fallback_path, index=False)
-            print(f"Predictions saved to fallback location: {fallback_path}")
-            # Update predictions_path to the successful path for later references
-            predictions_path = fallback_path
-        except Exception as e2:
-            print(f"Failed to save predictions to fallback location: {e2}")
-            print("Continuing evaluation without saving predictions")
+    # Save predictions to CSV
+    predictions_path = os.path.join(args.output_dir, "predictions.csv")
+    results_df.to_csv(predictions_path, index=False)
+    print(f"Predictions saved to {predictions_path}")
 
     # Filter out error rows for evaluation
     eval_df = results_df[results_df["predicted_label"] != -1].copy()
@@ -604,7 +651,6 @@ def main():
     y_pred = eval_df["predicted_label"].tolist()
     
     # Include prediction scores if available
-    metrics = None
     if "prediction_score" in eval_df.columns:
         y_scores = eval_df["prediction_score"].tolist()
         print("Computing evaluation metrics with confidence scores...")
@@ -614,11 +660,7 @@ def main():
         except Exception as e:
             print(f"Error computing evaluation metrics with scores: {e}")
             # Fallback to basic metrics without scores
-            try:
-                print("Falling back to basic metrics without scores")
-                metrics = evaluate_predictions(y_true, y_pred)
-            except Exception as e2:
-                print(f"Error computing basic metrics: {e2}")
+            metrics = evaluate_predictions(y_true, y_pred)
     else:
         print("Computing basic evaluation metrics...")
         try:
@@ -626,32 +668,25 @@ def main():
             metrics = evaluate_predictions(y_true, y_pred)
         except Exception as e:
             print(f"Error computing evaluation metrics: {e}")
-    
-    # Exit if metrics calculation failed
-    if metrics is None:
-        print("ERROR: Could not compute evaluation metrics. Exiting.")
-        return
+            raise
 
-    # Generate and save plots with error handling
+    # Generate and save plots
     print("Generating evaluation plots...")
     try:
-        plot_evaluation_metrics(metrics, output_dir)
-        print(f"Evaluation plots saved to {output_dir}")
+        plot_evaluation_metrics(metrics, args.output_dir)
     except Exception as e:
         print(f"Error generating evaluation plots: {e}")
-        print("Continuing without plots")
+        # Continue even if plotting fails
 
-    # Save metrics to CSV with error handling
+    # Save metrics to CSV
     try:
-        metrics_csv_path = os.path.join(output_dir, "metrics.csv")
+        metrics_csv_path = os.path.join(args.output_dir, "metrics.csv")
         save_metrics_to_csv(metrics, metrics_csv_path)
         print(f"Metrics saved to {metrics_csv_path}")
     except Exception as e:
         print(f"Error saving metrics to CSV: {e}")
-        print("Continuing without saving metrics CSV")
 
-    # Save metrics to JSON with error handling
-    # Remove probability-based metrics that can't be serialized
+    # Save metrics to JSON - Remove probability-based metrics that can't be serialized
     metrics_json = {
         'accuracy': float(metrics['accuracy']),
         'precision': float(metrics['precision']),
@@ -668,19 +703,19 @@ def main():
         metrics_json['pr_auc'] = float(metrics['pr_auc'])
 
     try:
-        metrics_json_path = os.path.join(output_dir, "metrics.json")
+        metrics_json_path = os.path.join(args.output_dir, "metrics.json")
         with open(metrics_json_path, 'w') as f:
             json.dump(metrics_json, f, indent=2)
         print(f"Detailed metrics saved to {metrics_json_path}")
     except Exception as e:
         print(f"Error saving metrics to JSON: {e}")
-        print("Continuing without saving metrics JSON")
 
     # Print evaluation report
     if args.print_report:
-        try:
-            print_metrics_report(metrics)
-        except Exception as e:
-            print(f"Error printing metrics report: {e}")
+        print_metrics_report(metrics)
     
     print("Evaluation complete!")
+
+
+if __name__ == "__main__":
+    main()
