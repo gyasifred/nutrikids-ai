@@ -15,7 +15,7 @@
 # -------------------- Default Parameters --------------------
 
 # Test data and evaluation settings
-TEST_CSV="csv_files/gs_note_test_bal.csv"
+TEST_CSV="data/test.csv"
 TEXT_COLUMN="txt"
 LABEL_COLUMN="label"
 ID_COLUMN="DEID"
