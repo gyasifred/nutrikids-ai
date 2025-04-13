@@ -802,7 +802,7 @@ def analyze_feature_cooccurrence(decision_patterns):
 # Main execution
 if __name__ == "__main__":
     # Set the file path to your predictions CSV
-    file_path = "./LLM_pre_eval/gemma/predictions.csv" 
+    file_path = "./PHI/test/predictions.csv" 
     
     # Run the analysis
     analysis_results = analyze_llm_explanations(file_path)
