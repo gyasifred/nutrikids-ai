@@ -519,8 +519,9 @@ def create_decision_flow_diagram(features_df, category, output_filename):
     category_name = "Full Dataset" if category == "full_df" else category
     plt.title(f"Decision Flow Diagram for {category_name}", fontsize=16)
     plt.axis('off')
-    plt.tight_layout()
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+    
+    # Replace tight_layout() with a more appropriate way to save the figure
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight', pad_inches=0.5)
     plt.close()
     
     return G, pos
