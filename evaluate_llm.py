@@ -179,99 +179,65 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     """
     Process a batch of patient notes and extract predictions with specific confidence scores
     for malnutrition classification.
-    
-    Args:
-        batch_texts (list): List of patient note texts
-        model: The language model
-        tokenizer: The tokenizer
-        prompt_builder: MalnutritionPromptBuilder instance
-        args: Command line arguments
-        
-    Returns:
-        list: List of tuples (decision, explanation, confidence_score) for each input text
-              where confidence_score is specifically for the malnutrition classification
     """
-    # Explicitly use GPU if available
+    # Use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
     # Get model's maximum sequence length
     model_max_length = args.max_seq_length
     
-    # Calculate reserved tokens
-    few_shot_token_estimate = 750 * args.few_shot_count
-    reserved_tokens = args.max_length + few_shot_token_estimate + 50
-    max_patient_note_tokens = model_max_length - reserved_tokens
-    
-    print(f"Model max length: {model_max_length}, Reserved tokens: {reserved_tokens}")
-    print(f"Max patient note tokens: {max_patient_note_tokens}")
+    # More efficient token reservation
+    # Reserve space for the generation and a small buffer for prompt formatting
+    generation_reserve = args.max_length
+    prompt_formatting_reserve = 200  
     
     batch_results = []
     
     for text in batch_texts:
         try:
-            # Simple truncation logic
-            original_token_length = len(tokenizer.encode(text, add_special_tokens=False))
+            # Dynamically calculate the token limits based on available context window
+            # Start with few-shot examples = args.few_shot_count
+            current_few_shot_count = args.few_shot_count
             
-            if original_token_length > max_patient_note_tokens:
-                print(f"Truncating text from {original_token_length} to {max_patient_note_tokens} tokens")
-                text = truncate_text(text, tokenizer, max_patient_note_tokens)
-            
-            # Prompt preparation
-            prompt = prompt_builder.get_balanced_inference_prompt(
-                patient_notes=text,
-                text_col=args.text_column,
-                label_col=args.label_column,
-                num_examples=args.few_shot_count
-            ) if args.balanced_examples else prompt_builder.get_inference_prompt(
-                patient_notes=text,
-                note_col=args.text_column,
-                label_col=args.label_column,
-                num_examples=args.few_shot_count
-            )
-            
-            # Handle prompt length adjustments
-            full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
-            
-            if full_prompt_length + args.max_length > model_max_length:
-                if args.few_shot_count > 0:
-                    reduced_examples = max(0, args.few_shot_count - 1)
-                    print(f"Warning: Prompt too long ({full_prompt_length} tokens). Reducing examples from {args.few_shot_count} to {reduced_examples}")
-                    
-                    prompt = prompt_builder.get_balanced_inference_prompt(
-                        patient_notes=text,
-                        text_col=args.text_column,
-                        label_col=args.label_column,
-                        num_examples=reduced_examples
-                    ) if args.balanced_examples else prompt_builder.get_inference_prompt(
-                        patient_notes=text,
-                        note_col=args.text_column,
-                        label_col=args.label_column,
-                        num_examples=reduced_examples
-                    )
-                    
-                    full_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+            while True:
+                # Build prompt with current few-shot count
+                prompt = prompt_builder.get_balanced_inference_prompt(
+                    patient_notes=text,
+                    text_col=args.text_column,
+                    label_col=args.label_column,
+                    num_examples=current_few_shot_count
+                ) if args.balanced_examples else prompt_builder.get_inference_prompt(
+                    patient_notes=text,
+                    note_col=args.text_column,
+                    label_col=args.label_column,
+                    num_examples=current_few_shot_count
+                )
                 
-                if full_prompt_length + args.max_length > model_max_length:
-                    needed_reduction = (full_prompt_length + args.max_length) - model_max_length + 100
-                    new_max_tokens = max(2048, max_patient_note_tokens - needed_reduction)
-                    
-                    print(f"Warning: Further truncating text to {new_max_tokens} tokens")
-                    text = truncate_text(text, tokenizer, new_max_tokens)
-                    
-                    prompt = prompt_builder.get_balanced_inference_prompt(
-                        patient_notes=text,
-                        text_col=args.text_column,
-                        label_col=args.label_column,
-                        num_examples=0
-                    ) if args.balanced_examples else prompt_builder.get_inference_prompt(
-                        patient_notes=text,
-                        note_col=args.text_column,
-                        label_col=args.label_column,
-                        num_examples=0
-                    )
-                    
-                    final_prompt_length = len(tokenizer.encode(prompt, add_special_tokens=True))
-                    print(f"Final prompt length after all reductions: {final_prompt_length} tokens")
+                # Check prompt length
+                prompt_token_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+                total_required_length = prompt_token_length + generation_reserve
+                
+                # If prompt fits within model context, proceed
+                if total_required_length <= model_max_length:
+                    break
+                
+                # If reducing few-shot examples could help, do that first
+                if current_few_shot_count > 0:
+                    current_few_shot_count -= 1
+                    print(f"Reducing few-shot examples to {current_few_shot_count} to fit context window")
+                    continue
+                
+                # If we're out of few-shot examples and still too long, truncate the note
+                original_token_length = len(tokenizer.encode(text, add_special_tokens=False))
+                max_note_length = model_max_length - prompt_formatting_reserve - generation_reserve
+                
+                # Only truncate if necessary
+                if original_token_length > max_note_length:
+                    print(f"Truncating patient note from {original_token_length} to {max_note_length} tokens")
+                    # Simple truncation keeping the beginning of the note
+                    text_tokens = tokenizer.encode(text, add_special_tokens=False)[:max_note_length]
+                    text = tokenizer.decode(text_tokens)
+                    break
             
             # Prepare chat format messages
             messages = [
@@ -286,18 +252,11 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 return_tensors="pt"
             ).to(device)
             
-            # Adjust max_length if needed
-            if inputs.shape[1] + args.max_length > model_max_length:
-                print(f"Warning: Final input still too long: {inputs.shape[1]} tokens. Reducing max_length.")
-                adjusted_max_length = max(256, model_max_length - inputs.shape[1] - 50)
-            else:
-                adjusted_max_length = args.max_length
-            
-            # Generate response
+            # Generate response with full generation length
             with torch.no_grad():
                 output = model.generate(
                     input_ids=inputs,
-                    max_new_tokens=adjusted_max_length,
+                    max_new_tokens=args.max_length,
                     temperature=args.temperature,
                     do_sample=args.temperature > 0,
                     use_cache=True,
@@ -321,80 +280,57 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Convert text decision to binary
             binary_decision = 1 if decision.lower() == "yes" else 0
             
-            # Extract confidence score based on the decision pattern
-            # Find the position of "malnutrition=yes" or "malnutrition=no" in the response
-            # and calculate confidence based on surrounding tokens
-            
-            # First convert all scores to probabilities
+            # Extract confidence calculation (unchanged from original)
             probs = [torch.softmax(score, dim=-1) for score in scores]
-            
-            # Extract confidence score for the classification specifically
             confidence_score = 0.5  # Default neutral score
             
-            # Look for "malnutrition=yes" or "malnutrition=no" in the generated tokens
             response_lower = response.lower()
-            
-            # Method 1: Search for decision pattern and extract confidence around it
             decision_pattern = "malnutrition=yes" if binary_decision == 1 else "malnutrition=no"
             alt_pattern = "malnutrition = yes" if binary_decision == 1 else "malnutrition = no"
             
             if decision_pattern in response_lower or alt_pattern in response_lower:
-                # Find where the decision starts in the response
                 pattern_pos = response_lower.find(decision_pattern)
                 if pattern_pos == -1:
                     pattern_pos = response_lower.find(alt_pattern)
                 
-                # Map this position to token indices
-                # Tokenize the response up to the decision
                 prefix_tokens = tokenizer.encode(response[:pattern_pos], add_special_tokens=False)
                 decision_tokens = tokenizer.encode(decision_pattern if decision_pattern in response_lower else alt_pattern, 
                                                  add_special_tokens=False)
                 
-                # Calculate token positions in the generated sequence
                 start_pos = len(prefix_tokens)
                 end_pos = start_pos + len(decision_tokens)
                 
-                # Limit to the valid range
                 start_pos = min(start_pos, len(response_tokens) - 1)
                 end_pos = min(end_pos, len(response_tokens))
                 
-                # Calculate average probability for decision tokens if they exist in the output
                 if end_pos > start_pos:
                     token_probs = []
                     for idx in range(start_pos, end_pos):
-                        if idx < len(probs):  # Ensure index is within range
+                        if idx < len(probs):
                             token_id = response_tokens[idx].item()
                             token_prob = probs[idx][0, token_id].item()
                             token_probs.append(token_prob)
                     
                     if token_probs:
                         confidence_score = sum(token_probs) / len(token_probs)
-                    
-            # Method 2: If decision pattern wasn't found or confidence couldn't be calculated,
-            # use a more general approach based on the entire response
+            
             if confidence_score == 0.5:
-                # Calculate average probability across all generated tokens
                 all_probs = []
                 for i, token_id in enumerate(response_tokens):
-                    if i < len(probs):  # Ensure index is within range
+                    if i < len(probs):
                         token_prob = probs[i][0, token_id.item()].item()
                         all_probs.append(token_prob)
                 
                 if all_probs:
                     confidence_score = sum(all_probs) / len(all_probs)
             
-            # For "no" decisions, adjust the score to represent confidence in the positive class
-            # This transforms the score to be consistent with ROC AUC expectations
-            # (higher score should mean higher confidence in the positive class)
             if binary_decision == 0:
                 confidence_score = 1.0 - confidence_score
             
-            # Add results including the confidence score
             batch_results.append((binary_decision, explanation, float(confidence_score)))
             
         except Exception as e:
             print(f"Error generating response: {str(e)}")
-            # Return default values with neutral confidence score
             batch_results.append((0, "Error occurred during processing", 0.5))
     
     return batch_results
