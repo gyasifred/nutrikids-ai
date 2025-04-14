@@ -196,7 +196,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     
     # Reserve tokens for generation and prompt formatting
     generation_reserve = args.max_length
-    prompt_formatting_reserve = 200
+    prompt_formatting_reserve = 256
     
     # Max tokens available for patient note
     max_note_tokens = model_max_length - generation_reserve - prompt_formatting_reserve
