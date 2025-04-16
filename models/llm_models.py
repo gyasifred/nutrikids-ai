@@ -414,7 +414,7 @@ def print_metrics_report(metrics):
 import re
 import random
 import pandas as pd
-from typing import Optional, List, Dic
+from typing import Optional, List, Dict
 
 def preprocess_text(text: str) -> str:
     """Light preprocessing to clean clinical text."""
