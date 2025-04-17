@@ -174,7 +174,7 @@ if [ -n "$MODEL_PATH" ]; then
     echo "Post-Evaluating Model with Adapter: ${MODEL_SHORT_NAME}"
     CMD="python3 evaluate_llm.py \
       --base_model \"$MODEL\" \
-      --model_path \"${MODEL_PATH}/${MODEL_SHORT_NAME}\" \
+      --model_path \"${MODEL_PATH}/${MODEL_SHORT_NAME}/final_model\" \
       --test_csv \"$TEST_CSV\" \
       --text_column \"$TEXT_COLUMN\" \
       --label_column \"$LABEL_COLUMN\" \
