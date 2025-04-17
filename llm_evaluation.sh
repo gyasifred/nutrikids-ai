@@ -26,7 +26,7 @@ BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 # Evaluation parameters
 SEED=42
 MAX_NEW_TOKENS=256
-TEMPERATURE=0.1
+TEMPERATURE=0.2
 BATCH_SIZE=4
 # Model settings
 # Array of base models to evaluate
