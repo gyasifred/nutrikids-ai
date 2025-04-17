@@ -489,19 +489,17 @@ Assessment:
 {explanation}
 malnutrition={label}
 """
-
     def construct_malnutrition_prompt(
         self,
         patient_notes: str,
         few_shot_examples: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         cleaned_notes = preprocess_text(patient_notes)
-
+    
         instructions = (
             "Assess whether the patient is likely to be malnourished. "
-            "Based on the notes, give a short explanation and respond with malnutrition=yes or malnutrition=no."
+            "First provide a detailed explanation of your reasoning, then on a new line respond with malnutrition=yes or malnutrition=no."
         )
-
         few_shot_section = ""
         if few_shot_examples and len(few_shot_examples) > 0:
             few_shot_text = "\n\n".join(
@@ -526,15 +524,18 @@ def extract_malnutrition_decision(response: str):
     decision = "unknown"
     if match:
         decision = match.group(1).lower()
-
-    explanation = response
-    if match:
-        explanation_parts = response.split('malnutrition=', 1)
-        if len(explanation_parts) > 0:
-            explanation = explanation_parts[0].strip()
+        # Take everything before the decision as explanation
+        decision_index = response.lower().find('malnutrition=')
+        explanation = response[:decision_index].strip() if decision_index > 0 else ""
+        
+        # If no explanation before the decision, look for content after it
+        if not explanation and len(response) > decision_index + 15:  # 15 chars covers "malnutrition=yes/no"
+            explanation = response[decision_index + 15:].strip()
+    else:
+        explanation = response.strip()
 
     return decision, explanation
-
+    
 class WeightedSFTTrainer(SFTTrainer):
     """
     Custom SFTTrainer that supports weighted loss for imbalanced classes.
