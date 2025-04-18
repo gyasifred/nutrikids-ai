@@ -40,6 +40,9 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         self.word2idx_ = None
         self.idx2word_ = None
         self.vocab_size_ = None
+        
+        # Tokens to remove (similar to R code)
+        self.tokens_to_remove = ["</s>", "_decnum_", "_lgnum_", "_date_", "_time_"]
 
     @classmethod
     def from_args(cls, args):
@@ -53,9 +56,18 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
             padding=args.padding
         )
 
+    def _clean_text(self, text: str) -> str:
+        """Clean text by removing standard tokens."""
+        for token in self.tokens_to_remove:
+            text = text.replace(token, "")
+        return text
+
     def _tokenize(self, text: str) -> List[str]:
-        """Split text into tokens."""
-        return text.lower().split()
+        """Split text into tokens after cleaning."""
+        # First clean the text
+        cleaned_text = self._clean_text(text)
+        # Then tokenize
+        return cleaned_text.lower().split()
 
     def fit(self, X: List[str], y=None):
         """Build vocabulary from list of texts."""
