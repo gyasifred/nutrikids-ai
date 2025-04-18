@@ -41,7 +41,7 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         self.idx2word_ = None
         self.vocab_size_ = None
         
-        # Tokens to remove (similar to R code)
+        # Initialize tokens_to_remove to ensure it exists
         self.tokens_to_remove = ["</s>", "_decnum_", "_lgnum_", "_date_", "_time_"]
 
     @classmethod
@@ -58,6 +58,10 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
 
     def _clean_text(self, text: str) -> str:
         """Clean text by removing standard tokens."""
+        # Ensure tokens_to_remove exists (will handle loading from older saved versions)
+        if not hasattr(self, 'tokens_to_remove'):
+            self.tokens_to_remove = ["</s>", "_decnum_", "_lgnum_", "_date_", "_time_"]
+            
         for token in self.tokens_to_remove:
             text = text.replace(token, "")
         return text
@@ -107,8 +111,7 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         """Convert texts to padded sequences."""
         if self.word2idx_ is None:
             raise ValueError(
-                "Tokenizer has not been fitted. Call fit \
-                  fit_transform first.")
+                "Tokenizer has not been fitted. Call fit or fit_transform first.")
 
         # Convert texts to sequences
         sequences = []
@@ -147,8 +150,7 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
         """Create an embedding matrix for the vocabulary."""
         if self.word2idx_ is None:
             raise ValueError(
-                "Tokenizer has not been fitted.\
-                      Call fit or fit_transform first.")
+                "Tokenizer has not been fitted. Call fit or fit_transform first.")
 
         embedding_matrix = np.random.normal(
             scale=0.1, size=(self.vocab_size_, embedding_dim)
@@ -162,6 +164,26 @@ class TextTokenizer(BaseEstimator, TransformerMixin):
                     embedding_matrix[idx] = pretrained_embeddings[word]
 
         return embedding_matrix
+
+    @classmethod
+    def load_pretrained_embeddings(cls, path: str) -> Dict[str, np.ndarray]:
+        """Load pretrained word embeddings from a file."""
+        embeddings = {}
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                values = line.rstrip().split(' ')
+                word = values[0]
+                vector = np.asarray(values[1:], dtype='float32')
+                embeddings[word] = vector
+        return embeddings
+
+    def __getstate__(self):
+        """Custom state for pickle to ensure all attributes are saved."""
+        state = self.__dict__.copy()
+        # Ensure tokens_to_remove is included in the state
+        if not hasattr(self, 'tokens_to_remove'):
+            state['tokens_to_remove'] = ["</s>", "_decnum_", "_lgnum_", "_date_", "_time_"]
+        return state
 
     @classmethod
     def load_pretrained_embeddings(cls, path: str) -> Dict[str, np.ndarray]:
