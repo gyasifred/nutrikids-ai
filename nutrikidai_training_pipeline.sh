@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Default values for training and validation data
-TRAIN_DATA="data/train_data.csv"
-FULL_TRAIN_DATA="data/train.csv"
-VAL_DATA="data/val_data.csv"
+TRAIN_DATA="data/notes_train_data.csv"
+FULL_TRAIN_DATA="data/notes_train.csv"
+VAL_DATA="data/notes_val_data.csv"
 
 # Default values for tuning
 TEXT_COLUMN="txt"
@@ -51,11 +51,11 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
-   #"unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
+    "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/Phi-4"
-   "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+   "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_final"
 
