@@ -18,6 +18,7 @@ from sklearn.metrics import (
     classification_report
 )
 from models.text_cnn import predict_batch, load_model_artifacts
+from models.text_cnn import train_textcnn, TextTokenizer
 
 
 def process_labels(labels, label_encoder=None):
