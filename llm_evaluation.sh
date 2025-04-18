@@ -15,7 +15,7 @@
 # -------------------- Default Parameters --------------------
 
 # Test data and evaluation settings
-TEST_CSV="csv_files/gs_note_test_bal.csv"
+TEST_CSV="notes_test.csv"
 TEXT_COLUMN="txt"
 LABEL_COLUMN="label"
 ID_COLUMN="DEID"
@@ -31,17 +31,18 @@ BATCH_SIZE=4
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
-   "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
+    "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
+    "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/Phi-4"
-   "unsloth/gemma-7b-it-bnb-4bit"
    "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
+   "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
 # Adapter model path: if provided, it will be used in post-evaluation.
 MODEL_PATH="trained_models/LLM_final"
 
 # Output directories
-PRE_EVAL_DIR="LLMs_gs_base"
-POST_EVAL_DIR="LLMs_gs_finetuned"
+PRE_EVAL_DIR="LLMs_base"
+POST_EVAL_DIR="LLMs_finetuned"
 
 # -------------------- Command-Line Arguments Parsing --------------------
 while [[ "$#" -gt 0 ]]; do
