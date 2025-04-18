@@ -58,14 +58,18 @@ class ClinicalTextPreprocessor(BaseEstimator, TransformerMixin):
                  remove_punctuation: bool = True,
                  lowercase: bool = True,
                  standardize_numbers: bool = False,
-                 standardize_dates: bool = True):
+                 standardize_dates: bool = True,
+                 remove_standard_tokens: bool = True):
         self.remove_punctuation = remove_punctuation
         self.lowercase = lowercase
         self.standardize_numbers = standardize_numbers
         self.standardize_dates = standardize_dates
+        self.remove_standard_tokens = remove_standard_tokens
         self.date_pattern = (r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|'
                              r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2},? \d{4}\b')
         self.number_pattern = r'\b\d+(?:,\d{3})*(?:\.\d+)?\b'
+        # Standard tokens pattern similar to what's in the R code
+        self.standard_tokens_pattern = r'</s>|_decnum_|_lgnum_|_date_|_time_'
 
     def fit(self, X, y=None):
         return self
@@ -78,6 +82,8 @@ class ClinicalTextPreprocessor(BaseEstimator, TransformerMixin):
     def _preprocess_text(self, text: str) -> str:
         if self.lowercase:
             text = text.lower()
+        if self.remove_standard_tokens:
+            text = re.sub(self.standard_tokens_pattern, '', text)
         if self.standardize_dates:
             text = re.sub(self.date_pattern, '', text, flags=re.IGNORECASE)
         if self.standardize_numbers:
@@ -85,7 +91,6 @@ class ClinicalTextPreprocessor(BaseEstimator, TransformerMixin):
         if self.remove_punctuation:
             text = re.sub(r'[^\w\s<>]', '', text)
         return ' '.join(text.split())
-
 
 class StopWordsRemover(BaseEstimator, TransformerMixin):
     """Remove stop words using NLTK's stop words list."""
@@ -133,7 +138,6 @@ class TextStemmer(BaseEstimator, TransformerMixin):
 ############################################################
 # Text Preprocessing Pipeline
 ############################################################
-
 def process_csv(
     file_path: str,
     text_column: str,
@@ -143,6 +147,7 @@ def process_csv(
     max_features: int = 8000,
     remove_stop_words: bool = True,
     apply_stemming: bool = False,
+    remove_standard_tokens: bool = True,  # Added parameter
     vectorization_mode: str = 'tfidf',
     ngram_range: tuple = (1, 1),
     save_path: str = '.',
@@ -158,6 +163,7 @@ def process_csv(
       - max_features: Maximum number of features to extract
       - remove_stop_words: Whether to remove stop words
       - apply_stemming: Whether to apply stemming
+      - remove_standard_tokens: Whether to remove standard tokens like "</s>", "_decnum_", etc.
       - vectorization_mode: 'count' for CountVectorizer,
         'tfidf' for TF-IDF Vectorizer
       - ngram_range: Tuple (min_n, max_n) for n-gram range
@@ -190,7 +196,7 @@ def process_csv(
         # Build preprocessing steps
         preprocessing_steps = []
         preprocessing_steps.append(('preprocessor',
-                                    ClinicalTextPreprocessor()))
+                                    ClinicalTextPreprocessor(remove_standard_tokens=remove_standard_tokens)))
         if remove_stop_words:
             preprocessing_steps.append(('stopword_remover',
                                         StopWordsRemover()))
@@ -283,7 +289,6 @@ def process_csv(
     except Exception as e:
         print(f"Error processing CSV file: {str(e)}")
         raise
-
 # =========================
 # Label Encoding Function
 # =========================
