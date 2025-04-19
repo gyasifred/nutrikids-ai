@@ -535,7 +535,7 @@ def parse_arguments():
                         help="Use Flash Attention 2 if available")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
-    parser.add_argument("--max_length", type=int, default=256,
+    parser.add_argument("--max_length", type=int, default=200,
                         help="Maximum number of tokens to generate (default: 256)")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
@@ -555,7 +555,7 @@ def parse_arguments():
                         help="GPU ID to use if multiple GPUs are available (default: 0)")
 
     # Maximum sequence length the model can handle
-    parser.add_argument("--max_seq_length", type=int, default=4096,
+    parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Maximum sequence length the model can handle (default: 4096)")
 
     args = parser.parse_args()
