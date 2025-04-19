@@ -112,8 +112,7 @@ def load_model_and_tokenizer(base_model, model_path, args):
         model_kwargs["dtype"] = compute_dtype
         if model_path:
             model, tokenizer = FastLanguageModel.from_pretrained(
-                base_model,                      
-                 adapter_name=model_path, 
+                model_path, 
                 **model_kwargs)
             print(
                 f"Model loaded successfully with adapter weights from {model_path}")
