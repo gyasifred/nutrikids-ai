@@ -31,9 +31,11 @@ BATCH_SIZE=4
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
-    "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
-    "unsloth/gemma-7b-it-bnb-4bit"
-   "unsloth/Phi-4"
+   #  "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
+   #  "unsloth/gemma-7b-it-bnb-4bit"
+   # "unsloth/Phi-4"
+   "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
+   "unsloth/mistral-7b-instruct-v0.2-bnb-4bit"
    )
 # Adapter model path: if provided, it will be used in post-evaluation.
 MODEL_PATH="trained_models/LLM_final"
