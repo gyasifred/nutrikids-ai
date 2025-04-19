@@ -113,7 +113,7 @@ def load_model_and_tokenizer(base_model, model_path, args):
         if model_path:
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,                      
-                peft_model_id=model_path, 
+                 adapter_name=model_path, 
                 **model_kwargs)
             print(
                 f"Model loaded successfully with adapter weights from {model_path}")
