@@ -73,7 +73,7 @@ def load_model_and_tokenizer(base_model: str,
                              adapter_path: str | None,
                              args):
     """
-    Load a base model – optionally with LoRA/PEFT adapter weights – using Unsloth.
+    Load a base model – optionally with LoRA/PEFT adapter weights – using Unsloth.
 
     Parameters
     ----------
@@ -106,13 +106,14 @@ def load_model_and_tokenizer(base_model: str,
     # ------------------------------------------------------------------
     # 2.  FastLanguageModel kwargs
     # ------------------------------------------------------------------
+    # Set up model kwargs without torch_dtype first (we'll handle that separately)
     model_kwargs = {
         "device_map": "auto" if not args.force_cpu else {"": "cpu"},
-        "torch_dtype": compute_dtype,
         "use_flash_attention_2": args.use_flash_attention,
         "use_cache": True,
     }
-
+    
+    # Handle quantization options
     if quant_cfg is not None:
         model_kwargs["quantization_config"] = quant_cfg
     else:
@@ -125,16 +126,20 @@ def load_model_and_tokenizer(base_model: str,
     try:
         if adapter_path:
             print(f"Loading base model '{base_model}' with adapter '{adapter_path}'")
+            # Pass torch_dtype directly as a parameter instead of in model_kwargs
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,                       # positional arg
                 peft_model_id=adapter_path,       # attach LoRA / PEFT weights
+                torch_dtype=compute_dtype,        # explicit parameter
                 **model_kwargs
             )
             print("✓ Model + adapter loaded")
         else:
             print(f"Loading base model '{base_model}' (no adapter)")
+            # Pass torch_dtype directly as a parameter instead of in model_kwargs
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,
+                torch_dtype=compute_dtype,        # explicit parameter
                 **model_kwargs
             )
             print("✓ Base model loaded")
@@ -150,7 +155,7 @@ def load_model_and_tokenizer(base_model: str,
     except Exception as err:
         print(f"[load_model_and_tokenizer] FAILED → {err}")
         raise
-
+        
 
 def get_model_max_length(model, tokenizer):
     """
