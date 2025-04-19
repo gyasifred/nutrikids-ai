@@ -411,11 +411,6 @@ def print_metrics_report(metrics):
     
     print("="*50)
 
-import re
-import random
-import pandas as pd
-from typing import Optional, List, Dict
-
 def preprocess_text(text: str) -> str:
     """Light preprocessing to clean clinical text."""
     text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
@@ -489,50 +484,120 @@ Assessment:
 {explanation}
 malnutrition={label}
 """
+
     def construct_malnutrition_prompt(
         self,
         patient_notes: str,
         few_shot_examples: Optional[List[Dict[str, str]]] = None,
     ) -> str:
-        cleaned_notes = preprocess_text(patient_notes)
-    
-        instructions = (
-            "Assess whether the patient is likely to be malnourished. "
-            "First provide a detailed explanation of your reasoning, then on a new line respond with malnutrition=yes or malnutrition=no."
-        )
+        patient_notes = preprocess_text(patient_notes)
+        
+        instructions = """Read the patient's notes and determine if the patient is likely to have malnutrition.
+Make a definitive classification: malnutrition=yes or malnutrition=no.
+Use the following criteria:
+1) Anthropometric measurements (BMI, weight-for-height, mid-upper arm circumference)
+2) Clinical symptoms (muscle wasting, fatigue, skin/hair changes, edema)
+3) Dietary intake (caloric/protein intake, food insecurity)
+4) Medical conditions (chronic illness, gastrointestinal disorders, infections)
+5) Additional risk factors (medications, mental health, socioeconomic status)
+"""
+
+        classification_table = """
+Standard Classification:
+- malnutrition=yes: Evidence of inadequate nutrition based on weight loss, clinical signs, or dietary risk factors.
+- malnutrition=no: No significant indicators of malnutrition.
+
+Output Format:
+malnutrition=[yes/no]
+Explanation: Provide a short reasoning based on the data.
+"""
+
+        # Format few-shot examples if provided
         few_shot_section = ""
         if few_shot_examples and len(few_shot_examples) > 0:
             few_shot_text = "\n\n".join(
-                [self.format_example(example) for example in few_shot_examples]
-            )
-            few_shot_section = f"{few_shot_text}\n\nNow, assess the following patient:\n"
+                [self.format_example(example) for example in few_shot_examples])
+            few_shot_section = f"\nHere are some examples:\n\n{few_shot_text}\nNow, assess the following patient:\n"
 
         complete_prompt = (
             f"{instructions}\n\n"
-            f"{few_shot_section}"
-            f"Patient Notes:\n{cleaned_notes}"
+            f"{classification_table}\n\n"
+            f"{few_shot_section}\n\n"
+            f"Patient Notes:\n{patient_notes}"
         )
 
         return complete_prompt
 
+    def get_balanced_inference_prompt(
+        self,
+        patient_notes: str,
+        note_col: str,
+        label_col: str,
+        num_examples: int = 4
+    ) -> str:
+        """
+        Create a prompt with balanced examples (equal number of yes/no malnutrition cases)
+        """
+        if self.examples_cache is None:
+            return self.construct_malnutrition_prompt(patient_notes)
+            
+        # Get examples by class
+        yes_examples = self.examples_cache[
+            self.examples_cache[label_col].astype(str).str.lower().isin(['1', 'yes', 'true'])
+        ]
+        no_examples = self.examples_cache[
+            ~self.examples_cache[label_col].astype(str).str.lower().isin(['1', 'yes', 'true'])
+        ]
+        
+        # Determine how many examples from each class
+        examples_per_class = max(1, num_examples // 2)
+        
+        few_shot_examples = []
+        
+        # Add 'yes' examples
+        if len(yes_examples) > 0:
+            yes_indices = random.sample(range(len(yes_examples)), min(examples_per_class, len(yes_examples)))
+            for idx in yes_indices:
+                few_shot_examples.append({
+                    "text": yes_examples.iloc[idx][note_col],
+                    "label": yes_examples.iloc[idx][label_col]
+                })
+                
+        # Add 'no' examples
+        if len(no_examples) > 0:
+            no_indices = random.sample(range(len(no_examples)), min(examples_per_class, len(no_examples)))
+            for idx in no_indices:
+                few_shot_examples.append({
+                    "text": no_examples.iloc[idx][note_col],
+                    "label": no_examples.iloc[idx][label_col]
+                })
+                
+        # Shuffle examples to avoid order bias
+        random.shuffle(few_shot_examples)
+        
+        return self.construct_malnutrition_prompt(patient_notes, few_shot_examples)
 
-def extract_malnutrition_decision(response: str):
-    """Extract malnutrition=yes/no decision from model response."""
+
+def extract_malnutrition_decision(response):
+    """Extract malnutrition=yes/no decision from model response.
+    Args:
+        response (str): Model response text
+
+    Returns:
+        Tuple[str, str]: (malnutrition decision, explanation)
+    """
     decision_pattern = r'malnutrition=(yes|no)'
     match = re.search(decision_pattern, response, re.IGNORECASE)
 
     decision = "unknown"
     if match:
         decision = match.group(1).lower()
-        # Take everything before the decision as explanation
-        decision_index = response.lower().find('malnutrition=')
-        explanation = response[:decision_index].strip() if decision_index > 0 else ""
-        
-        # If no explanation before the decision, look for content after it
-        if not explanation and len(response) > decision_index + 15:  # 15 chars covers "malnutrition=yes/no"
-            explanation = response[decision_index + 15:].strip()
-    else:
-        explanation = response.strip()
+
+    explanation = response
+    if match:
+        explanation_parts = response.split('malnutrition=', 1)
+        if len(explanation_parts) > 0:
+            explanation = explanation_parts[0].strip()
 
     return decision, explanation
     
