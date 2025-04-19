@@ -112,9 +112,9 @@ def load_model_and_tokenizer(base_model, model_path, args):
         model_kwargs["dtype"] = compute_dtype
         if model_path:
             # Load base model with adapter weights (fine-tuned model)
-            model_kwargs["model_name"] = base_model
-            # FIXED: Use peft_model_id instead of adapter_name
-            model_kwargs["peft_model_id"] = model_path
+            model_kwargs["model_name"] =  model_path
+            # # FIXED: Use peft_model_id instead of adapter_name
+            # model_kwargs["peft_model_id"] = model_path
             model, tokenizer = FastLanguageModel.from_pretrained(
                 **model_kwargs)
             print(
