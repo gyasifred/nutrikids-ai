@@ -69,93 +69,66 @@ def get_device():
         return torch.device("cpu")
 
 
-def load_model_and_tokenizer(base_model: str,
-                             adapter_path: str | None,
-                             args):
+def load_model_and_tokenizer(base_model, model_path, args):
     """
-    Load a base model – optionally with LoRA/PEFT adapter weights – using Unsloth.
+    Load model and tokenizer for evaluation with appropriate quantization settings.
 
-    Parameters
-    ----------
-    base_model : str
-        HF hub ID or local directory of the *base* checkpoint.
-    adapter_path : str | None
-        Directory (or hub repo) that contains `adapter_config.json`
-        and `adapter_model.bin`.  Pass None to load the base model only.
-    args : argparse.Namespace
-        Must expose:
-            force_fp16, force_cpu, use_flash_attention,
-            load_in_4bit, load_in_8bit, max_seq_length (optional).
+    Args:
+        base_model (str): Base model name or path
+        model_path (str): Path to fine-tuned model adapter weights (optional)
+        args: Command line arguments with quantization settings
 
-    Returns
-    -------
-    model, tokenizer
+    Returns:
+        tuple: (model, tokenizer)
     """
-    # ------------------------------------------------------------------
-    # 1.  dtype & quantisation
-    # ------------------------------------------------------------------
-    if is_bfloat16_supported() and not args.force_fp16:
-        compute_dtype = torch.bfloat16
-    elif args.force_fp16:
-        compute_dtype = torch.float16
-    else:
-        compute_dtype = torch.float32          # safe fallback
+    # Get device
+    device = get_device()
+    print(f"Using device: {device}")
 
-    quant_cfg = get_quantization_config(args)  # returns None if not requested
-
-    # ------------------------------------------------------------------
-    # 2.  FastLanguageModel kwargs
-    # ------------------------------------------------------------------
-    # Set up model kwargs without torch_dtype first (we'll handle that separately)
-    model_kwargs = {
-        "device_map": "auto" if not args.force_cpu else {"": "cpu"},
-        "use_flash_attention_2": args.use_flash_attention,
-        "use_cache": True,
-    }
-    
-    # Handle quantization options
-    if quant_cfg is not None:
-        model_kwargs["quantization_config"] = quant_cfg
-    else:
-        model_kwargs["load_in_4bit"] = args.load_in_4bit
-        model_kwargs["load_in_8bit"] = args.load_in_8bit
-
-    # ------------------------------------------------------------------
-    # 3.  Load model (+ optional adapter)
-    # ------------------------------------------------------------------
+    print(
+        f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
+    # Determine compute dtype based on hardware and preferences
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
+    ) and not args.force_fp16 else torch.float16
+    # Get appropriate quantization config
+    quantization_config = get_quantization_config(args)
     try:
-        if adapter_path:
-            print(f"Loading base model '{base_model}' with adapter '{adapter_path}'")
-            # Pass torch_dtype directly as a parameter instead of in model_kwargs
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                base_model,                       # positional arg
-                peft_model_id=adapter_path,       # attach LoRA / PEFT weights
-                torch_dtype=compute_dtype,        # explicit parameter
-                **model_kwargs
-            )
-            print("✓ Model + adapter loaded")
+        # Set up model loading kwargs with common parameters
+        model_kwargs = {
+            # Force GPU usage if available instead of "auto" mapping
+            "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
+            "use_flash_attention_2": args.use_flash_attention,
+            "use_cache": True,  # Enable caching for inference
+            "max_seq_length": args.max_seq_length  # Set model's maximum sequence length
+        }
+        # Add quantization settings
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
         else:
-            print(f"Loading base model '{base_model}' (no adapter)")
-            # Pass torch_dtype directly as a parameter instead of in model_kwargs
+            # Direct quantization flags if no config is provided
+            model_kwargs["load_in_4bit"] = args.load_in_4bit
+            model_kwargs["load_in_8bit"] = args.load_in_8bit
+        # Set dtype for the model
+        model_kwargs["dtype"] = compute_dtype
+        if model_path:
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                base_model,                      
+                peft_model_id=model_path, 
+                **model_kwargs)
+            print(
+                f"Model loaded successfully with adapter weights from {model_path}")
+        else:
+            # Load base model only
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,
-                torch_dtype=compute_dtype,        # explicit parameter
-                **model_kwargs
-            )
-            print("✓ Base model loaded")
-
-        # Optional: set a shorter context length after loading
-        if getattr(args, "max_seq_length", None):
-            model.config.max_position_embeddings = args.max_seq_length
-
-        # 2×‑faster inference path
+                **model_kwargs)
+            print(f"Base model loaded successfully: {base_model}")
+        # Enable native 2x faster inference
         FastLanguageModel.for_inference(model)
         return model, tokenizer
-
-    except Exception as err:
-        print(f"[load_model_and_tokenizer] FAILED → {err}")
+    except Exception as e:
+        print(f"Error loading model: {e}")
         raise
-        
 
 def get_model_max_length(model, tokenizer):
     """
