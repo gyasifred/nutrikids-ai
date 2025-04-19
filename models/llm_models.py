@@ -604,18 +604,19 @@ def extract_malnutrition_decision(response):
 class WeightedSFTTrainer(SFTTrainer):
     """
     Custom SFTTrainer that supports weighted loss for imbalanced classes.
-    This is particularly useful for scenarios where false positives
-    should be penalized more heavily than false negatives.
+    This allows separate weighting for both positive and negative class predictions.
     """
-    def __init__(self, pos_weight=3.0, *args, **kwargs):
+    def __init__(self, pos_weight=3.0, neg_weight=2.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_weight = pos_weight
-        print(f"Using custom weighted loss with positive weight: {pos_weight}")
+        self.neg_weight = neg_weight
+        print(f"Using custom weighted loss with positive weight: {pos_weight}, negative weight: {neg_weight}")
         
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
         Override compute_loss to implement weighted loss for imbalanced classes.
-        This specifically penalizes false positive predictions more heavily.
+        This specifically penalizes both false positive and false negative predictions
+        with separate weights.
         
         Args:
             model: The model being trained
@@ -647,15 +648,18 @@ class WeightedSFTTrainer(SFTTrainer):
                 valid_logits = logits[valid_mask]
                 valid_labels = labels[valid_mask]
                 
-                # For binary classification with higher penalty for false positives:
+                # For binary classification with separate penalties for both classes:
                 if valid_logits.size(-1) > 1:  # Check if we have multiple output classes
-                    # Create a weight tensor that's higher for positive samples
+                    # Create a weight tensor that's different for each class
                     weights = torch.ones_like(valid_labels, dtype=torch.float)
                     
-                    # Apply weights to positive examples (assuming 1 is the positive class)
-                    # Higher weight means the model gets penalized more for missing these
+                    # Apply weights based on the class
                     is_positive = (valid_labels == 1)
+                    is_negative = (valid_labels == 0)
+                    
+                    # Apply the separate weights
                     weights[is_positive] = self.pos_weight
+                    weights[is_negative] = self.neg_weight
                     
                     # Compute weighted cross-entropy loss
                     log_probs = F.log_softmax(valid_logits, dim=-1)
