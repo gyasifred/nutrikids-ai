@@ -57,7 +57,7 @@ def parse_arguments():
                         help="Per-device training batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate for training")
-    parser.add_argument("--max_seq_length", type=int, default=4096,
+    parser.add_argument("--max_seq_length", type=int, default=2048,
                         help="Override model's default maximum sequence length (optional)")
     parser.add_argument("--epochs", type=int, default=1,
                         help="Number of training epochs")
