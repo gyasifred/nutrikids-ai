@@ -571,7 +571,7 @@ Training parameters:
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
-- Positive class weight: {args.pos_weight}
+# - Positive class weight: {args.pos_weight}
 - Gradient accumulation: Disabled
 - Sequence length: {max_seq_length} (calculated from dataset with 10% buffer)
 
