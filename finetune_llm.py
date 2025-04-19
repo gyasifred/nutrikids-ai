@@ -508,7 +508,7 @@ def main():
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    trainer = WeightedSFTTrainer(**trainer_kwargs) 
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
