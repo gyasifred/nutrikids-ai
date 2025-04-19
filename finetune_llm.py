@@ -65,7 +65,9 @@ def parse_arguments():
     # Class weighting argument
     # parser.add_argument("--pos_weight", type=float, default=1.0,
     #                     help="Weight for positive class (higher values penalize false positives more)")
-
+    # parser.add_argument("--neg_weight", type=floatdefault=1.0,
+    #                         help="Weight for NEGATIVE class (higher values penalize false NEGATIVE more)")
+                        
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
                         help="LoRA r parameter (rank)")
@@ -503,12 +505,14 @@ def main():
         "train_dataset": train_dataset,
         "args": sft_config,
         # "pos_weight": args.pos_weight,
+        # "neg_weight": args.neg_weight
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
     trainer = SFTTrainer(**trainer_kwargs)
+    # trainer = WeightedSFTTrainer(**trainer_kwargs)
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
