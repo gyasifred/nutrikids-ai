@@ -165,7 +165,8 @@ def load_model_and_tokenizer(base_model, model_path, args):
             # Force GPU usage if available instead of "auto" mapping
             "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
             "use_flash_attention_2": args.use_flash_attention,
-            "use_cache": True  
+            "use_cache": True,  # Enable caching for inference
+            "max_seq_length": args.max_seq_length  # Set model's maximum sequence length
         }
         # Add quantization settings
         if quantization_config is not None:
@@ -178,8 +179,9 @@ def load_model_and_tokenizer(base_model, model_path, args):
         model_kwargs["dtype"] = compute_dtype
         if model_path:
             # Load base model with adapter weights (fine-tuned model)
-            model_kwargs["model_name"] = base_model
-            model_kwargs["adapter_name"] = model_path
+            model_kwargs["model_name"] =  model_path
+            # # FIXED: Use peft_model_id instead of adapter_name
+            # model_kwargs["peft_model_id"] = model_path
             model, tokenizer = FastLanguageModel.from_pretrained(
                 **model_kwargs)
             print(
@@ -196,7 +198,6 @@ def load_model_and_tokenizer(base_model, model_path, args):
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
-
 
 def process_single_text(text, model, tokenizer, prompt_builder, args):
     """Process a single patient note.
