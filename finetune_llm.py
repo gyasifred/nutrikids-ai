@@ -22,7 +22,7 @@ from models.llm_models import (
     plot_evaluation_metrics,
     save_metrics_to_csv,
     print_metrics_report,
-    WeightedSFTTrainer  
+    # WeightedSFTTrainer  
 )
 
 
@@ -63,8 +63,8 @@ def parse_arguments():
                         help="Number of training epochs")
     
     # Class weighting argument
-    parser.add_argument("--pos_weight", type=float, default=1.0,
-                        help="Weight for positive class (higher values penalize false positives more)")
+    # parser.add_argument("--pos_weight", type=float, default=1.0,
+    #                     help="Weight for positive class (higher values penalize false positives more)")
 
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
@@ -502,17 +502,17 @@ def main():
         "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
-        "pos_weight": args.pos_weight,  # Pass the positive class weight
+        # "pos_weight": args.pos_weight,
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    trainer = WeightedSFTTrainer(**trainer_kwargs)  # Use the weighted trainer
+    trainer = WeightedSFTTrainer(**trainer_kwargs) 
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
-    print(f"Using positive class weight: {args.pos_weight}")
+    # print(f"Using positive class weight: {args.pos_weight}")
     print(f"Using sequence length: {max_seq_length} (calculated from dataset)")
     print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
