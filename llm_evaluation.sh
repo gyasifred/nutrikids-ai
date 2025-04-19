@@ -15,7 +15,7 @@
 # -------------------- Default Parameters --------------------
 
 # Test data and evaluation settings
-TEST_CSV="notes_test.csv"
+TEST_CSV="data/notes_test.csv"
 TEXT_COLUMN="txt"
 LABEL_COLUMN="label"
 ID_COLUMN="DEID"
@@ -112,7 +112,7 @@ done
 mkdir -p "$PRE_EVAL_DIR"
 mkdir -p "$POST_EVAL_DIR"
 
--------------------- Pre-Evaluation (Base Models Only) --------------------
+# -------------------- Pre-Evaluation (Base Models Only) --------------------
 echo "==================== Starting Pre-Evaluation (Base Models Only) ===================="
 for MODEL in "${LLM_MODELS[@]}"; do
   # Automatically determine quantization flag based on model name.
