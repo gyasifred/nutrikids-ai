@@ -148,7 +148,13 @@ def load_model_and_tokenizer(base_model, model_path, args):
         # Print model details for debugging
         print(f"Model config: {model.config}")
         print(f"Tokenizer details: {tokenizer.__class__.__name__}")
-        print(f"Model's max sequence length: {model.config.max_seq_length if hasattr(model.config, 'max_seq_length') else 'unknown'}")
+        
+        # Make sure max_seq_length is explicitly set in model config
+        if not hasattr(model.config, 'max_seq_length'):
+            print(f"Setting max_seq_length={args.max_seq_length} in model config")
+            model.config.max_seq_length = args.max_seq_length
+        else:
+            print(f"Model's max sequence length from config: {model.config.max_seq_length}")
         
         # Enable native 2x faster inference
         print("Enabling faster inference...")
@@ -160,13 +166,6 @@ def load_model_and_tokenizer(base_model, model_path, args):
         print(f"Detailed error loading model: {str(e)}")
         import traceback
         traceback.print_exc()  # This will print the full stack trace
-        
-        # Additional debugging info
-        print("\nAdditional debugging information:")
-        print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-        print(f"CUDA memory reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB")
-        print(f"Is model path valid? {os.path.exists(model_path) if model_path else 'N/A - using base model'}")
-        print(f"Is base model a local path? {os.path.exists(base_model) if os.path.exists(base_model) else 'No - using remote model'}")
         
         # Try listing models from unsloth if applicable
         if "unsloth" in base_model:
@@ -187,19 +186,28 @@ def load_model_and_tokenizer(base_model, model_path, args):
         
         raise
 
-def get_model_max_length(model, tokenizer):
+def get_model_max_length(model):
     """
     Get the maximum context length for the model.
     
     Args:
         model: The language model
-        tokenizer: The tokenizer
         
     Returns:
         int: Maximum sequence length the model can handle
     """
-    # Return the configured max_seq_length
-    return model.config.max_seq_length
+    # Consistent handling of max sequence length
+    if hasattr(model.config, 'max_seq_length'):
+        return model.config.max_seq_length
+    elif hasattr(model.config, 'max_position_embeddings'):
+        return model.config.max_position_embeddings
+    elif hasattr(model.config, 'context_length'):
+        return model.config.context_length
+    elif hasattr(model.config, 'max_length'):
+        return model.config.max_length
+    else:
+        # Default fallback
+        return 2048
 
 
 def truncate_text(text, tokenizer, max_tokens):
@@ -238,16 +246,9 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     # Use GPU if available
     device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
     
-    # Get model's true maximum sequence length - use the correct attribute
-    if hasattr(model.config, 'max_position_embeddings'):
-        model_max_length = min(model.config.max_position_embeddings, 2048)
-    elif hasattr(model.config, 'context_length'):
-        model_max_length = min(model.config.context_length, 2048)
-    elif hasattr(model.config, 'max_length'):
-        model_max_length = min(model.config.max_length, 2048)
-    else:
-        # Fallback to tokenizer's model max length
-        model_max_length = min(tokenizer.model_max_length, 2048)
+    # Get model's maximum sequence length - using consistent method
+    model_max_length = get_model_max_length(model)
+    print(f"Using model_max_length = {model_max_length} for batch processing")
     
     # Reserve tokens for generation and prompt formatting
     generation_reserve = args.max_length
@@ -591,7 +592,7 @@ def parse_arguments():
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
     parser.add_argument("--max_length", type=int, default=200,
-                        help="Maximum number of tokens to generate (default: 256)")
+                        help="Maximum number of tokens to generate (default: 200)")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling")
     parser.add_argument("--batch_size", type=int, default=16,
@@ -610,7 +611,7 @@ def parse_arguments():
                         help="GPU ID to use if multiple GPUs are available (default: 0)")
 
     # Maximum sequence length the model can handle
-    parser.add_argument("--max_seq_length", type=int, default=2048,
+    parser.add_argument("--max_seq_length", type=int, default=4096,
                         help="Maximum sequence length the model can handle (default: 4096)")
 
     args = parser.parse_args()
