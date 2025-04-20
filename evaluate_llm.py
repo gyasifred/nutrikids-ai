@@ -248,7 +248,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     
     # Get model's maximum sequence length - using consistent method
     model_max_length = get_model_max_length(model)
-    print(f"Using model_max_length = {model_max_length} for batch processing")
+    # print(f"Using model_max_length = {model_max_length} for batch processing")
     
     # Reserve tokens for generation and prompt formatting
     generation_reserve = args.max_length
