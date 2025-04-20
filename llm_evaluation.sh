@@ -33,8 +33,8 @@ BATCH_SIZE=4
 LLM_MODELS=(
     "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
     "unsloth/gemma-7b-it-bnb-4bit"
-   "unsloth/Phi-4"
-  "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
+    "unsloth/Phi-4"
+    "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
 # Adapter model path: if provided, it will be used in post-evaluation.
 MODEL_PATH="trained_models/LLM_final"
