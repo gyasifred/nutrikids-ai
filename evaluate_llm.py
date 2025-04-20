@@ -72,6 +72,7 @@ def get_device():
 def load_model_and_tokenizer(base_model, model_path, args):
     """
     Load model and tokenizer for evaluation with appropriate quantization settings.
+    Added detailed error handling and debugging information.
 
     Args:
         base_model (str): Base model name or path
@@ -85,13 +86,19 @@ def load_model_and_tokenizer(base_model, model_path, args):
     device = get_device()
     print(f"Using device: {device}")
 
-    print(
-        f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
+    print(f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
+    
     # Determine compute dtype based on hardware and preferences
-    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
-    ) and not args.force_fp16 else torch.float16
+    compute_dtype = torch.bfloat16 if is_bfloat16_supported() and not args.force_fp16 else torch.float16
+    print(f"Using compute dtype: {compute_dtype}")
+    
     # Get appropriate quantization config
     quantization_config = get_quantization_config(args)
+    if quantization_config:
+        print(f"Quantization config: {quantization_config}")
+    else:
+        print("No quantization config created, using direct quantization flags")
+    
     try:
         # Set up model loading kwargs with common parameters
         model_kwargs = {
@@ -101,6 +108,7 @@ def load_model_and_tokenizer(base_model, model_path, args):
             "use_cache": True,  # Enable caching for inference
             "max_seq_length": args.max_seq_length  # Set model's maximum sequence length
         }
+        
         # Add quantization settings
         if quantization_config is not None:
             model_kwargs["quantization_config"] = quantization_config
@@ -108,25 +116,75 @@ def load_model_and_tokenizer(base_model, model_path, args):
             # Direct quantization flags if no config is provided
             model_kwargs["load_in_4bit"] = args.load_in_4bit
             model_kwargs["load_in_8bit"] = args.load_in_8bit
+            
         # Set dtype for the model
         model_kwargs["dtype"] = compute_dtype
+        
+        # Debug print to show the complete model loading parameters
+        print(f"Attempting to load model with kwargs: {model_kwargs}")
+        
         if model_path:
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_path, 
-                **model_kwargs)
-            print(
-                f"Model loaded successfully with adapter weights from {model_path}")
+            print(f"Starting to load fine-tuned model from: {model_path}")
+            try:
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    model_path, 
+                    **model_kwargs)
+                print(f"Model loaded successfully with adapter weights from {model_path}")
+            except Exception as e:
+                print(f"Error loading fine-tuned model: {e}")
+                print("Attempting fallback to base model...")
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    base_model,
+                    **model_kwargs)
+                print(f"Fallback successful: base model loaded instead: {base_model}")
         else:
             # Load base model only
+            print(f"Starting to load base model: {base_model}")
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,
                 **model_kwargs)
             print(f"Base model loaded successfully: {base_model}")
+        
+        # Print model details for debugging
+        print(f"Model config: {model.config}")
+        print(f"Tokenizer details: {tokenizer.__class__.__name__}")
+        print(f"Model's max sequence length: {model.config.max_seq_length if hasattr(model.config, 'max_seq_length') else 'unknown'}")
+        
         # Enable native 2x faster inference
+        print("Enabling faster inference...")
         FastLanguageModel.for_inference(model)
+        print("Model ready for inference")
+        
         return model, tokenizer
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"Detailed error loading model: {str(e)}")
+        import traceback
+        traceback.print_exc()  # This will print the full stack trace
+        
+        # Additional debugging info
+        print("\nAdditional debugging information:")
+        print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        print(f"CUDA memory reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB")
+        print(f"Is model path valid? {os.path.exists(model_path) if model_path else 'N/A - using base model'}")
+        print(f"Is base model a local path? {os.path.exists(base_model) if os.path.exists(base_model) else 'No - using remote model'}")
+        
+        # Try listing models from unsloth if applicable
+        if "unsloth" in base_model:
+            try:
+                import requests
+                print("\nAvailable models in unsloth organization:")
+                response = requests.get("https://huggingface.co/api/models?author=unsloth")
+                if response.status_code == 200:
+                    models = response.json()
+                    for model in models[:10]:  # Show first 10 models
+                        print(f"- {model['id']}")
+                    if len(models) > 10:
+                        print(f"... and {len(models) - 10} more")
+                else:
+                    print(f"Failed to retrieve unsloth models: {response.status_code}")
+            except Exception as e2:
+                print(f"Failed to check unsloth models: {e2}")
+        
         raise
 
 def get_model_max_length(model, tokenizer):
