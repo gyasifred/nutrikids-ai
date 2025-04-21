@@ -51,9 +51,9 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
-   "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
-    "unsloth/gemma-7b-it-bnb-4bit"
-  #  "unsloth/Phi-4"
+   # "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
+   #  "unsloth/gemma-7b-it-bnb-4bit"
+   "unsloth/Phi-4"
   # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
 LLM_BASE_DIR="${OUTPUT_BASE_DIR}/LLM_final"
