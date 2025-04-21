@@ -62,10 +62,10 @@ def parse_arguments():
     parser.add_argument("--epochs", type=int, default=5,
                         help="Number of training epochs")
     
-    Class weighting argument
+    #Class weighting argument
     parser.add_argument("--pos_weight", type=float, default=3.0,
                         help="Weight for positive class (higher values penalize false positives more)")
-    parser.add_argument("--neg_weight", type=floatdefault=2.0,
+    parser.add_argument("--neg_weight", type=float, default=2.0,
                             help="Weight for NEGATIVE class (higher values penalize false NEGATIVE more)")
                         
     # LoRA parameters
