@@ -413,9 +413,8 @@ def print_metrics_report(metrics):
     
     print("="*50)
 
-
 # ────────────────────────────────────────────────────────────────────────────────
-# Simple clinical‑note cleaner
+# Enhanced clinical‑note cleaner
 # ────────────────────────────────────────────────────────────────────────────────
 def preprocess_text(text: str) -> str:
     """Light preprocessing to clean clinical text."""
@@ -426,7 +425,7 @@ def preprocess_text(text: str) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Prompt‑builder
+# Enhanced Prompt‑builder with improved prompt design
 # ────────────────────────────────────────────────────────────────────────────────
 class MalnutritionPromptBuilder:
     """Manage creation of malnutrition prompts for training or inference."""
@@ -513,7 +512,7 @@ class MalnutritionPromptBuilder:
         return self._construct_prompt(patient_notes, few_shot_examples)
 
     # ------------------------------------------------------------------ #
-    # Few‑shot example formatter
+    # Few‑shot example formatter - enhanced for clarity
     # ------------------------------------------------------------------ #
     def _format_example(self, example: Dict[str, str]) -> str:
         """Return one example block that matches the JSON output spec."""
@@ -521,11 +520,25 @@ class MalnutritionPromptBuilder:
         raw_label = str(example["label"]).lower()
         label = "yes" if raw_label in {"1", "yes", "true"} else "no"
 
-        explanation = (
-            "Evidence of weight loss and reduced intake."
-            if label == "yes"
-            else "Anthropometry and intake within normal limits."
-        )
+        # Enhanced explanations based on label
+        if label == "yes":
+            explanations = [
+                "Evidence of significant weight loss and reduced dietary intake.",
+                "Z-scores below -2 SD with clinical signs of wasting.",
+                "Poor nutritional intake with anthropometric measurements in malnutrition range.",
+                "Clinical evidence of muscle wasting with documented inadequate intake.",
+                "Height-for-age z-score below -3 SD indicating severe chronic malnutrition."
+            ]
+        else:
+            explanations = [
+                "Anthropometry within normal limits with adequate intake documented.",
+                "No significant weight loss or reduced intake reported.",
+                "All nutritional parameters within normal range.",
+                "Growth and development on track with no clinical signs of malnutrition.",
+                "Z-scores within normal limits and no reported feeding difficulties."
+            ]
+        
+        explanation = random.choice(explanations)
 
         return (
             "Patient notes:\n"
@@ -535,7 +548,7 @@ class MalnutritionPromptBuilder:
         )
 
     # ------------------------------------------------------------------ #
-    # PROMPT CONSTRUCTION (includes z‑score bands)
+    # ENHANCED PROMPT CONSTRUCTION - improved readability and effectiveness
     # ------------------------------------------------------------------ #
     def _construct_prompt(
         self,
@@ -545,60 +558,87 @@ class MalnutritionPromptBuilder:
         notes_clean = preprocess_text(patient_notes)
 
         header = (
-            "You are a board‑certified clinical dietitian.  Evaluate the following "
-            "patient note for evidence of malnutrition."
+            "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
         )
 
         task = (
-            "TASK\n"
-            'Classify as:\n'
-            '• malnutrition = "yes"  → patient meets at least **mild** criteria below or other strong evidence\n'
-            '• malnutrition = "no"   → patient meets **none** of the criteria\n'
+            "# ASSESSMENT TASK\n"
+            "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
+            "Classification guidelines:\n"
+            "• \"yes\" - Patient meets at least MILD criteria for malnutrition\n"
+            "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
+            "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
         )
 
         checklist = (
-            "EVIDENCE CHECKLIST  (use any data present)\n"
-            "1. Anthropometry  (z‑scores)\n"
-            "       Mild     : −1.0 to −1.9 SD\n"
-            "       Moderate : −2.0 to −2.9 SD\n"
-            "       Severe   : ≤ −3.0 SD\n"
-            "   • Length/height‑for‑age z‑score ≤ −3 SD ⇒ automatically *severe*\n"
-            "   • Mid‑upper‑arm‑circumference (MUAC) follows same cut‑offs.\n"
-            "2. Clinical signs   – muscle/fat wasting, oedema, brittle hair/skin, fatigue\n"
-            "3. Intake          – reduced calories / protein, poor appetite, food insecurity\n"
-            "4. Medical factors – chronic disease, malabsorption, infection, cancer, etc.\n"
-            "5. Other risks     – polypharmacy, mental‑health issues, low socioeconomic status\n"
+            "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
+            "1. **ANTHROPOMETRY**\n"
+            "   ✓ Mild:     z-score -1.0 to -1.9 SD\n"
+            "   ✓ Moderate: z-score -2.0 to -2.9 SD\n"
+            "   ✓ Severe:   z-score ≤ -3.0 SD\n"
+            "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
+            "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
+            "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
+            
+            "2. **WEIGHT LOSS**\n"
+            "   ✓ Documented involuntary weight loss\n"
+            "   ✓ Failure to gain expected weight/height in child\n"
+            "   ✓ Declining percentile crossing on growth charts\n\n"
+            
+            "3. **REDUCED INTAKE/ABSORPTION**\n"
+            "   ✓ Decreased appetite or food intake\n"
+            "   ✓ Feeding difficulties or dysphagia\n"
+            "   ✓ Restricted diet or food insecurity\n"
+            "   ✓ Malabsorption conditions\n\n"
+            
+            "4. **CLINICAL ASSESSMENT**\n"
+            "   ✓ Muscle wasting (temporal, extremities)\n"
+            "   ✓ Subcutaneous fat loss\n"
+            "   ✓ Edema (can mask weight loss)\n"
+            "   ✓ Poor wound healing, skin/hair changes\n\n"
+            
+            "5. **COMPLICATING FACTORS**\n"
+            "   ✓ Chronic illness/inflammation\n"
+            "   ✓ Increased metabolic demand (infection, trauma)\n"
+            "   ✓ Medication effects on intake/absorption\n"
+            "   ✓ Psychosocial factors\n"
         )
 
         output_spec = (
-            "OUTPUT – return valid JSON **only** (no extra prose):\n"
-            '{\n'
+            "# OUTPUT REQUIREMENTS\n"
+            "Return a valid JSON object with these exact fields:\n"
+            "```json\n"
+            "{\n"
             '  "malnutrition": "yes" | "no",\n'
-            '  "explanation": "<1‑2 concise sentences citing strongest evidence lines>"\n'
+            '  "explanation": "<1-2 concise sentences citing specific evidence>"\n'
             "}\n"
-            "If evidence is borderline, default to \"no\" but briefly state why.\n"
-            "Think through the checklist internally; do **not** reveal your full reasoning.\n"
+            "```\n"
+            "- Provide only the JSON object without additional text\n"
+            "- Base assessment solely on evidence present in the notes\n"
+            "- Include specific metrics/findings that support your conclusion\n"
+            "- Do not show your detailed reasoning process\n"
         )
 
         # few‑shot examples block
         few_shot_block = ""
         if few_shot_examples:
             few_shot_block = (
-                "HERE ARE FEW‑SHOT EXAMPLES\n"
+                "# EXAMPLES\n"
                 + "\n".join(self._format_example(ex) for ex in few_shot_examples)
                 + "\n---\n"
             )
 
         # assemble prompt
         return (
-            f"{header}\n\n{task}{checklist}{output_spec}"
+            f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
             f"{few_shot_block}"
-            "PATIENT NOTES\n"
-            f"{notes_clean}"
+            "# PATIENT NOTES\n"
+            f"{notes_clean}\n\n"
+            "# ASSESSMENT"
         )
 
     # ------------------------------------------------------------------ #
-    # Balanced few‑shot sampling helper
+    # Improved balanced few‑shot sampling helper
     # ------------------------------------------------------------------ #
     def _get_balanced_prompt(
         self,
@@ -608,47 +648,69 @@ class MalnutritionPromptBuilder:
         *,
         num_examples: int = 4,
     ) -> str:
-        """Return a prompt with a 50/50 yes/no example mix."""
+        """Return a prompt with a balanced yes/no example mix."""
         if self.examples_cache is None:
             return self._construct_prompt(patient_notes)
 
         yes_mask = self.examples_cache[label_col].astype(str).str.lower().isin({"1", "yes", "true"})
         yes_df = self.examples_cache[yes_mask]
         no_df = self.examples_cache[~yes_mask]
-
-        # Determine how many examples we can actually get from each class
-        per_class = max(1, num_examples // 2)
-        actual_yes = min(per_class, len(yes_df))
-        actual_no = min(per_class, len(no_df))
         
-        # Adjust sampling to maintain balance
-        if actual_yes < per_class and actual_no > actual_yes:
-            # If we have fewer "yes" examples, take more "no" examples to reach target count
-            actual_no = min(num_examples - actual_yes, len(no_df))
-        elif actual_no < per_class and actual_yes > actual_no:
-            # If we have fewer "no" examples, take more "yes" examples to reach target count
-            actual_yes = min(num_examples - actual_no, len(yes_df))
+        # Calculate how many examples to get from each class
+        yes_count = len(yes_df)
+        no_count = len(no_df)
+        total_available = yes_count + no_count
+        
+        if total_available < num_examples:
+            # Not enough examples, use all available
+            few_shot_examples = []
+            for i in range(yes_count):
+                few_shot_examples.append({
+                    "text": yes_df.iloc[i][note_col], 
+                    "label": yes_df.iloc[i][label_col]
+                })
+            for i in range(no_count):
+                few_shot_examples.append({
+                    "text": no_df.iloc[i][note_col], 
+                    "label": no_df.iloc[i][label_col]
+                })
+        else:
+            # We have enough examples, try to balance
+            half = num_examples // 2
+            yes_needed = min(half, yes_count)
+            no_needed = min(num_examples - yes_needed, no_count)
             
-        few: List[Dict[str, str]] = []
-
-        # sample yes
-        if len(yes_df) > 0:
-            idx = random.sample(range(len(yes_df)), k=actual_yes)
-            for i in idx:
-                few.append({"text": yes_df.iloc[i][note_col], "label": yes_df.iloc[i][label_col]})
-
-        # sample no
-        if len(no_df) > 0:
-            idx = random.sample(range(len(no_df)), k=actual_no)
-            for i in idx:
-                few.append({"text": no_df.iloc[i][note_col], "label": no_df.iloc[i][label_col]})
-
-        random.shuffle(few)
-        return self._construct_prompt(patient_notes, few)
+            # If we couldn't get enough of one class, get more from the other
+            if yes_needed < half and no_count > no_needed:
+                no_needed = min(num_examples - yes_needed, no_count)
+            elif no_needed < (num_examples - half) and yes_count > yes_needed:
+                yes_needed = min(num_examples - no_needed, yes_count)
+            
+            # Sample
+            few_shot_examples = []
+            if yes_needed > 0:
+                yes_indices = random.sample(range(yes_count), k=yes_needed)
+                for i in yes_indices:
+                    few_shot_examples.append({
+                        "text": yes_df.iloc[i][note_col], 
+                        "label": yes_df.iloc[i][label_col]
+                    })
+            
+            if no_needed > 0:
+                no_indices = random.sample(range(no_count), k=no_needed)
+                for i in no_indices:
+                    few_shot_examples.append({
+                        "text": no_df.iloc[i][note_col], 
+                        "label": no_df.iloc[i][label_col]
+                    })
+        
+        # Shuffle to avoid order bias
+        random.shuffle(few_shot_examples)
+        return self._construct_prompt(patient_notes, few_shot_examples)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Helper: parse model response
+# Enhanced response parser with more robust extraction
 # ────────────────────────────────────────────────────────────────────────────────
 def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
@@ -659,25 +721,73 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     decision : str  ("yes", "no", or "unknown")
     explanation : str
     """
-    cleaned = response.strip().lstrip("```json").rstrip("```").strip()
-
-    # JSON first
+    # Clean the input string to handle markdown code blocks
+    cleaned = response.strip()
+    if "```" in cleaned:
+        # Extract content between code block markers (handles multiple blocks)
+        pattern = r'```(?:json)?\s*(.*?)\s*```'
+        matches = re.findall(pattern, cleaned, re.DOTALL)
+        if matches:
+            # Use the first code block that looks like valid JSON
+            for match in matches:
+                try:
+                    json.loads(match.strip())
+                    cleaned = match.strip()
+                    break
+                except json.JSONDecodeError:
+                    continue
+    
+    # Try JSON parsing first (most reliable method)
     try:
         parsed = json.loads(cleaned)
         decision = str(parsed.get("malnutrition", "unknown")).lower()
         explanation = str(parsed.get("explanation", "")).strip()
-        return decision, explanation
-    except Exception:  # noqa: BLE001
+        if decision in ["yes", "no"]:
+            return decision, explanation
+    except json.JSONDecodeError:
         pass
-
-    # fallback regex (legacy formats)
-    match: Optional[Match[str]] = re.search(r'"?malnutrition"?\s*[:=]\s*"?\b(yes|no)\b', cleaned, flags=re.I)
-    decision = match.group(1).lower() if match else "unknown"
-
-    expl_match: Optional[Match[str]] = re.search(r'"?explanation"?\s*[:=]\s*"?([^"\n}]+)', cleaned, flags=re.I)
-    explanation = expl_match.group(1).strip() if expl_match else ""
-
+    
+    # Multiple fallback extraction methods
+    
+    # 1. Extract malnutrition decision
+    decision_patterns = [
+        r'"?malnutrition"?\s*[:=]\s*"?([^",\s}]+)"?',  # Standard format
+        r'"?malnutrition"?\s*[:=]\s*"?([^"}\s]+)"?',   # Alternative format
+        r'malnutrition.*?(yes|no)',                    # Loose format
+    ]
+    
+    decision = "unknown"
+    for pattern in decision_patterns:
+        decision_match = re.search(pattern, cleaned, flags=re.I)
+        if decision_match:
+            decision = decision_match.group(1).lower()
+            if decision in ["yes", "no"]:
+                break
+    
+    # 2. Extract explanation using multiple patterns
+    explanation = ""
+    explanation_patterns = [
+        # Double-quoted explanation with potential escaped quotes
+        r'"?explanation"?\s*[:=]\s*"((?:[^"\\]|\\.|\\["\\])*)"|"?explanation"?\s*[:=]\s*\'((?:[^\'\\]|\\.|\\[\'\\])*)\'',
+        # Single-quoted explanation
+        r'"?explanation"?\s*[:=]\s*\'([^\']*)\'',
+        # Unquoted explanation
+        r'"?explanation"?\s*[:=]\s*([^",\s][^,}]*)',
+        # Explanation in a more loose format
+        r'explanation.*?[":=]\s*(.*?)(?:[,}\n]|$)',
+    ]
+    
+    for pattern in explanation_patterns:
+        expl_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
+        if expl_match:
+            # Get the first non-None group
+            groups = expl_match.groups()
+            explanation = next((g for g in groups if g is not None), "").strip()
+            if explanation:
+                break
+    
     return decision, explanation
+    
     
 class WeightedSFTTrainer(SFTTrainer):
     """
