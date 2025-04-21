@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+import pandas as pd
 import os
 import re
 import torch
@@ -9,7 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from trl import SFTTrainer
 import torch.nn.functional as F
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, match
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -410,33 +412,6 @@ def print_metrics_report(metrics):
             print(f"    * Support:   {metrics_dict['support']}")
     
     print("="*50)
-
-#!/usr/bin/env python3
-"""
-Malnutrition prompt builder – full version (April 2025).
-
-Features
---------
-* Role‑primed, evidence‑checklist prompt with WHO z‑score bands:
-      −1 to −1.9 SD  → mild
-      −2 to −2.9 SD  → moderate
-      ≤ −3 SD        → severe
-* JSON‑only output spec for easy parsing.
-* Zero‑, one‑, or few‑shot generation with optional balanced class sampling.
-* Helper to extract the decision + explanation from model output.
-
-Dependencies
-------------
-pandas (for loading few‑shot examples)
-"""
-from __future__ import annotations
-
-import json
-import random
-import re
-from typing import Dict, List, Optional, Tuple, Match
-
-import pandas as pd
 
 
 # ────────────────────────────────────────────────────────────────────────────────
