@@ -24,6 +24,50 @@ from models.llm_models import (
     print_metrics_report,
     WeightedSFTTrainer  
 )
+from transformers import TrainerCallback, TrainerState, TrainerControl
+import numpy as np
+
+class EarlyStoppingCallback(TrainerCallback):
+    """Custom callback for early stopping based on evaluation loss."""
+    
+    def __init__(self, patience=3, threshold=0.01):
+        """
+        Args:
+            patience: Number of evaluations with no improvement before stopping
+            threshold: Minimum change to qualify as improvement
+        """
+        self.patience = patience
+        self.threshold = threshold
+        self.best_loss = np.inf
+        self.no_improvement_count = 0
+        
+    def on_evaluate(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        """Called after each evaluation."""
+        # Check if there's an evaluation loss
+        if hasattr(state, "log_history") and state.log_history:
+            for entry in reversed(state.log_history):
+                if "eval_loss" in entry:
+                    current_loss = entry["eval_loss"]
+                    
+                    # Check if this is an improvement
+                    if self.best_loss - current_loss > self.threshold:
+                        self.best_loss = current_loss
+                        self.no_improvement_count = 0
+                    else:
+                        self.no_improvement_count += 1
+                        
+                    print(f"Early stopping: {self.no_improvement_count}/{self.patience} "
+                          f"(best loss: {self.best_loss:.4f}, current: {current_loss:.4f})")
+                    
+                    # Stop training if we've reached patience limit
+                    if self.no_improvement_count >= self.patience:
+                        print(f"Early stopping triggered after {self.patience} evaluations "
+                              f"without improvement!")
+                        control.should_training_stop = True
+                    
+                    break
+        
+        return control
 
 
 def parse_arguments():
@@ -50,36 +94,35 @@ def parse_arguments():
     parser.add_argument("--output_dir", type=str, default="./llm",
                         help="Directory for saving training outputs")
     parser.add_argument("--model_output", type=str, default="./llm_models",
-                       help="Path to save the final model")
+                        help="Path to save the final model")
+
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Per-device training batch size")
-    parser.add_argument("--learning_rate", type=float, default=5e-5, 
+    parser.add_argument("--learning_rate", type=float, default=5e-5,  # Reduced from 2e-4
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=4096,
                         help="Override model's default maximum sequence length (optional)")
-    parser.add_argument("--epochs", type=int, default=3, 
+    parser.add_argument("--epochs", type=int, default=3,  # Reduced from 5
                         help="Number of training epochs")
     
-    # Add weight decay argument
+    # Weight decay parameter
     parser.add_argument("--weight_decay", type=float, default=0.01,
                         help="Weight decay for regularization")
     
-    # Add dropout argument
-    parser.add_argument("--lora_dropout", type=float, default=0.1,  # Added dropout
-                        help="Dropout probability for LoRA layers")
-                        
     # Class weighting argument
     parser.add_argument("--pos_weight", type=float, default=3.0,
                         help="Weight for positive class (higher values penalize false positives more)")
     parser.add_argument("--neg_weight", type=float, default=2.0,
                         help="Weight for negative class (higher values penalize false negatives more)")
-
+                        
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
                         help="LoRA r parameter (rank)")
     parser.add_argument("--lora_alpha", type=int, default=32,
                         help="LoRA alpha parameter (scaling)")
+    parser.add_argument("--lora_dropout", type=float, default=0.1,  # Added dropout parameter
+                        help="Dropout probability for LoRA layers")
     parser.add_argument("--target_modules", type=str, default=None,
                         help="Comma-separated list of target modules for LoRA")
 
@@ -301,7 +344,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,  # Use dropout parameter
+        lora_dropout=args.lora_dropout,  # Use the dropout parameter
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
@@ -315,21 +358,22 @@ def create_peft_model(base_model, args):
         model.enable_input_require_grads()
 
     return model
-
+    
 def get_sft_config(args, fp16, bf16, max_seq_length):
     """Configure SFT training arguments."""
-    # ... existing code ...
+    # Use provided max_seq_length if explicitly specified, otherwise use model's native max length
+    seq_length = args.max_seq_length if args.max_seq_length is not None else max_seq_length
     
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "warmup_steps": 5,
-        "gradient_accumulation_steps": 1,
+        "gradient_accumulation_steps": 1,  # Explicitly set to 1 to disable gradient accumulation
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
         "logging_steps": 1,
         "optim": "adamw_8bit",
-        "weight_decay": args.weight_decay,  # Use the weight decay parameter
+        "weight_decay": args.weight_decay,
         "lr_scheduler_type": "cosine",  # Changed from linear to cosine
         "seed": args.seed,
         "output_dir": args.output_dir,
@@ -345,20 +389,17 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:
         config_kwargs.update({
-            "eval_strategy": "steps",
+            "evaluation_strategy": "steps",  # Corrected param name
             "eval_steps": 10,
             "load_best_model_at_end": True,
             "metric_for_best_model": "eval_loss",
-            # Add early stopping
-            "early_stopping_patience": 3,
-            "early_stopping_threshold": 0.01
         })
+    
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
     print(f"Using sequence length: {max_seq_length} (from model's native max length)")
     print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
-
-
+    
 def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, note_col, label_col, max_seq_length):
     """Prepare training and validation datasets.
 
@@ -529,18 +570,66 @@ def main():
         "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
-        "pos_weight": args.pos_weight,  
-        "neg_weight": args.neg_weight   
+        "pos_weight": args.pos_weight,
+        "neg_weight": args.neg_weight
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
-    
-    # Use the weighted trainer instead of standard SFTTrainer
+
+    # Use the weighted trainer
     trainer = WeightedSFTTrainer(**trainer_kwargs)
+    
+    # Add early stopping callback if validation data is provided
+    if args.val_data is not None:
+        from transformers import TrainerCallback, TrainerState, TrainerControl
+        import numpy as np
+        
+        class EarlyStoppingCallback(TrainerCallback):
+            """Custom callback for early stopping based on evaluation loss."""
+            
+            def __init__(self, patience=3, threshold=0.01):
+                self.patience = patience
+                self.threshold = threshold
+                self.best_loss = np.inf
+                self.no_improvement_count = 0
+                
+            def on_evaluate(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+                # Check if there's an evaluation loss
+                if hasattr(state, "log_history") and state.log_history:
+                    for entry in reversed(state.log_history):
+                        if "eval_loss" in entry:
+                            current_loss = entry["eval_loss"]
+                            
+                            # Check if this is an improvement
+                            if self.best_loss - current_loss > self.threshold:
+                                self.best_loss = current_loss
+                                self.no_improvement_count = 0
+                            else:
+                                self.no_improvement_count += 1
+                                
+                            print(f"Early stopping: {self.no_improvement_count}/{self.patience} "
+                                  f"(best loss: {self.best_loss:.4f}, current: {current_loss:.4f})")
+                            
+                            # Stop training if we've reached patience limit
+                            if self.no_improvement_count >= self.patience:
+                                print(f"Early stopping triggered after {self.patience} evaluations "
+                                      f"without improvement!")
+                                control.should_training_stop = True
+                            
+                            break
+                
+                return control
+        
+        early_stopping = EarlyStoppingCallback(
+            patience=3,  # Stop after 3 evaluations without improvement
+            threshold=0.01  # Minimum change in loss to qualify as improvement
+        )
+        trainer.add_callback(early_stopping)
+
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
-    # print(f"Using positive class weight: {args.pos_weight}")
+    print(f"Using positive class weight: {args.pos_weight}, negative class weight: {args.neg_weight}")
     print(f"Using sequence length: {max_seq_length} (calculated from dataset)")
     print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
@@ -599,7 +688,8 @@ Training parameters:
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
-# - Positive class weight: {args.pos_weight}
+- Positive class weight: {args.pos_weight}
+- Negative class weight: {args.neg_weight}
 - Gradient accumulation: Disabled
 - Sequence length: {max_seq_length} (calculated from dataset with 10% buffer)
 
@@ -612,6 +702,3 @@ This directory contains the LoRA adapter weights for the model.
 
     print("Fine-tuning complete!")
     print(f"Model saved to: {args.model_output}")
-
-if __name__ == "__main__":
-    main()
