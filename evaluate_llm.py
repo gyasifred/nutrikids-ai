@@ -69,24 +69,26 @@ def get_device():
         return torch.device("cpu")
 
 
-def load_model_and_tokenizer(base_model, model_path, args):
+def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
     """
     Load model and tokenizer for evaluation with appropriate quantization settings.
-    Added detailed error handling and debugging information.
+    Both base_model and model_path are optional but at least one must be provided.
 
     Args:
-        base_model (str): Base model name or path
-        model_path (str): Path to fine-tuned model adapter weights (optional)
+        base_model (str, optional): Base model name or path
+        model_path (str, optional): Path to fine-tuned model adapter weights
         args: Command line arguments with quantization settings
 
     Returns:
         tuple: (model, tokenizer)
     """
+    # Check if at least one model source is provided
+    if not base_model and not model_path:
+        raise ValueError("Either base_model or model_path must be provided")
+
     # Get device
     device = get_device()
     print(f"Using device: {device}")
-
-    print(f"Loading {'fine-tuned' if model_path else 'base'} model: {base_model}")
     
     # Determine compute dtype based on hardware and preferences
     compute_dtype = torch.bfloat16 if is_bfloat16_supported() and not args.force_fp16 else torch.float16
@@ -123,23 +125,28 @@ def load_model_and_tokenizer(base_model, model_path, args):
         # Debug print to show the complete model loading parameters
         print(f"Attempting to load model with kwargs: {model_kwargs}")
         
+        # Load fine-tuned model if path is provided
+        model = None
+        tokenizer = None
+        
         if model_path:
             print(f"Starting to load fine-tuned model from: {model_path}")
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_path, 
                 **model_kwargs)
             print(f"Model loaded successfully with adapter weights from {model_path}")
-        else:
-            # Load base model only
+        
+        # Load base model if provided
+        if base_model and not model:
             print(f"Starting to load base model: {base_model}")
             model, tokenizer = FastLanguageModel.from_pretrained(
                 base_model,
                 **model_kwargs)
             print(f"Base model loaded successfully: {base_model}")
         
-        # Print model details for debugging
-        print(f"Model config: {model.config}")
-        print(f"Tokenizer details: {tokenizer.__class__.__name__}")
+        # # Print model details for debugging
+        # print(f"Model config: {model.config}")
+        # print(f"Tokenizer details: {tokenizer.__class__.__name__}")
         
         # Make sure max_seq_length is explicitly set in model config
         if not hasattr(model.config, 'max_seq_length'):
@@ -161,7 +168,7 @@ def load_model_and_tokenizer(base_model, model_path, args):
         
         # Don't provide fallback or model listings, just raise the exception
         raise
-
+        
 def get_model_max_length(model):
     """
     Get the maximum context length for the model.
