@@ -344,6 +344,9 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Extract decision and explanation
             decision, explanation = extract_malnutrition_decision(response)
             
+            # Add print statement to show extracted decision and explanation
+            print(f"Extracted decision: {decision}, Explanation: {explanation}")
+            
             # Convert text decision to binary
             binary_decision = 1 if decision.lower() == "yes" else 0
             
