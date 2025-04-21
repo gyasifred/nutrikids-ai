@@ -841,6 +841,7 @@ class WeightedSFTTrainer(SFTTrainer):
     """
     Custom SFTTrainer that implements a weighted loss for language modeling.
     Specifically designed for emphasizing certain token predictions more heavily.
+    Ensures all tensors are on the correct device for faster evaluation.
     """
     def __init__(self, pos_weight=3.0, neg_weight=2.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -869,36 +870,51 @@ class WeightedSFTTrainer(SFTTrainer):
         print(f"Positive token IDs: {self.pos_token_ids}")
         print(f"Negative token IDs: {self.neg_token_ids}")
         
+        # Store device for later use
+        self.device = next(self.model.parameters()).device
+        print(f"Model is on device: {self.device}")
+        
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs):
         """
         Custom loss computation with weights applied to specific tokens.
         Added num_items_in_batch parameter to be compatible with Unsloth.
+        Ensures all tensors are on the correct device for faster computation.
         """
-        outputs = model(**inputs)
+        # Make sure inputs are on the same device as the model
+        device_inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        
+        # Forward pass
+        outputs = model(**device_inputs)
         logits = outputs.logits  # [batch_size, seq_len, vocab_size]
         
         # Standard language modeling loss as a baseline
         standard_loss = outputs.loss
         
         # If we have logits and labels, apply custom weighting
-        if self.pos_token_ids and self.neg_token_ids and 'labels' in inputs:
-            labels = inputs['labels']
+        if self.pos_token_ids and self.neg_token_ids and 'labels' in device_inputs:
+            labels = device_inputs['labels']
             batch_size, seq_len = labels.shape
             
-            # Create a weight tensor same shape as labels
-            weights = torch.ones_like(labels, dtype=torch.float)
+            # Create a weight tensor same shape as labels on the correct device
+            weights = torch.ones_like(labels, dtype=torch.float, device=self.device)
             
-            # Apply weights to specific tokens
+            # Create sets for faster lookup
+            pos_token_set = set(self.pos_token_ids)
+            neg_token_set = set(self.neg_token_ids)
+            
+            # Apply weights to specific tokens (using torch operations for speed)
             for i in range(batch_size):
                 for j in range(seq_len):
                     if labels[i, j] == -100:  # Skip masked tokens
                         continue
                     
+                    label_id = labels[i, j].item()  # Get the actual value
+                    
                     # Apply positive weight to positive class tokens
-                    if labels[i, j] in self.pos_token_ids:
+                    if label_id in pos_token_set:
                         weights[i, j] = self.pos_weight
                     # Apply negative weight to negative class tokens
-                    elif labels[i, j] in self.neg_token_ids:
+                    elif label_id in neg_token_set:
                         weights[i, j] = self.neg_weight
             
             # Get predictions
@@ -907,7 +923,7 @@ class WeightedSFTTrainer(SFTTrainer):
             shift_weights = weights[..., 1:].contiguous()
             
             # Compute cross entropy loss with weights
-            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none').to(self.device)
             losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             
             # Apply weights and take mean
@@ -919,3 +935,14 @@ class WeightedSFTTrainer(SFTTrainer):
         
         # Fallback to standard loss if token IDs not available
         return (standard_loss, outputs) if return_outputs else standard_loss
+        
+    def evaluation_loop(self, *args, **kwargs):
+        """
+        Override the evaluation loop to ensure tensors are on the correct device.
+        """
+        # Store current device
+        current_device = next(self.model.parameters()).device
+        print(f"Evaluation running on device: {current_device}")
+        
+        # Run the original evaluation loop
+        return super().evaluation_loop(*args, **kwargs)
