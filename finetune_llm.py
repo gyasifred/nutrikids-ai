@@ -50,24 +50,31 @@ def parse_arguments():
     parser.add_argument("--output_dir", type=str, default="./llm",
                         help="Directory for saving training outputs")
     parser.add_argument("--model_output", type=str, default="./llm_models",
-                        help="Path to save the final model")
-
+                       help="Path to save the final model")
     # Training arguments
-    parser.add_argument("--batch_size", type=int, default=8,
+    parser.add_argument("--batch_size", type=int, default=4,
                         help="Per-device training batch size")
-    parser.add_argument("--learning_rate", type=float, default=2e-4,
+    parser.add_argument("--learning_rate", type=float, default=5e-5, 
                         help="Learning rate for training")
-    parser.add_argument("--max_seq_length", type=int, default=2048,
+    parser.add_argument("--max_seq_length", type=int, default=4096,
                         help="Override model's default maximum sequence length (optional)")
-    parser.add_argument("--epochs", type=int, default=5,
+    parser.add_argument("--epochs", type=int, default=3, 
                         help="Number of training epochs")
     
-    #Class weighting argument
+    # Add weight decay argument
+    parser.add_argument("--weight_decay", type=float, default=0.01,
+                        help="Weight decay for regularization")
+    
+    # Add dropout argument
+    parser.add_argument("--lora_dropout", type=float, default=0.1,  # Added dropout
+                        help="Dropout probability for LoRA layers")
+                        
+    # Class weighting argument
     parser.add_argument("--pos_weight", type=float, default=3.0,
                         help="Weight for positive class (higher values penalize false positives more)")
     parser.add_argument("--neg_weight", type=float, default=2.0,
-                            help="Weight for NEGATIVE class (higher values penalize false NEGATIVE more)")
-                        
+                        help="Weight for negative class (higher values penalize false negatives more)")
+
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
                         help="LoRA r parameter (rank)")
@@ -247,16 +254,43 @@ def get_target_modules(args, model_name):
     return ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 
+# def create_peft_model(base_model, args):
+#     """Create PEFT/LoRA model for fine-tuning with appropriate settings.
+
+#     Args:
+#         base_model: The base language model
+#         args: Command line arguments
+
+#     Returns:
+#         model: The PEFT model ready for training
+#     """
+#     print("Creating PEFT/LoRA model...")
+    
+#     # Get appropriate target modules for this model architecture
+#     target_modules = get_target_modules(args, args.model_name)
+#     print(f"Using target modules: {target_modules}")
+    
+#     model = FastLanguageModel.get_peft_model(
+#         model=base_model,
+#         r=args.lora_r,
+#         lora_alpha=args.lora_alpha,
+#         lora_dropout=0,
+#         target_modules=target_modules,
+#         use_gradient_checkpointing=True,
+#         random_state=args.seed,
+#         use_rslora=True,
+#         loftq_config=None
+#     )
+
+#     # Enable gradient checkpointing for efficient training
+#     model.gradient_checkpointing_enable()
+#     if hasattr(model, 'enable_input_require_grads'):
+#         model.enable_input_require_grads()
+
+#     return model
+
 def create_peft_model(base_model, args):
-    """Create PEFT/LoRA model for fine-tuning with appropriate settings.
-
-    Args:
-        base_model: The base language model
-        args: Command line arguments
-
-    Returns:
-        model: The PEFT model ready for training
-    """
+    """Create PEFT/LoRA model for fine-tuning with appropriate settings."""
     print("Creating PEFT/LoRA model...")
     
     # Get appropriate target modules for this model architecture
@@ -267,7 +301,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=0,
+        lora_dropout=args.lora_dropout,  # Use dropout parameter
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
@@ -283,31 +317,20 @@ def create_peft_model(base_model, args):
     return model
 
 def get_sft_config(args, fp16, bf16, max_seq_length):
-    """Configure SFT training arguments.
-
-    Args:
-        args: Command line arguments
-        fp16: Whether to use FP16 precision
-        bf16: Whether to use BF16 precision
-        max_seq_length: The maximum sequence length to use (from model config)
-
-    Returns:
-        SFTConfig: Configuration for SFT training
-    """
-    # Use provided max_seq_length if explicitly specified, otherwise use model's native max length
-    seq_length = args.max_seq_length if args.max_seq_length is not None else max_seq_length
+    """Configure SFT training arguments."""
+    # ... existing code ...
     
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
         "warmup_steps": 5,
-        "gradient_accumulation_steps": 1,  # Explicitly set to 1 to disable gradient accumulation
+        "gradient_accumulation_steps": 1,
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
         "logging_steps": 1,
         "optim": "adamw_8bit",
-        "weight_decay": 0.01,
-        "lr_scheduler_type": "linear",
+        "weight_decay": args.weight_decay,  # Use the weight decay parameter
+        "lr_scheduler_type": "cosine",  # Changed from linear to cosine
         "seed": args.seed,
         "output_dir": args.output_dir,
         "report_to": args.report_to,
@@ -326,8 +349,10 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
             "eval_steps": 10,
             "load_best_model_at_end": True,
             "metric_for_best_model": "eval_loss",
+            # Add early stopping
+            "early_stopping_patience": 3,
+            "early_stopping_threshold": 0.01
         })
-    
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
     print(f"Using sequence length: {seq_length} (from model's native max length)")
     print(f"Gradient accumulation steps: 1 (disabled)")
@@ -504,16 +529,15 @@ def main():
         "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
-        # "pos_weight": args.pos_weight,
-        # "neg_weight": args.neg_weight
+        "pos_weight": args.pos_weight,  
+        "neg_weight": args.neg_weight   
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
-
-    # trainer = SFTTrainer(**trainer_kwargs)
+    
+    # Use the weighted trainer instead of standard SFTTrainer
     trainer = WeightedSFTTrainer(**trainer_kwargs)
-
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     # print(f"Using positive class weight: {args.pos_weight}")
