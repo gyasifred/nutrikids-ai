@@ -835,7 +835,6 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
                 break
     
     return decision, explanation
-    
 class WeightedSFTTrainer(SFTTrainer):
     """
     Custom SFTTrainer that implements a weighted loss for language modeling.
@@ -868,9 +867,10 @@ class WeightedSFTTrainer(SFTTrainer):
         print(f"Positive token IDs: {self.pos_token_ids}")
         print(f"Negative token IDs: {self.neg_token_ids}")
         
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs):
         """
         Custom loss computation with weights applied to specific tokens.
+        Added num_items_in_batch parameter to be compatible with Unsloth.
         """
         outputs = model(**inputs)
         logits = outputs.logits  # [batch_size, seq_len, vocab_size]
