@@ -125,18 +125,10 @@ def load_model_and_tokenizer(base_model, model_path, args):
         
         if model_path:
             print(f"Starting to load fine-tuned model from: {model_path}")
-            try:
-                model, tokenizer = FastLanguageModel.from_pretrained(
-                    model_path, 
-                    **model_kwargs)
-                print(f"Model loaded successfully with adapter weights from {model_path}")
-            except Exception as e:
-                print(f"Error loading fine-tuned model: {e}")
-                print("Attempting fallback to base model...")
-                model, tokenizer = FastLanguageModel.from_pretrained(
-                    base_model,
-                    **model_kwargs)
-                print(f"Fallback successful: base model loaded instead: {base_model}")
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                model_path, 
+                **model_kwargs)
+            print(f"Model loaded successfully with adapter weights from {model_path}")
         else:
             # Load base model only
             print(f"Starting to load base model: {base_model}")
@@ -167,23 +159,7 @@ def load_model_and_tokenizer(base_model, model_path, args):
         import traceback
         traceback.print_exc()  # This will print the full stack trace
         
-        # Try listing models from unsloth if applicable
-        if "unsloth" in base_model:
-            try:
-                import requests
-                print("\nAvailable models in unsloth organization:")
-                response = requests.get("https://huggingface.co/api/models?author=unsloth")
-                if response.status_code == 200:
-                    models = response.json()
-                    for model in models[:10]:  # Show first 10 models
-                        print(f"- {model['id']}")
-                    if len(models) > 10:
-                        print(f"... and {len(models) - 10} more")
-                else:
-                    print(f"Failed to retrieve unsloth models: {response.status_code}")
-            except Exception as e2:
-                print(f"Failed to check unsloth models: {e2}")
-        
+        # Don't provide fallback or model listings, just raise the exception
         raise
 
 def get_model_max_length(model):
