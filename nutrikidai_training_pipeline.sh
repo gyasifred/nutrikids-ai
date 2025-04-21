@@ -51,7 +51,7 @@ TABPFN_OUTPUT_DIR="${OUTPUT_BASE_DIR}/TabPFN"
 export RAY_FUNCTION_SIZE_ERROR_THRESHOLD=200
 # LLM fine-tuning settings
 LLM_MODELS=(
-   # "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
+   "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
    "unsloth/gemma-7b-it-bnb-4bit"
    # "unsloth/Phi-4"
   # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
@@ -384,7 +384,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
     --label_column "$LABEL_COLUMN" \
     --output_dir "$MODEL_OUTPUT_DIR" \
     --model_output "${MODEL_OUTPUT_DIR}/final_model" \
-    --batch_size 8 \
+    --batch_size 4 \
     --learning_rate 2e-4 \
     # --max_steps 500 \
     --max_seq_length 4096 \
