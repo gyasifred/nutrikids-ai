@@ -336,7 +336,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         "report_to": args.report_to,
         "save_strategy": "steps",
         "save_steps": 10,
-        "max_seq_length": seq_length,
+        "max_seq_length": max_seq_length,
         "dataset_num_proc": 4,
         "packing": False,
         "num_train_epochs": args.epochs
