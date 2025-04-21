@@ -532,7 +532,7 @@ def main():
     # Initialize SFT trainer with weighted loss
     trainer_kwargs = {
         "model": model,
-        "tokenizer": tokenizer,
+        "processing_class": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
         "pos_weight": args.pos_weight,
