@@ -778,7 +778,7 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
         r'malnutrition.*?(yes|no)',          # Loose format
         
         # Sentence-based patterns
-        r'patient (does|doesn[\'']t) meet.*?malnutrition',  # Clinical statement
+        r"patient (does|doesn['']t) meet.*?malnutrition",  # Clinical statement
         r'(evidence|signs|indications) of malnutrition',    # Evidence statement
     ]
     
