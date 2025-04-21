@@ -297,41 +297,6 @@ def get_target_modules(args, model_name):
     return ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 
-# def create_peft_model(base_model, args):
-#     """Create PEFT/LoRA model for fine-tuning with appropriate settings.
-
-#     Args:
-#         base_model: The base language model
-#         args: Command line arguments
-
-#     Returns:
-#         model: The PEFT model ready for training
-#     """
-#     print("Creating PEFT/LoRA model...")
-    
-#     # Get appropriate target modules for this model architecture
-#     target_modules = get_target_modules(args, args.model_name)
-#     print(f"Using target modules: {target_modules}")
-    
-#     model = FastLanguageModel.get_peft_model(
-#         model=base_model,
-#         r=args.lora_r,
-#         lora_alpha=args.lora_alpha,
-#         lora_dropout=0,
-#         target_modules=target_modules,
-#         use_gradient_checkpointing=True,
-#         random_state=args.seed,
-#         use_rslora=True,
-#         loftq_config=None
-#     )
-
-#     # Enable gradient checkpointing for efficient training
-#     model.gradient_checkpointing_enable()
-#     if hasattr(model, 'enable_input_require_grads'):
-#         model.enable_input_require_grads()
-
-#     return model
-
 def create_peft_model(base_model, args):
     """Create PEFT/LoRA model for fine-tuning with appropriate settings."""
     print("Creating PEFT/LoRA model...")
@@ -380,7 +345,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         "report_to": args.report_to,
         "save_strategy": "steps",
         "save_steps": 10,
-        "max_seq_length": args.max_seq_length,
+        "max_seq_length": seq_length,  # Use the calculated seq_length here
         "dataset_num_proc": 4,
         "packing": False,
         "num_train_epochs": args.epochs
@@ -396,7 +361,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
-    print(f"Using sequence length: {max_seq_length} (from model's native max length)")
+    print(f"Using sequence length: {seq_length}")  # Updated to use seq_length instead of max_seq_length
     print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
     
@@ -416,7 +381,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         Tuple: (train_dataset, eval_dataset)
     """
     print("Preparing datasets...")
-    print(f"Using model's maximum sequence length: {max_seq_length}")
+    print(f"Using maximum sequence length: {max_seq_length}")
 
     # Load and prepare training data
     train_data = MalnutritionDataset(train_data_path, note_col, label_col)
@@ -444,7 +409,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
     train_dataset = Dataset.from_pandas(pd.DataFrame(train_formatted))
     train_tokenized = train_dataset.map(
         tokenize_function,
-        batched=False,
+        batched=True,  # Changed to True for consistency with tokenize_function design
         remove_columns=["text"] if "text" in train_dataset.column_names else [],
     )
     
@@ -456,7 +421,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         eval_dataset = Dataset.from_pandas(pd.DataFrame(val_formatted))
         eval_tokenized = eval_dataset.map(
             tokenize_function,
-            batched=False,
+            batched=True,  # Changed to True for consistency
             remove_columns=["text"] if "text" in eval_dataset.column_names else [],
         )
         print(f"Prepared {len(train_tokenized)} training examples and {len(eval_tokenized)} validation examples")
@@ -582,45 +547,6 @@ def main():
     
     # Add early stopping callback if validation data is provided
     if args.val_data is not None:
-        from transformers import TrainerCallback, TrainerState, TrainerControl
-        import numpy as np
-        
-        class EarlyStoppingCallback(TrainerCallback):
-            """Custom callback for early stopping based on evaluation loss."""
-            
-            def __init__(self, patience=3, threshold=0.01):
-                self.patience = patience
-                self.threshold = threshold
-                self.best_loss = np.inf
-                self.no_improvement_count = 0
-                
-            def on_evaluate(self, args, state: TrainerState, control: TrainerControl, **kwargs):
-                # Check if there's an evaluation loss
-                if hasattr(state, "log_history") and state.log_history:
-                    for entry in reversed(state.log_history):
-                        if "eval_loss" in entry:
-                            current_loss = entry["eval_loss"]
-                            
-                            # Check if this is an improvement
-                            if self.best_loss - current_loss > self.threshold:
-                                self.best_loss = current_loss
-                                self.no_improvement_count = 0
-                            else:
-                                self.no_improvement_count += 1
-                                
-                            print(f"Early stopping: {self.no_improvement_count}/{self.patience} "
-                                  f"(best loss: {self.best_loss:.4f}, current: {current_loss:.4f})")
-                            
-                            # Stop training if we've reached patience limit
-                            if self.no_improvement_count >= self.patience:
-                                print(f"Early stopping triggered after {self.patience} evaluations "
-                                      f"without improvement!")
-                                control.should_training_stop = True
-                            
-                            break
-                
-                return control
-        
         early_stopping = EarlyStoppingCallback(
             patience=3,  # Stop after 3 evaluations without improvement
             threshold=0.01  # Minimum change in loss to qualify as improvement
@@ -702,3 +628,6 @@ This directory contains the LoRA adapter weights for the model.
 
     print("Fine-tuning complete!")
     print(f"Model saved to: {args.model_output}")
+
+if __name__ == "__main__":
+    main()
