@@ -336,7 +336,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         "report_to": args.report_to,
         "save_strategy": "steps",
         "save_steps": 10,
-        "max_seq_length": max_seq_length,
+        "max_seq_length": args.max_seq_length,
         "dataset_num_proc": 4,
         "packing": False,
         "num_train_epochs": args.epochs
@@ -354,7 +354,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
             "early_stopping_threshold": 0.01
         })
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
-    print(f"Using sequence length: {seq_length} (from model's native max length)")
+    print(f"Using sequence length: {max_seq_length} (from model's native max length)")
     print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
 
