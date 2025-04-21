@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import os
 import re
+import json
 import torch
 import pandas as pd
 import numpy as np
@@ -835,6 +836,7 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
                 break
     
     return decision, explanation
+    
 class WeightedSFTTrainer(SFTTrainer):
     """
     Custom SFTTrainer that implements a weighted loss for language modeling.
