@@ -838,75 +838,82 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     
 class WeightedSFTTrainer(SFTTrainer):
     """
-    Custom SFTTrainer that supports weighted loss for imbalanced classes.
-    This allows separate weighting for both positive and negative class predictions.
+    Custom SFTTrainer that implements a weighted loss for language modeling.
+    Specifically designed for emphasizing certain token predictions more heavily.
     """
     def __init__(self, pos_weight=3.0, neg_weight=2.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_weight = pos_weight
         self.neg_weight = neg_weight
-        print(f"Using custom weighted loss with positive weight: {pos_weight}, negative weight: {neg_weight}")
+        self.pos_tokens = ["yes", "\"yes\"", " yes", " \"yes\""]
+        self.neg_tokens = ["no", "\"no\"", " no", " \"no\""]
         
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """
-        Override compute_loss to implement weighted loss for imbalanced classes.
-        This specifically penalizes both false positive and false negative predictions
-        with separate weights.
+        # Cache token IDs for positive and negative classes
+        self.pos_token_ids = []
+        self.neg_token_ids = []
         
-        Args:
-            model: The model being trained
-            inputs: The inputs to the model
-            return_outputs: Whether to return the model outputs along with the loss
-            kwargs: Additional keyword arguments passed by Unsloth
+        # Get token IDs for positive and negative labels
+        if hasattr(self, 'tokenizer'):
+            for token in self.pos_tokens:
+                ids = self.tokenizer.encode(token, add_special_tokens=False)
+                self.pos_token_ids.extend(ids)
+            for token in self.neg_tokens:
+                ids = self.tokenizer.encode(token, add_special_tokens=False)
+                self.neg_token_ids.extend(ids)
             
-        Returns:
-            The computed loss or a tuple of (loss, outputs) if return_outputs is True
+            self.pos_token_ids = list(set(self.pos_token_ids))  # Remove duplicates
+            self.neg_token_ids = list(set(self.neg_token_ids))  # Remove duplicates
+        
+        print(f"Using weighted loss with positive weight: {pos_weight}, negative weight: {neg_weight}")
+        print(f"Positive token IDs: {self.pos_token_ids}")
+        print(f"Negative token IDs: {self.neg_token_ids}")
+        
+    def compute_loss(self, model, inputs, return_outputs=False):
         """
-        # Get standard outputs from the model
+        Custom loss computation with weights applied to specific tokens.
+        """
         outputs = model(**inputs)
+        logits = outputs.logits  # [batch_size, seq_len, vocab_size]
         
-        # Default loss from the model
-        loss = outputs.loss
+        # Standard language modeling loss as a baseline
+        standard_loss = outputs.loss
         
-        # If logits are available (UNSLOTH_RETURN_LOGITS=1 should be set)
-        if hasattr(outputs, 'logits') and outputs.logits is not None:
-            logits = outputs.logits
+        # If we have logits and labels, apply custom weighting
+        if self.pos_token_ids and self.neg_token_ids and 'labels' in inputs:
+            labels = inputs['labels']
+            batch_size, seq_len = labels.shape
             
-            # Get target labels
-            labels = inputs["labels"]
+            # Create a weight tensor same shape as labels
+            weights = torch.ones_like(labels, dtype=torch.float)
             
-            # Create mask for valid positions (non-padding)
-            valid_mask = (labels != -100)
+            # Apply weights to specific tokens
+            for i in range(batch_size):
+                for j in range(seq_len):
+                    if labels[i, j] == -100:  # Skip masked tokens
+                        continue
+                    
+                    # Apply positive weight to positive class tokens
+                    if labels[i, j] in self.pos_token_ids:
+                        weights[i, j] = self.pos_weight
+                    # Apply negative weight to negative class tokens
+                    elif labels[i, j] in self.neg_token_ids:
+                        weights[i, j] = self.neg_weight
             
-            if valid_mask.any():  # Only proceed if we have valid positions
-                # Extract logits and labels for valid positions
-                valid_logits = logits[valid_mask]
-                valid_labels = labels[valid_mask]
-                
-                # For binary classification with separate penalties for both classes:
-                if valid_logits.size(-1) > 1:  # Check if we have multiple output classes
-                    # Create a weight tensor that's different for each class
-                    weights = torch.ones_like(valid_labels, dtype=torch.float)
-                    
-                    # Apply weights based on the class
-                    is_positive = (valid_labels == 1)
-                    is_negative = (valid_labels == 0)
-                    
-                    # Apply the separate weights
-                    weights[is_positive] = self.pos_weight
-                    weights[is_negative] = self.neg_weight
-                    
-                    # Compute weighted cross-entropy loss
-                    log_probs = F.log_softmax(valid_logits, dim=-1)
-                    
-                    # Get one-hot encoded labels
-                    one_hot_labels = F.one_hot(valid_labels, num_classes=logits.size(-1))
-                    
-                    # Calculate weighted negative log likelihood
-                    weighted_nll = -torch.sum(weights.unsqueeze(-1) * one_hot_labels * log_probs)
-                    weighted_loss = weighted_nll / torch.sum(weights)
-                    
-                    # Replace the original loss with our weighted loss
-                    loss = weighted_loss
+            # Get predictions
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            shift_weights = weights[..., 1:].contiguous()
+            
+            # Compute cross entropy loss with weights
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            
+            # Apply weights and take mean
+            weighted_losses = losses * shift_weights.view(-1)
+            weighted_loss = weighted_losses.sum() / shift_weights.sum()
+            
+            # Return weighted loss
+            return (weighted_loss, outputs) if return_outputs else weighted_loss
         
-        return (loss, outputs) if return_outputs else loss
+        # Fallback to standard loss if token IDs not available
+        return (standard_loss, outputs) if return_outputs else standard_loss
