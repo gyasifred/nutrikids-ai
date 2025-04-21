@@ -411,193 +411,296 @@ def print_metrics_report(metrics):
     
     print("="*50)
 
+#!/usr/bin/env python3
+"""
+Malnutrition prompt builder – full version (April 2025).
+
+Features
+--------
+* Role‑primed, evidence‑checklist prompt with WHO z‑score bands:
+      −1 to −1.9 SD  → mild
+      −2 to −2.9 SD  → moderate
+      ≤ −3 SD        → severe
+* JSON‑only output spec for easy parsing.
+* Zero‑, one‑, or few‑shot generation with optional balanced class sampling.
+* Helper to extract the decision + explanation from model output.
+
+Dependencies
+------------
+pandas (for loading few‑shot examples)
+"""
+from __future__ import annotations
+
+import json
+import random
+import re
+from typing import Dict, List, Optional, Tuple, Match
+
+import pandas as pd
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Simple clinical‑note cleaner
+# ────────────────────────────────────────────────────────────────────────────────
 def preprocess_text(text: str) -> str:
     """Light preprocessing to clean clinical text."""
-    text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
-    text = text.replace(" </s> ", "\n- ")  # Format separators into bullets
-    text = re.sub(r'_date_|_lgnum_', '[REDACTED]', text)  # Hide placeholders
+    text = re.sub(r"\s+", " ", text)                    # collapse multiple spaces/newlines
+    text = text.replace(" </s> ", "\n- ")               # convert separators to bullets
+    text = re.sub(r"_date_|_lgnum_", "[REDACTED]", text)
     return text.strip()
 
 
+# ────────────────────────────────────────────────────────────────────────────────
+# Prompt‑builder
+# ────────────────────────────────────────────────────────────────────────────────
 class MalnutritionPromptBuilder:
-    """A class to manage the creation of malnutrition prompts for various scenarios."""
+    """Manage creation of malnutrition prompts for training or inference."""
 
+    # ------------------------------------------------------------------ #
+    # Initialise (optionally load CSV of few‑shot examples)
+    # ------------------------------------------------------------------ #
     def __init__(self, examples_csv_path: Optional[str] = None):
         self.examples_csv_path = examples_csv_path
-        self.examples_cache = None
+        self.examples_cache: Optional[pd.DataFrame] = None
+
         if examples_csv_path:
             try:
                 self.examples_cache = pd.read_csv(examples_csv_path)
-                print(f"Loaded {len(self.examples_cache)} examples from {examples_csv_path}")
-            except Exception as e:
-                print(f"Error loading examples: {e}")
+                print(f"[PromptBuilder] Loaded {len(self.examples_cache)} examples from {examples_csv_path}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[PromptBuilder] Error loading examples: {exc}")
 
+    # ------------------------------------------------------------------ #
+    # Public helpers
+    # ------------------------------------------------------------------ #
     def get_training_prompt(self, patient_notes: str) -> str:
-        return self.construct_malnutrition_prompt(patient_notes)
+        """Return a zero‑shot prompt for supervised fine‑tuning."""
+        return self._construct_prompt(patient_notes)
 
     def get_inference_prompt(
         self,
         patient_notes: str,
         note_col: str,
         label_col: str,
+        *,
         num_examples: int = 0,
         specific_example_indices: Optional[List[int]] = None,
-        balanced: bool = False
+        balanced: bool = False,
     ) -> str:
+        """
+        Build an inference prompt with optional few‑shot examples.
+
+        Parameters
+        ----------
+        patient_notes : str
+            Note you want classified.
+        note_col, label_col : str
+            Column names in the CSV for the note text and label.
+        num_examples : int
+            Number of examples to prepend (0 → zero‑shot).
+        specific_example_indices : list[int], optional
+            Explicit rows to use as few‑shot examples.
+        balanced : bool
+            If True and `num_examples ≥ 2`, sample a 50/50 yes/no mix.
+        """
         if num_examples == 0 or self.examples_cache is None:
-            return self.construct_malnutrition_prompt(patient_notes)
+            return self._construct_prompt(patient_notes)
 
-        few_shot_examples = []
+        # balanced branch
         if balanced and num_examples >= 2:
-            return self.get_balanced_inference_prompt(patient_notes, note_col, label_col, num_examples)
+            return self._get_balanced_prompt(
+                patient_notes, note_col, label_col, num_examples=num_examples
+            )
 
+        # generic few‑shot sampling
+        few_shot_examples: List[Dict[str, str]] = []
         if specific_example_indices:
-            valid_indices = [i for i in specific_example_indices if 0 <= i < len(self.examples_cache)]
-            for idx in valid_indices[:num_examples]:
-                few_shot_examples.append({
-                    "text": self.examples_cache.iloc[idx][note_col],
-                    "label": self.examples_cache.iloc[idx][label_col]
-                })
+            valid = [i for i in specific_example_indices if 0 <= i < len(self.examples_cache)]
+            for idx in valid[: num_examples]:
+                few_shot_examples.append(
+                    {
+                        "text": self.examples_cache.at[idx, note_col],
+                        "label": self.examples_cache.at[idx, label_col],
+                    }
+                )
         else:
-            num_to_select = min(num_examples, len(self.examples_cache))
-            selected_indices = random.sample(range(len(self.examples_cache)), num_to_select)
-            for idx in selected_indices:
-                few_shot_examples.append({
-                    "text": self.examples_cache.iloc[idx][note_col],
-                    "label": self.examples_cache.iloc[idx][label_col]
-                })
+            chosen = random.sample(
+                range(len(self.examples_cache)), k=min(num_examples, len(self.examples_cache))
+            )
+            for idx in chosen:
+                few_shot_examples.append(
+                    {
+                        "text": self.examples_cache.at[idx, note_col],
+                        "label": self.examples_cache.at[idx, label_col],
+                    }
+                )
 
-        return self.construct_malnutrition_prompt(patient_notes, few_shot_examples)
+        return self._construct_prompt(patient_notes, few_shot_examples)
 
-    def format_example(self, example: Dict[str, str]) -> str:
-        patient_notes = preprocess_text(example["text"])
-        label = "yes" if str(example["label"]).lower() in ["1", "yes", "true"] else "no"
+    # ------------------------------------------------------------------ #
+    # Few‑shot example formatter
+    # ------------------------------------------------------------------ #
+    def _format_example(self, example: Dict[str, str]) -> str:
+        """Return one example block that matches the JSON output spec."""
+        notes = preprocess_text(example["text"])
+        raw_label = str(example["label"]).lower()
+        label = "yes" if raw_label in {"1", "yes", "true"} else "no"
+
         explanation = (
-            "This patient shows signs of malnutrition based on clinical symptoms and risk factors."
+            "Evidence of weight loss and reduced intake."
             if label == "yes"
-            else "This patient does not show significant signs of malnutrition."
+            else "Anthropometry and intake within normal limits."
         )
-        return f"""Example:
-Patient notes: {patient_notes}
 
-Assessment:
-{explanation}
-malnutrition={label}
-"""
+        return (
+            "Patient notes:\n"
+            f"{notes}\n"
+            "Output:\n"
+            f'{{"malnutrition":"{label}","explanation":"{explanation}"}}\n'
+        )
 
-    def construct_malnutrition_prompt(
+    # ------------------------------------------------------------------ #
+    # PROMPT CONSTRUCTION (includes z‑score bands)
+    # ------------------------------------------------------------------ #
+    def _construct_prompt(
         self,
         patient_notes: str,
         few_shot_examples: Optional[List[Dict[str, str]]] = None,
     ) -> str:
-        patient_notes = preprocess_text(patient_notes)
-        
-        instructions = """Read the patient's notes and determine if the patient is likely to have malnutrition.
-Make a definitive classification: malnutrition=yes or malnutrition=no.
-Use the following criteria:
-1) Anthropometric measurements (BMI, weight-for-height, mid-upper arm circumference)
-2) Clinical symptoms (muscle wasting, fatigue, skin/hair changes, edema)
-3) Dietary intake (caloric/protein intake, food insecurity)
-4) Medical conditions (chronic illness, gastrointestinal disorders, infections)
-5) Additional risk factors (medications, mental health, socioeconomic status)
-"""
+        notes_clean = preprocess_text(patient_notes)
 
-        classification_table = """
-Standard Classification:
-- malnutrition=yes: Evidence of inadequate nutrition based on weight loss, clinical signs, or dietary risk factors.
-- malnutrition=no: No significant indicators of malnutrition.
-
-Output Format:
-malnutrition=[yes/no]
-Explanation: Provide a short reasoning based on the data.
-"""
-
-        # Format few-shot examples if provided
-        few_shot_section = ""
-        if few_shot_examples and len(few_shot_examples) > 0:
-            few_shot_text = "\n\n".join(
-                [self.format_example(example) for example in few_shot_examples])
-            few_shot_section = f"\nHere are some examples:\n\n{few_shot_text}\nNow, assess the following patient:\n"
-
-        complete_prompt = (
-            f"{instructions}\n\n"
-            f"{classification_table}\n\n"
-            f"{few_shot_section}\n\n"
-            f"Patient Notes:\n{patient_notes}"
+        header = (
+            "You are a board‑certified clinical dietitian.  Evaluate the following "
+            "patient note for evidence of malnutrition."
         )
 
-        return complete_prompt
+        task = (
+            "TASK\n"
+            'Classify as:\n'
+            '• malnutrition = "yes"  → patient meets at least **mild** criteria below or other strong evidence\n'
+            '• malnutrition = "no"   → patient meets **none** of the criteria\n'
+        )
 
-    def get_balanced_inference_prompt(
+        checklist = (
+            "EVIDENCE CHECKLIST  (use any data present)\n"
+            "1. Anthropometry  (z‑scores)\n"
+            "       Mild     : −1.0 to −1.9 SD\n"
+            "       Moderate : −2.0 to −2.9 SD\n"
+            "       Severe   : ≤ −3.0 SD\n"
+            "   • Length/height‑for‑age z‑score ≤ −3 SD ⇒ automatically *severe*\n"
+            "   • Mid‑upper‑arm‑circumference (MUAC) follows same cut‑offs.\n"
+            "2. Clinical signs   – muscle/fat wasting, oedema, brittle hair/skin, fatigue\n"
+            "3. Intake          – reduced calories / protein, poor appetite, food insecurity\n"
+            "4. Medical factors – chronic disease, malabsorption, infection, cancer, etc.\n"
+            "5. Other risks     – polypharmacy, mental‑health issues, low socioeconomic status\n"
+        )
+
+        output_spec = (
+            "OUTPUT – return valid JSON **only** (no extra prose):\n"
+            '{\n'
+            '  "malnutrition": "yes" | "no",\n'
+            '  "explanation": "<1‑2 concise sentences citing strongest evidence lines>"\n'
+            "}\n"
+            "If evidence is borderline, default to \"no\" but briefly state why.\n"
+            "Think through the checklist internally; do **not** reveal your full reasoning.\n"
+        )
+
+        # few‑shot examples block
+        few_shot_block = ""
+        if few_shot_examples:
+            few_shot_block = (
+                "HERE ARE FEW‑SHOT EXAMPLES\n"
+                + "\n".join(self._format_example(ex) for ex in few_shot_examples)
+                + "\n---\n"
+            )
+
+        # assemble prompt
+        return (
+            f"{header}\n\n{task}{checklist}{output_spec}"
+            f"{few_shot_block}"
+            "PATIENT NOTES\n"
+            f"{notes_clean}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Balanced few‑shot sampling helper
+    # ------------------------------------------------------------------ #
+    def _get_balanced_prompt(
         self,
         patient_notes: str,
         note_col: str,
         label_col: str,
-        num_examples: int = 4
+        *,
+        num_examples: int = 4,
     ) -> str:
-        """
-        Create a prompt with balanced examples (equal number of yes/no malnutrition cases)
-        """
+        """Return a prompt with a 50/50 yes/no example mix."""
         if self.examples_cache is None:
-            return self.construct_malnutrition_prompt(patient_notes)
+            return self._construct_prompt(patient_notes)
+
+        yes_mask = self.examples_cache[label_col].astype(str).str.lower().isin({"1", "yes", "true"})
+        yes_df = self.examples_cache[yes_mask]
+        no_df = self.examples_cache[~yes_mask]
+
+        # Determine how many examples we can actually get from each class
+        per_class = max(1, num_examples // 2)
+        actual_yes = min(per_class, len(yes_df))
+        actual_no = min(per_class, len(no_df))
+        
+        # Adjust sampling to maintain balance
+        if actual_yes < per_class and actual_no > actual_yes:
+            # If we have fewer "yes" examples, take more "no" examples to reach target count
+            actual_no = min(num_examples - actual_yes, len(no_df))
+        elif actual_no < per_class and actual_yes > actual_no:
+            # If we have fewer "no" examples, take more "yes" examples to reach target count
+            actual_yes = min(num_examples - actual_no, len(yes_df))
             
-        # Get examples by class
-        yes_examples = self.examples_cache[
-            self.examples_cache[label_col].astype(str).str.lower().isin(['1', 'yes', 'true'])
-        ]
-        no_examples = self.examples_cache[
-            ~self.examples_cache[label_col].astype(str).str.lower().isin(['1', 'yes', 'true'])
-        ]
-        
-        # Determine how many examples from each class
-        examples_per_class = max(1, num_examples // 2)
-        
-        few_shot_examples = []
-        
-        # Add 'yes' examples
-        if len(yes_examples) > 0:
-            yes_indices = random.sample(range(len(yes_examples)), min(examples_per_class, len(yes_examples)))
-            for idx in yes_indices:
-                few_shot_examples.append({
-                    "text": yes_examples.iloc[idx][note_col],
-                    "label": yes_examples.iloc[idx][label_col]
-                })
-                
-        # Add 'no' examples
-        if len(no_examples) > 0:
-            no_indices = random.sample(range(len(no_examples)), min(examples_per_class, len(no_examples)))
-            for idx in no_indices:
-                few_shot_examples.append({
-                    "text": no_examples.iloc[idx][note_col],
-                    "label": no_examples.iloc[idx][label_col]
-                })
-                
-        # Shuffle examples to avoid order bias
-        random.shuffle(few_shot_examples)
-        
-        return self.construct_malnutrition_prompt(patient_notes, few_shot_examples)
+        few: List[Dict[str, str]] = []
+
+        # sample yes
+        if len(yes_df) > 0:
+            idx = random.sample(range(len(yes_df)), k=actual_yes)
+            for i in idx:
+                few.append({"text": yes_df.iloc[i][note_col], "label": yes_df.iloc[i][label_col]})
+
+        # sample no
+        if len(no_df) > 0:
+            idx = random.sample(range(len(no_df)), k=actual_no)
+            for i in idx:
+                few.append({"text": no_df.iloc[i][note_col], "label": no_df.iloc[i][label_col]})
+
+        random.shuffle(few)
+        return self._construct_prompt(patient_notes, few)
 
 
-def extract_malnutrition_decision(response):
-    """Extract malnutrition=yes/no decision from model response.
-    Args:
-        response (str): Model response text
-
-    Returns:
-        Tuple[str, str]: (malnutrition decision, explanation)
+# ────────────────────────────────────────────────────────────────────────────────
+# Helper: parse model response
+# ────────────────────────────────────────────────────────────────────────────────
+def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
-    decision_pattern = r'malnutrition=(yes|no)'
-    match = re.search(decision_pattern, response, re.IGNORECASE)
+    Extract the malnutrition=yes|no decision and explanation from model output.
 
-    decision = "unknown"
-    if match:
-        decision = match.group(1).lower()
+    Returns
+    -------
+    decision : str  ("yes", "no", or "unknown")
+    explanation : str
+    """
+    cleaned = response.strip().lstrip("```json").rstrip("```").strip()
 
-    explanation = response
-    if match:
-        explanation_parts = response.split('malnutrition=', 1)
-        if len(explanation_parts) > 0:
-            explanation = explanation_parts[0].strip()
+    # JSON first
+    try:
+        parsed = json.loads(cleaned)
+        decision = str(parsed.get("malnutrition", "unknown")).lower()
+        explanation = str(parsed.get("explanation", "")).strip()
+        return decision, explanation
+    except Exception:  # noqa: BLE001
+        pass
+
+    # fallback regex (legacy formats)
+    match: Optional[Match[str]] = re.search(r'"?malnutrition"?\s*[:=]\s*"?\b(yes|no)\b', cleaned, flags=re.I)
+    decision = match.group(1).lower() if match else "unknown"
+
+    expl_match: Optional[Match[str]] = re.search(r'"?explanation"?\s*[:=]\s*"?([^"\n}]+)', cleaned, flags=re.I)
+    explanation = expl_match.group(1).strip() if expl_match else ""
 
     return decision, explanation
     
