@@ -510,6 +510,19 @@ class MalnutritionPromptBuilder:
                 )
 
         return self._construct_prompt(patient_notes, few_shot_examples)
+    
+    def get_balanced_inference_prompt(
+        self,
+        patient_notes: str,
+        text_col: str,
+        label_col: str,
+        *,
+        num_examples: int = 4,
+    ) -> str:
+        """Return a prompt with a balanced yes/no example mix."""
+        return self._get_balanced_prompt(
+            patient_notes, text_col, label_col, num_examples=num_examples
+        )
 
     # ------------------------------------------------------------------ #
     # Few‑shot example formatter - enhanced for clarity
@@ -714,7 +727,8 @@ class MalnutritionPromptBuilder:
 # ────────────────────────────────────────────────────────────────────────────────
 def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
-    Extract the malnutrition=yes|no decision and explanation from model output.
+    Extract the malnutrition decision (yes|no) and explanation from model output.
+    Handles both JSON format and fallback extraction methods.
 
     Returns
     -------
@@ -723,58 +737,83 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
     # Clean the input string to handle markdown code blocks
     cleaned = response.strip()
+    
+    # Extract content from code blocks if present
     if "```" in cleaned:
-        # Extract content between code block markers (handles multiple blocks)
         pattern = r'```(?:json)?\s*(.*?)\s*```'
         matches = re.findall(pattern, cleaned, re.DOTALL)
         if matches:
             # Use the first code block that looks like valid JSON
             for match in matches:
                 try:
-                    json.loads(match.strip())
+                    # Test if parseable as JSON
+                    parsed_json = json.loads(match.strip())
                     cleaned = match.strip()
                     break
                 except json.JSONDecodeError:
                     continue
     
-    # Try JSON parsing first (most reliable method)
+    # Try direct JSON parsing first (most reliable method)
     try:
         parsed = json.loads(cleaned)
-        decision = str(parsed.get("malnutrition", "unknown")).lower()
-        explanation = str(parsed.get("explanation", "")).strip()
-        if decision in ["yes", "no"]:
-            return decision, explanation
+        # Look for either "malnutrition" key as specified in prompt
+        if "malnutrition" in parsed:
+            decision = str(parsed.get("malnutrition", "unknown")).lower()
+            explanation = str(parsed.get("explanation", "")).strip()
+            if decision in ["yes", "no"]:
+                return decision, explanation
     except json.JSONDecodeError:
         pass
     
-    # Multiple fallback extraction methods
+    # Fallback extraction methods for both JSON and non-JSON formats
     
-    # 1. Extract malnutrition decision
+    # 1. Extract malnutrition decision with improved patterns
     decision_patterns = [
-        r'"?malnutrition"?\s*[:=]\s*"?([^",\s}]+)"?',  # Standard format
-        r'"?malnutrition"?\s*[:=]\s*"?([^"}\s]+)"?',   # Alternative format
-        r'malnutrition.*?(yes|no)',                    # Loose format
+        # JSON format patterns
+        r'"malnutrition"\s*:\s*"(yes|no)"',  # Standard JSON format
+        r'"malnutrition"\s*:\s*"([^"]+)"',   # Any string in JSON format
+        
+        # Non-JSON format patterns
+        r'malnutrition\s*[=:]\s*(yes|no)',   # Key-value pair format
+        r'malnutrition.*?(yes|no)',          # Loose format
+        
+        # Sentence-based patterns
+        r'patient (does|doesn[\'']t) meet.*?malnutrition',  # Clinical statement
+        r'(evidence|signs|indications) of malnutrition',    # Evidence statement
     ]
     
     decision = "unknown"
     for pattern in decision_patterns:
         decision_match = re.search(pattern, cleaned, flags=re.I)
         if decision_match:
-            decision = decision_match.group(1).lower()
-            if decision in ["yes", "no"]:
+            matched_text = decision_match.group(1).lower()
+            # Map various positive/negative expressions to yes/no
+            if matched_text in ["yes", "does", "evidence", "signs", "indications"]:
+                decision = "yes"
+                break
+            elif matched_text in ["no", "doesn't", "doesn't", "doesnt"]:
+                decision = "no"
+                break
+            elif matched_text in ["yes", "no"]:
+                decision = matched_text
                 break
     
-    # 2. Extract explanation using multiple patterns
+    # 2. Extract explanation with improved patterns
     explanation = ""
     explanation_patterns = [
-        # Double-quoted explanation with potential escaped quotes
-        r'"?explanation"?\s*[:=]\s*"((?:[^"\\]|\\.|\\["\\])*)"|"?explanation"?\s*[:=]\s*\'((?:[^\'\\]|\\.|\\[\'\\])*)\'',
-        # Single-quoted explanation
-        r'"?explanation"?\s*[:=]\s*\'([^\']*)\'',
-        # Unquoted explanation
-        r'"?explanation"?\s*[:=]\s*([^",\s][^,}]*)',
-        # Explanation in a more loose format
-        r'explanation.*?[":=]\s*(.*?)(?:[,}\n]|$)',
+        # JSON format patterns
+        r'"explanation"\s*:\s*"((?:[^"\\]|\\.|\\["\\])*)"',  # Quoted with possible escapes
+        r'"explanation"\s*:\s*\'([^\']*)\'',                 # Single-quoted 
+        r'"explanation"\s*:\s*"([^"]*)"',                    # Double-quoted simple
+        
+        # Non-JSON formats
+        r'explanation\s*[:=]\s*["\'](.*?)["\']',             # Quoted after key
+        r'explanation\s*[:=]\s*([^",\s][^,}]*)',             # Unquoted after key
+        
+        # Context-based patterns
+        r'malnutrition.*?because\s+(.*?)(?:\.|$)',           # After "because"
+        r'(due to\s+.*?)(?:\.|$)',                           # "Due to" phrase
+        r'evidence includes\s+(.*?)(?:\.|$)',                # Evidence statement
     ]
     
     for pattern in explanation_patterns:
@@ -786,8 +825,16 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
             if explanation:
                 break
     
-    return decision, explanation
+    # As last resort, try to extract a relevant sentence if we have a decision but no explanation
+    if decision != "unknown" and not explanation:
+        sentences = re.split(r'[.!?]\s+', cleaned)
+        for sentence in sentences:
+            # Check if sentence contains malnutrition-related terms
+            if re.search(r'malnutrition|nutritional|weight|growth|z-score|BMI', sentence, re.I):
+                explanation = sentence.strip()
+                break
     
+    return decision, explanation
     
 class WeightedSFTTrainer(SFTTrainer):
     """
