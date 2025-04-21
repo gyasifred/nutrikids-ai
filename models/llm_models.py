@@ -839,110 +839,97 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     
 class WeightedSFTTrainer(SFTTrainer):
     """
-    Custom SFTTrainer that implements a weighted loss for language modeling.
-    Specifically designed for emphasizing certain token predictions more heavily.
-    Ensures all tensors are on the correct device for faster evaluation.
+    Performance-optimized SFTTrainer that implements a weighted loss for language modeling.
     """
     def __init__(self, pos_weight=3.0, neg_weight=2.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_weight = pos_weight
         self.neg_weight = neg_weight
-        self.pos_tokens = ["yes", "\"yes\"", " yes", " \"yes\""]
-        self.neg_tokens = ["no", "\"no\"", " no", " \"no\""]
         
         # Cache token IDs for positive and negative classes
-        self.pos_token_ids = []
-        self.neg_token_ids = []
+        pos_tokens = ["yes", "\"yes\"", " yes", " \"yes\""]
+        neg_tokens = ["no", "\"no\"", " no", " \"no\""]
         
-        # Get token IDs for positive and negative labels
+        # Get token IDs for positive and negative labels - do this only once
+        self.pos_token_ids = set()
+        self.neg_token_ids = set()
+        
         if hasattr(self, 'tokenizer'):
-            for token in self.pos_tokens:
+            for token in pos_tokens:
                 ids = self.tokenizer.encode(token, add_special_tokens=False)
-                self.pos_token_ids.extend(ids)
-            for token in self.neg_tokens:
+                self.pos_token_ids.update(ids)
+            for token in neg_tokens:
                 ids = self.tokenizer.encode(token, add_special_tokens=False)
-                self.neg_token_ids.extend(ids)
-            
-            self.pos_token_ids = list(set(self.pos_token_ids))  # Remove duplicates
-            self.neg_token_ids = list(set(self.neg_token_ids))  # Remove duplicates
+                self.neg_token_ids.update(ids)
         
         print(f"Using weighted loss with positive weight: {pos_weight}, negative weight: {neg_weight}")
         print(f"Positive token IDs: {self.pos_token_ids}")
         print(f"Negative token IDs: {self.neg_token_ids}")
-        
-        # Store device for later use
-        self.device = next(self.model.parameters()).device
-        print(f"Model is on device: {self.device}")
-        
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs):
+    
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
-        Custom loss computation with weights applied to specific tokens.
-        Added num_items_in_batch parameter to be compatible with Unsloth.
-        Ensures all tensors are on the correct device for faster computation.
+        Performance-optimized loss computation.
         """
-        # Make sure inputs are on the same device as the model
-        device_inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        # Only apply weighted loss during training, use standard loss for evaluation
+        is_training = model.training
         
-        # Forward pass
-        outputs = model(**device_inputs)
-        logits = outputs.logits  # [batch_size, seq_len, vocab_size]
+        # Fast path for evaluation
+        if not is_training:
+            outputs = model(**inputs)
+            loss = outputs.loss
+            return (loss, outputs) if return_outputs else loss
+            
+        # If training, apply the weighted loss
+        outputs = model(**inputs)
         
         # Standard language modeling loss as a baseline
-        standard_loss = outputs.loss
+        if not (self.pos_token_ids and self.neg_token_ids and 'labels' in inputs):
+            return (outputs.loss, outputs) if return_outputs else outputs.loss
+            
+        # Get logits and labels
+        logits = outputs.logits
+        labels = inputs['labels']
         
-        # If we have logits and labels, apply custom weighting
-        if self.pos_token_ids and self.neg_token_ids and 'labels' in device_inputs:
-            labels = device_inputs['labels']
-            batch_size, seq_len = labels.shape
-            
-            # Create a weight tensor same shape as labels on the correct device
-            weights = torch.ones_like(labels, dtype=torch.float, device=self.device)
-            
-            # Create sets for faster lookup
-            pos_token_set = set(self.pos_token_ids)
-            neg_token_set = set(self.neg_token_ids)
-            
-            # Apply weights to specific tokens (using torch operations for speed)
-            for i in range(batch_size):
-                for j in range(seq_len):
-                    if labels[i, j] == -100:  # Skip masked tokens
-                        continue
-                    
-                    label_id = labels[i, j].item()  # Get the actual value
-                    
-                    # Apply positive weight to positive class tokens
-                    if label_id in pos_token_set:
-                        weights[i, j] = self.pos_weight
-                    # Apply negative weight to negative class tokens
-                    elif label_id in neg_token_set:
-                        weights[i, j] = self.neg_weight
-            
-            # Get predictions
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            shift_weights = weights[..., 1:].contiguous()
-            
-            # Compute cross entropy loss with weights
-            loss_fct = torch.nn.CrossEntropyLoss(reduction='none').to(self.device)
-            losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            
-            # Apply weights and take mean
-            weighted_losses = losses * shift_weights.view(-1)
-            weighted_loss = weighted_losses.sum() / shift_weights.sum()
-            
-            # Return weighted loss
-            return (weighted_loss, outputs) if return_outputs else weighted_loss
+        # Create weight mask
+        batch_size, seq_len = labels.shape
+        weights = torch.ones_like(labels, dtype=torch.float)
         
-        # Fallback to standard loss if token IDs not available
-        return (standard_loss, outputs) if return_outputs else standard_loss
+        # Create mask for positive and negative tokens
+        pos_mask = torch.zeros_like(labels, dtype=torch.bool)
+        neg_mask = torch.zeros_like(labels, dtype=torch.bool)
         
-    def evaluation_loop(self, *args, **kwargs):
-        """
-        Override the evaluation loop to ensure tensors are on the correct device.
-        """
-        # Store current device
-        current_device = next(self.model.parameters()).device
-        print(f"Evaluation running on device: {current_device}")
+        # This loop is unavoidable but we'll optimize it
+        for token_id in self.pos_token_ids:
+            pos_mask |= (labels == token_id)
+            
+        for token_id in self.neg_token_ids:
+            neg_mask |= (labels == token_id)
+            
+        # Apply weights using masks (vectorized operations)
+        weights[pos_mask] = self.pos_weight
+        weights[neg_mask] = self.neg_weight
         
-        # Run the original evaluation loop
-        return super().evaluation_loop(*args, **kwargs)
+        # Skip masked tokens (-100)
+        valid_mask = labels != -100
+        weights = weights * valid_mask
+            
+        # Get predictions
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_weights = weights[..., 1:].contiguous()
+        
+        # Compute loss
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        
+        # Apply weights and take mean
+        shift_weights_view = shift_weights.view(-1)
+        valid_weight_sum = shift_weights_view.sum()
+        
+        # Handle edge case where all weights are zero
+        if valid_weight_sum > 0:
+            weighted_loss = (losses * shift_weights_view).sum() / valid_weight_sum
+        else:
+            weighted_loss = outputs.loss  # Fallback to default loss
+        
+        return (weighted_loss, outputs) if return_outputs else weighted_loss
