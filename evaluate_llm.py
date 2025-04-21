@@ -594,8 +594,8 @@ def parse_arguments():
                         help="GPU ID to use if multiple GPUs are available (default: 0)")
 
     # Maximum sequence length the model can handle
-    parser.add_argument("--max_seq_length", type=int, default=2048,
-                        help="Maximum sequence length the model can handle (default: 2048)")
+    parser.add_argument("--max_seq_length", type=int, default=4096,
+                        help="Maximum sequence length the model can handle (default: 4096)")
 
     args = parser.parse_args()
 
