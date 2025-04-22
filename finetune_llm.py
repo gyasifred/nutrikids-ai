@@ -102,7 +102,7 @@ def parse_arguments():
     parser.add_argument("--learning_rate", type=float, default=5e-5,  # Reduced from 2e-4
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=4096,
-                        help="Override model's default maximum sequence length (optional)")
+                        help="Maximum sequence length for processing notes (optional)")
     parser.add_argument("--epochs", type=int, default=3,  # Reduced from 5
                         help="Number of training epochs")
     
@@ -319,10 +319,10 @@ def create_peft_model(base_model, args):
 
     return model
     
-def get_sft_config(args, fp16, bf16, max_seq_length):
+def get_sft_config(args, fp16, bf16, model_max_seq_length):
     """Configure SFT training arguments."""
-    # Use provided max_seq_length if explicitly specified, otherwise use model's native max length
-    seq_length = args.max_seq_length if args.max_seq_length is not None else max_seq_length
+    # Always use the model's native maximum sequence length for the model
+    # args.max_seq_length is only used for processing notes
     
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
@@ -340,7 +340,7 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         "report_to": args.report_to,
         "save_strategy": "steps",
         "save_steps": 10,
-        "max_seq_length": seq_length,  # Use the calculated seq_length here
+        "max_seq_length": model_max_seq_length,  # Always use model's native max sequence length
         "dataset_num_proc": 4,
         "packing": False,
         "num_train_epochs": args.epochs
@@ -356,11 +356,12 @@ def get_sft_config(args, fp16, bf16, max_seq_length):
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
-    print(f"Using sequence length: {seq_length}")  # Updated to use seq_length instead of max_seq_length
+    print(f"Using model's native sequence length for SFT config: {model_max_seq_length}")
+    print(f"Using max_seq_length={args.max_seq_length} for text processing only")
     print(f"Gradient accumulation steps: 1 (disabled)")
     return SFTConfig(**config_kwargs)
     
-def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, note_col, label_col, max_seq_length):
+def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, note_col, label_col, process_seq_length):
     """Prepare training and validation datasets.
 
     Args:
@@ -370,13 +371,13 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         tokenizer: Tokenizer for the model
         note_col (str): Name of the text column
         label_col (str): Name of the label column
-        max_seq_length (int): Maximum sequence length for tokenization
+        process_seq_length (int): Maximum sequence length for processing the notes
 
     Returns:
         Tuple: (train_dataset, eval_dataset)
     """
     print("Preparing datasets...")
-    print(f"Using maximum sequence length: {max_seq_length}")
+    print(f"Using maximum sequence length for processing notes: {process_seq_length}")
 
     # Load and prepare training data
     train_data = MalnutritionDataset(train_data_path, note_col, label_col)
@@ -388,12 +389,12 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         if not examples.get('text'):
             return {"input_ids": [], "attention_mask": []}
             
-        # Tokenize the examples
+        # Tokenize the examples - use process_seq_length for processing the notes
         tokenized = tokenizer(
             examples['text'],
             truncation=True,
             padding="max_length",
-            max_length=max_seq_length,
+            max_length=process_seq_length,  # Use the processing sequence length here
             return_tensors=None,  
         )
         # Add labels for supervised fine-tuning
@@ -427,7 +428,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
 
 
 def calculate_max_seq_length(data_path, tokenizer, note_col, label_col, prompt_builder, model_max_length, buffer_percentage=10):
-    """Calculate the maximum sequence length needed for the dataset.
+    """Calculate the maximum sequence length needed for processing the dataset.
     
     Args:
         data_path (str): Path to the data CSV
@@ -439,9 +440,9 @@ def calculate_max_seq_length(data_path, tokenizer, note_col, label_col, prompt_b
         buffer_percentage (int): Additional buffer as percentage to add
         
     Returns:
-        int: Recommended sequence length for the dataset
+        int: Recommended sequence length for processing the dataset
     """
-    print("Calculating maximum sequence length from dataset...")
+    print("Calculating maximum sequence length for processing notes from dataset...")
     
     # Load dataset
     data = MalnutritionDataset(data_path, note_col, label_col)
@@ -461,7 +462,7 @@ def calculate_max_seq_length(data_path, tokenizer, note_col, label_col, prompt_b
     
     print(f"Dataset maximum token length: {max_length}")
     print(f"Recommended length with {buffer_percentage}% buffer: {recommended_length}")
-    print(f"Final sequence length (capped by model limit): {final_length}")
+    print(f"Final sequence length for processing notes (capped by model limit): {final_length}")
     
     return final_length
 
@@ -492,22 +493,22 @@ def main():
     # Initialize prompt builder
     prompt_builder = MalnutritionPromptBuilder(args.examples_data)
     
-    # Calculate optimal sequence length from dataset if not manually specified
+    # Calculate optimal sequence length for processing notes if not manually specified
     if args.max_seq_length is None:
-        max_seq_length = calculate_max_seq_length(
+        process_seq_length = calculate_max_seq_length(
             args.train_data,
             tokenizer,
             args.text_column,
             args.label_column,
             prompt_builder,
-            model_max_seq_length,
+            model_max_length=model_max_seq_length,  # Cap by model's max length
             buffer_percentage=10  # Add 10% buffer to account for variations
         )
     else:
-        max_seq_length = args.max_seq_length
-        print(f"Using manually specified sequence length: {max_seq_length}")
+        process_seq_length = min(args.max_seq_length, model_max_seq_length)
+        print(f"Using manually specified sequence length for processing: {process_seq_length} (capped by model's max if needed)")
 
-    # Load and prepare datasets with tokenization, using the calculated max sequence length
+    # Load and prepare datasets with tokenization, using the calculated processing sequence length
     train_dataset, eval_dataset = prepare_datasets(
         args.train_data, 
         args.val_data, 
@@ -515,22 +516,21 @@ def main():
         tokenizer,
         args.text_column, 
         args.label_column,
-        max_seq_length  # Use the calculated or manually specified length
+        process_seq_length  # Use the calculated or manually specified processing length
     )
 
     # Create PEFT/LoRA model
     model = create_peft_model(base_model, args)
 
-    # Get SFT config with correct precision settings and the calculated max sequence length
-    sft_config = get_sft_config(args, fp16, bf16, max_seq_length)
+    # Get SFT config with correct precision settings and use model's native max sequence length
+    sft_config = get_sft_config(args, fp16, bf16, model_max_seq_length)
 
     # Initialize standard SFT trainer (not weighted)
     trainer_kwargs = {
         "model": model,
-        "tokenizer": tokenizer,  # Changed from processing_class to tokenizer
+        "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "args": sft_config,
-        # Removed pos_weight and neg_weight
     }
     
     if eval_dataset is not None:
@@ -550,7 +550,8 @@ def main():
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
     print(f"Using standard SFTTrainer (no custom class weights)")
-    print(f"Using sequence length: {max_seq_length} (calculated from dataset)")
+    print(f"Using sequence length for notes processing: {process_seq_length}")
+    print(f"Using model's native max sequence length for model configuration: {model_max_seq_length}")
     print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
 
@@ -611,7 +612,8 @@ Training parameters:
 - LoRA dropout: 0.0 (disabled)
 - Standard SFTTrainer used (no custom class weights)
 - Gradient accumulation: Disabled
-- Sequence length: {max_seq_length} (calculated from dataset with 10% buffer)
+- Sequence length for processing notes: {process_seq_length} (calculated from dataset with 10% buffer)
+- Model's native maximum sequence length: {model_max_seq_length} (used for model configuration)
 
 ## Usage
 This directory contains the LoRA adapter weights for the model.
