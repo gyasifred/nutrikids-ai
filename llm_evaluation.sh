@@ -31,9 +31,9 @@ BATCH_SIZE=4
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
+     "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
     # "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
     "unsloth/gemma-7b-it-bnb-4bit"
-     "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
     # "unsloth/Phi-4"
     # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
