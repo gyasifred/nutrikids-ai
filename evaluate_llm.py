@@ -6,7 +6,7 @@ import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from typing  import  Optional, Path
+from typing  import  Optional
 import unsloth  # Import unsloth first
 # Set the environment variable for Unsloth logits before any imports if needed
 os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
@@ -190,8 +190,8 @@ def determine_model_precision(args):
 #         raise
 
 def load_model_and_tokenizer(
-        base_model: Optional[str | Path] = None,
-        model_path: Optional[str | Path] = None,
+        base_model= None,
+        model_path= None,
         args=None,
 ):
     """Load a (quantised) foundation model and optionally attach a LoRA adapter.
