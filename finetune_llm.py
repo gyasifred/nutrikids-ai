@@ -21,8 +21,8 @@ from models.llm_models import (
     evaluate_predictions,
     plot_evaluation_metrics,
     save_metrics_to_csv,
-    print_metrics_report,
-    WeightedSFTTrainer  
+    print_metrics_report
+    # Removed WeightedSFTTrainer import
 )
 from transformers import TrainerCallback, TrainerState, TrainerControl
 import numpy as np
@@ -110,19 +110,14 @@ def parse_arguments():
     parser.add_argument("--weight_decay", type=float, default=0.01,
                         help="Weight decay for regularization")
     
-    # Class weighting argument
-    parser.add_argument("--pos_weight", type=float, default=3.0,
-                        help="Weight for positive class (higher values penalize false positives more)")
-    parser.add_argument("--neg_weight", type=float, default=2.0,
-                        help="Weight for negative class (higher values penalize false negatives more)")
-                        
+    # Removed class weighting arguments
+    
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
                         help="LoRA r parameter (rank)")
     parser.add_argument("--lora_alpha", type=int, default=32,
                         help="LoRA alpha parameter (scaling)")
-    parser.add_argument("--lora_dropout", type=float, default=0.1,  # Added dropout parameter
-                        help="Dropout probability for LoRA layers")
+    # Removed lora_dropout parameter as we'll set it to 0
     parser.add_argument("--target_modules", type=str, default=None,
                         help="Comma-separated list of target modules for LoRA")
 
@@ -309,7 +304,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,  # Use the dropout parameter
+        lora_dropout=0.0,  # Set dropout to 0 as requested
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
@@ -529,21 +524,20 @@ def main():
     # Get SFT config with correct precision settings and the calculated max sequence length
     sft_config = get_sft_config(args, fp16, bf16, max_seq_length)
 
-    # Initialize SFT trainer with weighted loss
+    # Initialize standard SFT trainer (not weighted)
     trainer_kwargs = {
         "model": model,
-        "processing_class": tokenizer,
+        "tokenizer": tokenizer,  # Changed from processing_class to tokenizer
         "train_dataset": train_dataset,
         "args": sft_config,
-        "pos_weight": args.pos_weight,
-        "neg_weight": args.neg_weight
+        # Removed pos_weight and neg_weight
     }
     
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    # Use the weighted trainer
-    trainer = WeightedSFTTrainer(**trainer_kwargs)
+    # Use the standard SFTTrainer instead of WeightedSFTTrainer
+    trainer = SFTTrainer(**trainer_kwargs)
     
     # Add early stopping callback if validation data is provided
     if args.val_data is not None:
@@ -555,7 +549,7 @@ def main():
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
-    print(f"Using positive class weight: {args.pos_weight}, negative class weight: {args.neg_weight}")
+    print(f"Using standard SFTTrainer (no custom class weights)")
     print(f"Using sequence length: {max_seq_length} (calculated from dataset)")
     print("Gradient accumulation is disabled (steps=1)")
     trainer.train()
@@ -614,8 +608,8 @@ Training parameters:
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
-- Positive class weight: {args.pos_weight}
-- Negative class weight: {args.neg_weight}
+- LoRA dropout: 0.0 (disabled)
+- Standard SFTTrainer used (no custom class weights)
 - Gradient accumulation: Disabled
 - Sequence length: {max_seq_length} (calculated from dataset with 10% buffer)
 
