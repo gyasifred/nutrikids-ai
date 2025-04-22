@@ -224,9 +224,14 @@ def build_tokeniser_fn(tokenizer, mask_prompt: bool, prompt_builder: Malnutritio
 
 
 def tokenise_dataframe(df: pd.DataFrame, tok_fn, max_len: int) -> Dataset:
+    """Tokenise a Pandas frame and drop the raw *text* column so that SFTTrainer
+    receives pure tensor features when ``dataset_text_field=None`` is supplied.
+    """
     tok_fn.max_length = max_len
     ds = Dataset.from_pandas(df)
-    return ds.map(tok_fn, batched=True, remove_columns=[])  # keep "text"
+    # Remove the raw string column – the trainer will not know what to do with
+    # it once we say the dataset is already tokenised.
+    return ds.map(tok_fn, batched=True, remove_columns=["text"])  # keep "text"
 
 
 # ---------------------------------------------------------------------------
