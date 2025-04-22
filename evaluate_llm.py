@@ -100,11 +100,13 @@ def determine_model_precision(args):
     else:
         return True, False
 
-
 def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
     """
     Load model and tokenizer for evaluation with appropriate quantization settings.
-    Both base_model and model_path are optional but at least one must be provided.
+    
+    - If base_model is provided: Loads the specified base model
+    - If model_path is provided: Loads the adapter model (Unsloth handles base model internally)
+    - If both are provided: Loads base_model first, then applies adapter weights from model_path
 
     Args:
         base_model (str, optional): Base model name or path
@@ -138,9 +140,8 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         # Set attention implementation based on flash attention flag
         attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
         
-        # Set up model loading kwargs with common parameters
-        model_kwargs = {
-            "model_name": base_model if base_model else model_path,
+        # Set up common model loading kwargs
+        common_kwargs = {
             "dtype": dtype,
             "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
             "attn_implementation": attn_implementation
@@ -148,29 +149,23 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         
         # Add quantization settings
         if quantization_config is not None:
-            model_kwargs["quantization_config"] = quantization_config
+            common_kwargs["quantization_config"] = quantization_config
         else:
             # Direct quantization flags if no config is provided
-            model_kwargs["load_in_4bit"] = args.load_in_4bit
-            model_kwargs["load_in_8bit"] = args.load_in_8bit
+            common_kwargs["load_in_4bit"] = args.load_in_4bit
+            common_kwargs["load_in_8bit"] = args.load_in_8bit
         
-        # Debug print to show the complete model loading parameters
-        print(f"Attempting to load model with kwargs: {model_kwargs}")
+        # Case 1: Only base_model is provided - load base model directly
+        if base_model and not model_path:
+            print(f"Loading base model: {base_model}")
+            print(f"Loading with kwargs: {common_kwargs}")
+            model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
         
-        # Load the model with the appropriate parameters
-        model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
-        
-        # If we loaded a base model and have adapter weights, then merge them
-        if base_model and model_path and os.path.exists(model_path):
-            print(f"Loading and merging adapter weights from: {model_path}")
-            # Load the adapter weights
-            adapter_model = FastLanguageModel.get_peft_model(
-                model,
-                peft_model_id=model_path,
-                use_gradient_checkpointing=False
-            )
-            model = adapter_model  # Use the adapted model
-            print("Adapter weights loaded and merged successfully")
+        # Case 2: Only model_path is provided - load adapter model directly
+        elif model_path and not base_model:
+            print(f"Loading adapter model: {model_path}")
+            print(f"Loading with kwargs: {common_kwargs}")
+            model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
         
         # Make sure max_seq_length is explicitly set in model config
         model_max_seq_length = get_model_max_length(model)
@@ -191,7 +186,6 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         import traceback
         traceback.print_exc()  # This will print the full stack trace
         raise
-
 
 def get_model_max_length(model):
     """
