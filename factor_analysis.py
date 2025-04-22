@@ -314,25 +314,57 @@ def plot_factor_analysis(factors_df, malnutrition_status, factor_combinations=No
 
 
 def analyze_prediction_types(data_dict):
-    preds = {
-        'True Positive': data_dict['correct_yes'],
-        'True Negative': data_dict['correct_no'],
-        'False Positive': data_dict['incorrect_yes'],
-        'False Negative': data_dict['incorrect_no']
-    }
-    prevalences = {}
-    for label, df in preds.items():
-        if not df.empty:
-            prevalences[label] = extract_prompt_factors(df['explanation']).mean()
-    all_prev = pd.DataFrame(prevalences)
-    plt.figure(figsize=(14,10))
-    melted = pd.melt(all_prev.reset_index(), id_vars=['index'], var_name='prediction_type', value_name='prevalence')
-    sns.barplot(x='prevalence', y='index', hue='prediction_type', data=melted, palette='Set2')
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUT_DIR, 'factor_by_prediction_type.png'), dpi=300)
-    plt.close()
-    return all_prev
-
+    """Analyze factors by prediction type (TP, TN, FP, FN) with robust error handling."""
+    try:
+        # Initialize empty DataFrames for each prediction type
+        pred_types = {
+            'True Positive': pd.DataFrame(),
+            'True Negative': pd.DataFrame(),
+            'False Positive': pd.DataFrame(),
+            'False Negative': pd.DataFrame()
+        }
+        
+        # Try to get each prediction type if it exists in data_dict
+        if 'correct_yes' in data_dict:
+            pred_types['True Positive'] = data_dict['correct_yes']
+        if 'correct_no' in data_dict:
+            pred_types['True Negative'] = data_dict['correct_no']
+        if 'incorrect_yes' in data_dict:
+            pred_types['False Positive'] = data_dict['incorrect_yes']
+        if 'incorrect_no' in data_dict:
+            pred_types['False Negative'] = data_dict['incorrect_no']
+        
+        # Calculate factor prevalences for each prediction type that has data
+        prevalences = {}
+        for label, df in pred_types.items():
+            if not df.empty and 'explanation' in df.columns:
+                factors = extract_prompt_factors(df['explanation'])
+                prevalences[label] = factors.mean()
+        
+        # Create combined DataFrame if we have any data
+        if prevalences:
+            all_prev = pd.DataFrame(prevalences)
+            
+            # Plot the results
+            plt.figure(figsize=(14,10))
+            melted = pd.melt(all_prev.reset_index(), 
+                            id_vars=['index'], 
+                            var_name='prediction_type', 
+                            value_name='prevalence')
+            sns.barplot(x='prevalence', y='index', hue='prediction_type', 
+                        data=melted, palette='Set2')
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUT_DIR, 'factor_by_prediction_type.png'), dpi=300)
+            plt.close()
+            return all_prev
+        else:
+            print("Warning: No prediction type data available for analysis")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        print(f"Error in analyze_prediction_types: {str(e)}")
+        return pd.DataFrame()
+        
 
 def analyze_llm_predictions(file_path):
     # Load and initial stats
@@ -421,8 +453,10 @@ def analyze_llm_predictions(file_path):
 
     # By prediction type
     prediction_type_prev = analyze_prediction_types(data_dict)
-    prediction_type_prev.to_csv(os.path.join(OUT_DIR,'prediction_type_factor_prevalence.csv'))
-
+    if not prediction_type_prev.empty:
+        prediction_type_prev.to_csv(os.path.join(OUT_DIR,'prediction_type_factor_prevalence.csv'))
+    else:
+        print("Skipping prediction type analysis - insufficient data")
     # Summary file
     summary_path = os.path.join(OUT_DIR,'analysis_summary.txt')
     with open(summary_path,'w') as f:
