@@ -110,21 +110,25 @@ def shap_analysis(model, X_test):
     """
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_test)
-    
+
     # Handle binary classification case where SHAP returns a list of arrays
     if isinstance(shap_values, list):
         values = shap_values[1]  # Use SHAP values for class 1
     else:
         values = shap_values
-    
-    # Ensure correct data format and feature alignment
-    feature_names = X_test.columns.tolist()
+
+    # Convert feature names to a NumPy array so they can be indexed by a NumPy array
+    feature_names = np.array(X_test.columns.tolist())
     X_test_array = X_test.values
-    
+
     # Verify shape compatibility
     if values.shape[1] != X_test_array.shape[1]:
-        raise ValueError(f"SHAP values ({values.shape[1]} features) and X_test ({X_test_array.shape[1]} features) have mismatched dimensions!")
-    
+        raise ValueError(
+            f"SHAP values ({values.shape[1]} features) and X_test "
+            f"({X_test_array.shape[1]} features) have mismatched dimensions!"
+        )
+
+    # Summary beeswarm plot
     plt.figure(figsize=(12,6))
     shap.summary_plot(
         values, 
@@ -134,9 +138,10 @@ def shap_analysis(model, X_test):
     )
     plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300)
     plt.close()
-    
-    # Dependence plots for top features
-    for feature in feature_names[:5]:  # Use actual feature names
+
+    # Dependence plots for top 5 features
+    top_feats = feature_names[np.argsort(-np.abs(values).mean(axis=0))][:10]
+    for feature in top_feats:
         plt.figure(figsize=(8,5))
         shap.dependence_plot(
             feature, 
