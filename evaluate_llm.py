@@ -135,7 +135,7 @@ def load_model_and_tokenizer(
         dtype=dtype,
         device_map="auto" if device.type == "cuda" else {"": device},
         attn_implementation="flash_attention_2" if getattr(args, "use_flash_attention", False) else "eager",
-        max_seq_len=getattr(args, "max_seq_length", 4096),  # Pass max sequence length
+        max_seq_length=getattr(args, "max_seq_length", 4096),  # Pass max sequence length
     )
 
     # --------------------------- branch logic ---------------------------
