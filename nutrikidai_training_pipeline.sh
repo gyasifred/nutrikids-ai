@@ -378,8 +378,7 @@ for MODEL in "${LLM_MODELS[@]}"; do
   
   ./finetune_llm.py \
     --model_name "$MODEL" \
-    --train_data "$TRAIN_DATA" \
-    --val_data "$VAL_DATA" \
+    --train_data "$FULL_TRAIN_DATA" \
     --text_column "$TEXT_COLUMN" \
     --label_column "$LABEL_COLUMN" \
     --output_dir "$MODEL_OUTPUT_DIR" \
