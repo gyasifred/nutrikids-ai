@@ -244,13 +244,14 @@ def truncate_text(text, tokenizer, max_tokens, keep_beginning=True):
     return truncated_text
 
 
-def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
+def process_batch(batch_texts, model, tokenizer, prompt_builder, args, device=None):
     """
     Process a batch of patient notes and extract predictions with confidence scores
     for malnutrition classification.
     """
-    # Use device based on settings
-    device = get_device(args)
+    # Use provided device or get it if not provided (should be called only once)
+    if device is None:
+        device = get_device(args)
     
     # Get model's maximum sequence length
     model_max_length = get_model_max_length(model)
@@ -266,7 +267,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     
     batch_results = []
     
-    for text in batch_texts:
+    for idx, text in enumerate(batch_texts):
         try:
             # Use sliding window approach consistent with training
             text_token_count = len(tokenizer.encode(text, add_special_tokens=False))
@@ -377,11 +378,16 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Improved confidence score calculation
             confidence_score = calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer)
             
+            # Print decision and explanation for monitoring
+            decision_text = "Yes" if binary_decision == 1 else "No"
+            explanation_preview = explanation[:100] + "..." if len(explanation) > 100 else explanation
+            print(f"Patient {idx+1}: Decision: {decision_text}, Confidence: {confidence_score:.2f}, Explanation: {explanation_preview}")
+            
             # Add result to batch results
             batch_results.append((binary_decision, explanation, confidence_score))
             
         except Exception as e:
-            print(f"Error processing text: {str(e)}")
+            print(f"Error processing text {idx+1}: {str(e)}")
             # Include a reasonable fallback
             batch_results.append((0, f"Error: {str(e)}", 0.5))
     
@@ -492,6 +498,10 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
     if missing_columns:
         raise ValueError(f"Required columns {missing_columns} not found in test CSV")
     
+    # Get device once for all batch processing
+    device = get_device(args)
+    print(f"Using device for all batches: {device}")
+    
     # Initialize results storage
     results = []
     
@@ -530,9 +540,10 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             batch_ids.append(patient_id)
             batch_true_labels.append(true_label)
         
-        # Process the batch if there are valid texts
+        # Process the batch if there are valid texts - pass device to avoid repeated detection
         if batch_texts:
-            batch_results = process_batch(batch_texts, model, tokenizer, prompt_builder, args)
+            print(f"\n--- Processing batch {batch_idx+1}/{num_batches} ---")
+            batch_results = process_batch(batch_texts, model, tokenizer, prompt_builder, args, device)
             
             # Store results
             for i in range(len(batch_texts)):
@@ -587,7 +598,6 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             print(f"Error computing evaluation metrics: {e}")
     
     return results_df
-
 def parse_arguments():
     """Parse command line arguments for the evaluation script."""
     parser = argparse.ArgumentParser(
