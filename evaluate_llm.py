@@ -162,10 +162,10 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
             model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
         
         # Case 2: Only model_path is provided - load adapter model directly
-        if model_path:
+        if model_path and base_omdel:
             print(f"Loading adapter model: {model_path}")
             print(f"Loading with kwargs: {common_kwargs}")
-            model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
+            model, tokenizer = FastLanguageModel.from_pretrained(base_model, model_path, **common_kwargs)
         
         
         # Make sure max_seq_length is explicitly set in model config
