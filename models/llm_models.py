@@ -807,137 +807,102 @@ class MalnutritionPromptBuilder:
         random.shuffle(few_shot_examples)
         return self._construct_prompt(patient_notes, few_shot_examples)
 
-def extract_malnutrition_decision(response: str) -> Tuple[str, str, float, Dict]:
+def extract_malnutrition_decision(response: str):
     """
-    Extract the malnutrition decision, confidence level, evidence, and explanation from model output.
-    Handles both standard and enhanced JSON formats with fallback extraction methods.
-
-    Returns
-    -------
-    decision : str  ("yes", "no", or "unknown")
-    explanation : str
-    confidence : float (between 0.1 and 0.9, defaults to 0.5 if not found)
-    evidence : dict (containing evidence categories, empty if not found)
+    Extract the malnutrition decision and explanation from model output.
+    Handles both structured JSON responses and free-text responses.
+    
+    Args:
+        response: The model's generated response text
+        
+    Returns:
+        tuple: (decision, explanation) where:
+            - decision: "yes" or "no" string
+            - explanation: Explanation text string
     """
-    # Clean the input string to handle markdown code blocks
+    # Clean the input string
     cleaned = response.strip()
-
-    # Extract content from code blocks if present
-    if "```" in cleaned:
-        pattern = r'```(?:json)?\s*(.*?)\s*```'
-        matches = re.findall(pattern, cleaned, re.DOTALL)
-        if matches:
-            # Use the first code block that looks like valid JSON
-            for match in matches:
-                try:
-                    # Test if parseable as JSON
-                    parsed_json = json.loads(match.strip())
-                    cleaned = match.strip()
-                    break
-                except json.JSONDecodeError:
-                    continue
-
-    # Try direct JSON parsing first (most reliable method)
-    try:
-        parsed = json.loads(cleaned)
-        # Extract decision
-        decision = str(parsed.get("malnutrition", "unknown")).lower()
-        if decision not in ["yes", "no"]:
-            decision = "unknown"
-            
-        # Extract confidence (default to 0.5 if not present)
-        confidence = parsed.get("confidence", 0.5)
-        try:
-            confidence = float(confidence)
-            # Constrain to valid range
-            confidence = max(0.1, min(0.9, confidence))
-        except (ValueError, TypeError):
-            confidence = 0.5
-            
-        # Extract explanation
-        explanation = str(parsed.get("explanation", "")).strip()
-        
-        # Extract evidence dictionary
-        evidence = parsed.get("evidence", {})
-        if not isinstance(evidence, dict):
-            evidence = {}
-            
-        return decision, explanation, confidence, evidence
-        
-    except json.JSONDecodeError:
-        pass
-
-    # Fallback extraction methods for both JSON and non-JSON formats
+    
+    # Initialize default values
     decision = "unknown"
     explanation = ""
-    confidence = 0.5
-    evidence = {}
     
-    # 1. Extract malnutrition decision with improved patterns
+    # Try to parse as JSON first
+    try:
+        # Check for JSON code blocks
+        if "```json" in cleaned or "```" in cleaned:
+            pattern = r'```(?:json)?\s*(.*?)\s*```'
+            matches = re.findall(pattern, cleaned, re.DOTALL)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match.strip())
+                        cleaned = match.strip()
+                        break
+                    except:
+                        continue
+        
+        # Try direct JSON parsing
+        parsed = json.loads(cleaned)
+        
+        # Extract decision
+        if "malnutrition" in parsed:
+            decision = str(parsed["malnutrition"]).lower()
+            if decision not in ["yes", "no"]:
+                decision = "unknown"
+        
+        # Extract explanation
+        if "explanation" in parsed:
+            explanation = str(parsed["explanation"]).strip()
+            
+        return decision, explanation
+        
+    except json.JSONDecodeError:
+        # Fallback to regex extraction if JSON parsing fails
+        pass
+    
+    # Extract decision with regex patterns
     decision_patterns = [
         r'"malnutrition"\s*:\s*"(yes|no)"',
         r'malnutrition\s*[=:]\s*(yes|no)',
         r"patient (does|doesn['']t) meet.*?malnutrition",
         r'(evidence|signs|indications) of malnutrition',
+        r'assessment:\s*(malnutrition|no malnutrition)',
+        r'diagnosis:\s*(malnutrition|no malnutrition)'
     ]
 
     for pattern in decision_patterns:
         decision_match = re.search(pattern, cleaned, flags=re.I)
         if decision_match:
             matched_text = decision_match.group(1).lower()
-            if matched_text in ["yes", "does", "evidence", "signs", "indications"]:
+            if matched_text in ["yes", "does", "evidence", "signs", "indications", "malnutrition"]:
                 decision = "yes"
                 break
-            elif matched_text in ["no", "doesn't", "doesn't", "doesnt"]:
+            elif matched_text in ["no", "doesn't", "doesn't", "doesnt", "no malnutrition"]:
                 decision = "no"
                 break
             elif matched_text in ["yes", "no"]:
                 decision = matched_text
                 break
 
-    # 2. Extract confidence
-    confidence_patterns = [
-        r'"confidence"\s*:\s*(0\.\d+)',
-        r'confidence\s*[=:]\s*(0\.\d+)',
-        r'confidence:?\s*(0\.\d+)',
-    ]
-    
-    for pattern in confidence_patterns:
-        conf_match = re.search(pattern, cleaned, flags=re.I)
-        if conf_match:
-            try:
-                confidence = float(conf_match.group(1))
-                confidence = max(0.1, min(0.9, confidence))
-                break
-            except (ValueError, TypeError):
-                pass
-
-    # 3. Extract explanation
+    # Extract explanation
     explanation_patterns = [
         r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'explanation\s*[:=]\s*["\'](.*?)["\']',
+        r'explanation:\s*(.*?)(?=\n\n|\}|$)',
         r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))',
+        r'assessment:.*?([^.]*?(?:malnutrition|nutritional)[^.]*\.)'
     ]
 
     for pattern in explanation_patterns:
         expl_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
         if expl_match:
-            explanation = expl_match.group(1).strip()
-            if explanation:
+            candidate_explanation = expl_match.group(1).strip()
+            if candidate_explanation:
+                explanation = candidate_explanation
                 break
-
-    # 4. Try to extract evidence categories
-    evidence_categories = ["anthropometry", "weight_trajectory", "intake_absorption", 
-                           "clinical_signs", "complicating_factors"]
     
-    for category in evidence_categories:
-        pattern = r'"' + category + r'"\s*:\s*"((?:[^"\\]|\\.)*)"'
-        cat_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
-        if cat_match:
-            evidence[category] = cat_match.group(1).strip()
-
-    return decision, explanation, confidence, evidence
-    
+    return decision, explanation
     
 class WeightedSFTTrainer(SFTTrainer):
     """
