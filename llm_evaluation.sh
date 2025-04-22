@@ -27,18 +27,18 @@ BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 SEED=42
 MAX_NEW_TOKENS=256
 TEMPERATURE=0.3
-BATCH_SIZE=4
+BATCH_SIZE=8
 # Model settings
 # Array of base models to evaluate
 LLM_MODELS=(
      "unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit"
     # "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
-    "unsloth/gemma-7b-it-bnb-4bit"
+    # "unsloth/gemma-7b-it-bnb-4bit"
     # "unsloth/Phi-4"
     # "unsloth/DeepSeek-R1-Distill-Qwen-7B-unsloth-bnb-4bit"
    )
 # Adapter model path: if provided, it will be used in post-evaluation.
-MODEL_PATH="trained_models/LLM_final"
+MODEL_PATH="trained/LLm_final"
 
 # Output directories
 PRE_EVAL_DIR="LLMs_base"
