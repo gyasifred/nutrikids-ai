@@ -1,4 +1,4 @@
-#!/usr/bin/activate
+#!/usr/bin/env python3
 from unsloth import FastLanguageModel
 import torch
 max_seq_length = 4096 # Choose any! We auto support RoPE Scaling internally!
@@ -51,6 +51,10 @@ class MalnutritionDataset:
         self.df = pd.read_csv(data_path)
         self.text_col = note_col
         self.label_col = label_col
+    
+    def __len__(self):
+        """Return the number of items in the dataset."""
+        return len(self.df)
 
     def prepare_training_data(self, prompt_builder, tokenizer) -> List[Dict[str, str]]:
         """Prepare data in the format required for training, following Alpaca-style formatting.
@@ -100,7 +104,7 @@ class MalnutritionDataset:
         return Dataset.from_dict({
             "text": [item["text"] for item in formatted_data]
         })
-    # ────────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
 # Enhanced clinical‑note cleaner
 # ────────────────────────────────────────────────────────────────────────────────
 def preprocess_text(text: str) -> str:
@@ -523,49 +527,26 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
 
     return decision, explanation
 
-def formatting_prompts_func(examples):
-    prompt_builder = MalnutritionPromptBuilder()
-    texts = []
-
-    for note, label in zip(examples[note_col], examples[label_col]):
-        # Generate the prompt for each example
-        prompt = prompt_builder.get_training_prompt(note)
-
-        # Format the output as "yes" or "no"
-        label_text = "yes" if str(label).lower() in ["1", "yes", "true"] else "no"
-
-        # Create the full text with the response
-        text = f"{prompt}\n{label_text}" + EOS_TOKEN
-        texts.append(text)
-
-    return {"text": texts}
-
 # Create dataset and prepare data
-dataset = MalnutritionDataset(data_path="data/notes_train.csv", note_col="txt", label_col="label")
+dataset_handler = MalnutritionDataset(data_path="data/notes_train.csv", note_col="txt", label_col="label")
 prompt_builder = MalnutritionPromptBuilder()
 
-# Prepare formatted data
-formatted_data = dataset.prepare_training_data(prompt_builder, tokenizer)
+# Convert to HuggingFace Dataset - this is what we need to pass to SFTTrainer
+hf_dataset = dataset_handler.to_huggingface_dataset(prompt_builder, tokenizer)
 
-# Convert to HuggingFace Dataset
-from datasets import Dataset
-hf_dataset = Dataset.from_dict({
-    "text": [item["text"] for item in formatted_data]
-})
-
-"""<a name="Train"></a>
-### Train the model
-Now let's use Huggingface TRL's `SFTTrainer`! More docs here: [TRL SFT docs](https://huggingface.co/docs/trl/sft_trainer). We do 60 steps to speed things up, but you can set `num_train_epochs=1` for a full run, and turn off `max_steps=None`. We also support TRL's `DPOTrainer`!
-"""
-
+# Now use the HuggingFace Dataset with the SFTTrainer
 from trl import SFTTrainer
 from transformers import TrainingArguments
 from unsloth import is_bfloat16_supported
 
+# Capture start memory for stats
+start_gpu_memory = round(torch.cuda.memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024, 3)
+
 trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
-    train_dataset = dataset,
+    train_dataset = hf_dataset,  # Use the HuggingFace Dataset here, not the MalnutritionDataset
     dataset_text_field = "text",
     max_seq_length = max_seq_length,
     dataset_num_proc = 2,
@@ -590,49 +571,35 @@ trainer = SFTTrainer(
 
 trainer_stats = trainer.train()
 
-# @title Show final memory and time stats
-used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
-used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
-used_percentage = round(used_memory / max_memory * 100, 3)
-lora_percentage = round(used_memory_for_lora / max_memory * 100, 3)
-print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
-print(
-    f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training."
-)
-print(f"Peak reserved memory = {used_memory} GB.")
-print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
-print(f"Peak reserved memory % of max memory = {used_percentage} %.")
-print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
+# # Show final memory and time stats
+# used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+# used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
+# used_percentage = round(used_memory / max_memory * 100, 3)
+# lora_percentage = round(used_memory_for_lora / max_memory * 100, 3)
+# print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
+# print(f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training.")
+# print(f"Peak reserved memory = {used_memory} GB.")
+# print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
+# print(f"Peak reserved memory % of max memory = {used_percentage} %.")
+# print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
 
-"""<a name="Inference"></a>
-### Inference
-Let's run the model! You can change the instruction and input - leave the output blank!
+# # For inference
+# FastLanguageModel.for_inference(model)  # Enable native 2x faster inference
 
-**[NEW] Try 2x faster inference in a free Colab for Llama-3.1 8b Instruct [here](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/Unsloth_Studio.ipynb)**
-"""
+# # Define a function for malnutrition inference
+# def predict_malnutrition(patient_notes):
+#     # Create the prompt
+#     prompt = prompt_builder.get_inference_prompt(patient_notes, "txt", "label")
+    
+#     # Tokenize and generate prediction
+#     inputs = tokenizer([prompt], return_tensors="pt").to("cuda")
+#     outputs = model.generate(**inputs, max_new_tokens=128, use_cache=True)
+#     response = tokenizer.batch_decode(outputs)[0]
+    
+#     # Extract decision and explanation
+#     decision, explanation = extract_malnutrition_decision(response)
+#     return {"malnutrition": decision, "explanation": explanation}
 
-# alpaca_prompt = Copied from above
-FastLanguageModel.for_inference(model) # Enable native 2x faster inference
-inputs = tokenizer(
-[
-    alpaca_prompt.format(
-        "Continue the fibonnaci sequence.", # instruction
-        "1, 1, 2, 3, 5, 8", # input
-        "", # output - leave this blank for generation!
-    )
-], return_tensors = "pt").to("cuda")
-
-outputs = model.generate(**inputs, max_new_tokens = 64, use_cache = True)
-tokenizer.batch_decode(outputs)
-
-"""You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!
-
-<a name="Save"></a>
-### Saving, loading finetuned models
-To save the final model as LoRA adapters, either use Huggingface's `push_to_hub` for an online save or `save_pretrained` for a local save.
-
-**[NOTE]** This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
-"""
-
+# Save the model
 model.save_pretrained("trained/LLm_final/final_model")
 tokenizer.save_pretrained("trained/LLm_final/final_model")
