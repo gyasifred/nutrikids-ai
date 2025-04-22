@@ -110,17 +110,43 @@ def shap_analysis(model, X_test):
     """
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_test)
-    values = shap_values[1] if isinstance(shap_values, list) else shap_values
+    
+    # Handle binary classification case where SHAP returns a list of arrays
+    if isinstance(shap_values, list):
+        values = shap_values[1]  # Use SHAP values for class 1
+    else:
+        values = shap_values
+    
+    # Ensure correct data format and feature alignment
+    feature_names = X_test.columns.tolist()
+    X_test_array = X_test.values
+    
+    # Verify shape compatibility
+    if values.shape[1] != X_test_array.shape[1]:
+        raise ValueError(f"SHAP values ({values.shape[1]} features) and X_test ({X_test_array.shape[1]} features) have mismatched dimensions!")
+    
     plt.figure(figsize=(12,6))
-    shap.summary_plot(values, X_test, show=False)
+    shap.summary_plot(
+        values, 
+        X_test_array, 
+        feature_names=feature_names,
+        show=False
+    )
     plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300)
     plt.close()
-    for feature in X_test.columns[:5]:
+    
+    # Dependence plots for top features
+    for feature in feature_names[:5]:  # Use actual feature names
         plt.figure(figsize=(8,5))
-        shap.dependence_plot(feature, values, X_test, show=False)
+        shap.dependence_plot(
+            feature, 
+            values, 
+            X_test_array, 
+            feature_names=feature_names,
+            show=False
+        )
         plt.savefig(os.path.join(OUT_DIR, f'shap_dependence_{feature}.png'), dpi=300)
         plt.close()
-
 
 def lime_analysis(model, X_test, sample_indices=None):
     explainer = lime.lime_tabular.LimeTabularExplainer(
