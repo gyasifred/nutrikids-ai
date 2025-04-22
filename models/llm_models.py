@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from trl import SFTTrainer
 import torch.nn.functional as F
-from typing import List, Dict, Optional, Any, Match
+from typing import List, Dict, Optional, Any, Match, Tuple
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -25,43 +25,6 @@ from sklearn.metrics import (
     classification_report,
     roc_curve,
     precision_recall_curve)
-
-
-class MalnutritionDataset:
-    """Class to handle malnutrition dataset operations."""
-
-    def __init__(self, data_path: str, note_col: str, label_col: str):
-        """Initialize dataset from a CSV file.
-
-        Args:
-            data_path (str): Path to the CSV file containing the data
-            note_col (str): Name of the text column in the CSV
-            label_col (str): Name of the label column in the CSV
-        """
-        self.df = pd.read_csv(data_path)
-        self.text = note_col
-        self.label = label_col
-
-    def prepare_training_data(self, prompt_builder) -> List[Dict[str, str]]:
-        """Prepare data in the format required for training.
-
-        Args:
-            prompt_builder: An instance of MalnutritionPromptBuilder
-
-        Returns:
-            List of dictionaries with text and labels formatted for training
-        """
-        formatted_data = []
-        for _, row in self.df.iterrows():
-            # Generate prompt for each example
-            prompt = prompt_builder.get_training_prompt(row[self.text])
-
-            formatted_data.append({
-                "text": prompt,
-                "labels": "yes" if str(row[self.label]).lower() in ["1", "yes", "true"] else "no"
-            })
-
-        return formatted_data
 
 
 def set_seed(seed: int = 42):
@@ -414,6 +377,73 @@ def print_metrics_report(metrics):
     
     print("="*50)
 
+class MalnutritionDataset:
+    """Class to handle malnutrition dataset operations."""
+
+    def __init__(self, data_path: str, note_col: str, label_col: str):
+        """Initialize dataset from a CSV file.
+
+        Args:
+            data_path (str): Path to the CSV file containing the data
+            note_col (str): Name of the text column in the CSV
+            label_col (str): Name of the label column in the CSV
+        """
+        self.df = pd.read_csv(data_path)
+        self.text_col = note_col
+        self.label_col = label_col
+    
+    def __len__(self):
+        """Return the number of items in the dataset."""
+        return len(self.df)
+
+    def prepare_training_data(self, prompt_builder, tokenizer) -> List[Dict[str, str]]:
+        """Prepare data in the format required for training, following Alpaca-style formatting.
+
+        Args:
+            prompt_builder: An instance of MalnutritionPromptBuilder
+            tokenizer: The tokenizer to use for adding EOS token
+
+        Returns:
+            List of dictionaries with formatted text for training
+        """
+        EOS_TOKEN = tokenizer.eos_token
+        formatted_data = []
+
+        for _, row in self.df.iterrows():
+            # Generate prompt for each example
+            prompt = prompt_builder.get_training_prompt(row[self.text_col])
+
+            # Format label as "yes" or "no"
+            label_text = "yes" if str(row[self.label_col]).lower() in ["1", "yes", "true"] else "no"
+
+            # JSON format output as per the prompt builder's specifications
+            output = json.dumps({"malnutrition": label_text,
+                               "explanation": f"Based on the clinical evidence in the patient notes."})
+
+            # Create formatted text with prompt and response, similar to Alpaca format
+            formatted_text = f"{prompt}\n{output}{EOS_TOKEN}"
+
+            formatted_data.append({
+                "text": formatted_text
+            })
+
+        return formatted_data
+
+    def to_huggingface_dataset(self, prompt_builder, tokenizer) -> Dataset:
+        """Convert prepared data to a HuggingFace Dataset.
+
+        Args:
+            prompt_builder: An instance of MalnutritionPromptBuilder
+            tokenizer: Tokenizer for adding EOS token
+
+        Returns:
+            HuggingFace Dataset ready for model training
+        """
+        formatted_data = self.prepare_training_data(prompt_builder, tokenizer)
+
+        return Dataset.from_dict({
+            "text": [item["text"] for item in formatted_data]
+        })
 # ────────────────────────────────────────────────────────────────────────────────
 # Enhanced clinical‑note cleaner
 # ────────────────────────────────────────────────────────────────────────────────
@@ -511,7 +541,7 @@ class MalnutritionPromptBuilder:
                 )
 
         return self._construct_prompt(patient_notes, few_shot_examples)
-    
+
     def get_balanced_inference_prompt(
         self,
         patient_notes: str,
@@ -551,7 +581,7 @@ class MalnutritionPromptBuilder:
                 "Growth and development on track with no clinical signs of malnutrition.",
                 "Z-scores within normal limits and no reported feeding difficulties."
             ]
-        
+
         explanation = random.choice(explanations)
 
         return (
@@ -593,24 +623,24 @@ class MalnutritionPromptBuilder:
             "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
             "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
             "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
-            
+
             "2. **WEIGHT LOSS**\n"
             "   ✓ Documented involuntary weight loss\n"
             "   ✓ Failure to gain expected weight/height in child\n"
             "   ✓ Declining percentile crossing on growth charts\n\n"
-            
+
             "3. **REDUCED INTAKE/ABSORPTION**\n"
             "   ✓ Decreased appetite or food intake\n"
             "   ✓ Feeding difficulties or dysphagia\n"
             "   ✓ Restricted diet or food insecurity\n"
             "   ✓ Malabsorption conditions\n\n"
-            
+
             "4. **CLINICAL ASSESSMENT**\n"
             "   ✓ Muscle wasting (temporal, extremities)\n"
             "   ✓ Subcutaneous fat loss\n"
             "   ✓ Edema (can mask weight loss)\n"
             "   ✓ Poor wound healing, skin/hair changes\n\n"
-            
+
             "5. **COMPLICATING FACTORS**\n"
             "   ✓ Chronic illness/inflammation\n"
             "   ✓ Increased metabolic demand (infection, trauma)\n"
@@ -669,23 +699,23 @@ class MalnutritionPromptBuilder:
         yes_mask = self.examples_cache[label_col].astype(str).str.lower().isin({"1", "yes", "true"})
         yes_df = self.examples_cache[yes_mask]
         no_df = self.examples_cache[~yes_mask]
-        
+
         # Calculate how many examples to get from each class
         yes_count = len(yes_df)
         no_count = len(no_df)
         total_available = yes_count + no_count
-        
+
         if total_available < num_examples:
             # Not enough examples, use all available
             few_shot_examples = []
             for i in range(yes_count):
                 few_shot_examples.append({
-                    "text": yes_df.iloc[i][note_col], 
+                    "text": yes_df.iloc[i][note_col],
                     "label": yes_df.iloc[i][label_col]
                 })
             for i in range(no_count):
                 few_shot_examples.append({
-                    "text": no_df.iloc[i][note_col], 
+                    "text": no_df.iloc[i][note_col],
                     "label": no_df.iloc[i][label_col]
                 })
         else:
@@ -693,39 +723,35 @@ class MalnutritionPromptBuilder:
             half = num_examples // 2
             yes_needed = min(half, yes_count)
             no_needed = min(num_examples - yes_needed, no_count)
-            
+
             # If we couldn't get enough of one class, get more from the other
             if yes_needed < half and no_count > no_needed:
                 no_needed = min(num_examples - yes_needed, no_count)
             elif no_needed < (num_examples - half) and yes_count > yes_needed:
                 yes_needed = min(num_examples - no_needed, yes_count)
-            
+
             # Sample
             few_shot_examples = []
             if yes_needed > 0:
                 yes_indices = random.sample(range(yes_count), k=yes_needed)
                 for i in yes_indices:
                     few_shot_examples.append({
-                        "text": yes_df.iloc[i][note_col], 
+                        "text": yes_df.iloc[i][note_col],
                         "label": yes_df.iloc[i][label_col]
                     })
-            
+
             if no_needed > 0:
                 no_indices = random.sample(range(no_count), k=no_needed)
                 for i in no_indices:
                     few_shot_examples.append({
-                        "text": no_df.iloc[i][note_col], 
+                        "text": no_df.iloc[i][note_col],
                         "label": no_df.iloc[i][label_col]
                     })
-        
+
         # Shuffle to avoid order bias
         random.shuffle(few_shot_examples)
         return self._construct_prompt(patient_notes, few_shot_examples)
 
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Enhanced response parser with more robust extraction
-# ────────────────────────────────────────────────────────────────────────────────
 def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
     Extract the malnutrition decision (yes|no) and explanation from model output.
@@ -738,7 +764,7 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     """
     # Clean the input string to handle markdown code blocks
     cleaned = response.strip()
-    
+
     # Extract content from code blocks if present
     if "```" in cleaned:
         pattern = r'```(?:json)?\s*(.*?)\s*```'
@@ -753,7 +779,7 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
                     break
                 except json.JSONDecodeError:
                     continue
-    
+
     # Try direct JSON parsing first (most reliable method)
     try:
         parsed = json.loads(cleaned)
@@ -765,24 +791,24 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
                 return decision, explanation
     except json.JSONDecodeError:
         pass
-    
+
     # Fallback extraction methods for both JSON and non-JSON formats
-    
+
     # 1. Extract malnutrition decision with improved patterns
     decision_patterns = [
         # JSON format patterns
         r'"malnutrition"\s*:\s*"(yes|no)"',  # Standard JSON format
         r'"malnutrition"\s*:\s*"([^"]+)"',   # Any string in JSON format
-        
+
         # Non-JSON format patterns
         r'malnutrition\s*[=:]\s*(yes|no)',   # Key-value pair format
         r'malnutrition.*?(yes|no)',          # Loose format
-        
+
         # Sentence-based patterns
         r"patient (does|doesn['']t) meet.*?malnutrition",  # Clinical statement
         r'(evidence|signs|indications) of malnutrition',    # Evidence statement
     ]
-    
+
     decision = "unknown"
     for pattern in decision_patterns:
         decision_match = re.search(pattern, cleaned, flags=re.I)
@@ -798,25 +824,25 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
             elif matched_text in ["yes", "no"]:
                 decision = matched_text
                 break
-    
+
     # 2. Extract explanation with improved patterns
     explanation = ""
     explanation_patterns = [
         # JSON format patterns
-        r'"explanation"\s*:\s*"((?:[^"\\]|\\.|\\["\\])*)"',  # Quoted with possible escapes
-        r'"explanation"\s*:\s*\'([^\']*)\'',                 # Single-quoted 
-        r'"explanation"\s*:\s*"([^"]*)"',                    # Double-quoted simple
-        
+        r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',         # Quoted with possible escapes
+        r'"explanation"\s*:\s*\'([^\']*)\'',                # Single-quoted
+        r'"explanation"\s*:\s*"([^"]*)"',                   # Double-quoted simple
+
         # Non-JSON formats
-        r'explanation\s*[:=]\s*["\'](.*?)["\']',             # Quoted after key
-        r'explanation\s*[:=]\s*([^",\s][^,}]*)',             # Unquoted after key
-        
-        # Context-based patterns
-        r'malnutrition.*?because\s+(.*?)(?:\.|$)',           # After "because"
-        r'(due to\s+.*?)(?:\.|$)',                           # "Due to" phrase
-        r'evidence includes\s+(.*?)(?:\.|$)',                # Evidence statement
+        r'explanation\s*[:=]\s*["\'](.*?)["\']',            # Quoted after key
+        r'explanation\s*[:=]\s*([^",\s][^,}]*)',            # Unquoted after key
+
+        # Context-based patterns - capturing more content
+        r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))', # After "because" until end or delimiter
+        r'(due to\s+.*?)(?:$|(?=\n\n|\}))',                 # "Due to" phrase until delimiter
+        r'evidence includes\s+(.*?)(?:$|(?=\n\n|\}))',      # Evidence statement until delimiter
     ]
-    
+
     for pattern in explanation_patterns:
         expl_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
         if expl_match:
@@ -825,17 +851,25 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
             explanation = next((g for g in groups if g is not None), "").strip()
             if explanation:
                 break
-    
-    # As last resort, try to extract a relevant sentence if we have a decision but no explanation
+
+    # As last resort, try to extract relevant consecutive sentences if we have a decision but no explanation
     if decision != "unknown" and not explanation:
         sentences = re.split(r'[.!?]\s+', cleaned)
+        relevant_sentences = []
+        
         for sentence in sentences:
             # Check if sentence contains malnutrition-related terms
-            if re.search(r'malnutrition|nutritional|weight|growth|z-score|BMI', sentence, re.I):
-                explanation = sentence.strip()
-                break
-    
+            if re.search(r'malnutrition|nutritional|weight|growth|z-score|BMI|intake|wasting|anthropometric|MUAC', sentence, re.I):
+                relevant_sentences.append(sentence.strip())
+        
+        if relevant_sentences:
+            # Join up to 3 relevant sentences to form a coherent explanation
+            explanation = ". ".join(relevant_sentences[:3])
+            if not explanation.endswith((".", "!", "?")):
+                explanation += "."
+
     return decision, explanation
+    
     
 class WeightedSFTTrainer(SFTTrainer):
     """
