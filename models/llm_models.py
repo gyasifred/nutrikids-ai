@@ -594,102 +594,102 @@ class MalnutritionPromptBuilder:
     # ------------------------------------------------------------------ #
     # ENHANCED PROMPT CONSTRUCTION - improved readability and effectiveness
     # ------------------------------------------------------------------ #
-   def _construct_prompt(
-    self,
-    patient_notes: str,
-    few_shot_examples: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    notes_clean = preprocess_text(patient_notes)
+    def _construct_prompt(
+        self,
+        patient_notes: str,
+        few_shot_examples: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        notes_clean = preprocess_text(patient_notes)
 
-    header = (
-        "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
-    )
-
-    task = (
-        "# ASSESSMENT TASK\n"
-        "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
-        "Classification guidelines:\n"
-        "• \"yes\" - Patient meets at least MILD criteria for malnutrition\n"
-        "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
-        "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
-    )
-
-    checklist = (
-        "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
-        "1. **ANTHROPOMETRY**\n"
-        "   ✓ Mild:     z-score -1.0 to -1.9 SD\n"
-        "   ✓ Moderate: z-score -2.0 to -2.9 SD\n"
-        "   ✓ Severe:   z-score ≤ -3.0 SD\n"
-        "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
-        "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
-        "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
-
-        "2. **WEIGHT LOSS**\n"
-        "   ✓ Documented involuntary weight loss\n"
-        "   ✓ Failure to gain expected weight/height in child\n"
-        "   ✓ Declining percentile crossing on growth charts\n\n"
-
-        "3. **REDUCED INTAKE/ABSORPTION**\n"
-        "   ✓ Decreased appetite or food intake\n"
-        "   ✓ Feeding difficulties or dysphagia\n"
-        "   ✓ Restricted diet or food insecurity\n"
-        "   ✓ Malabsorption conditions\n\n"
-
-        "4. **CLINICAL ASSESSMENT**\n"
-        "   ✓ Muscle wasting (temporal, extremities)\n"
-        "   ✓ Subcutaneous fat loss\n"
-        "   ✓ Edema (can mask weight loss)\n"
-        "   ✓ Poor wound healing, skin/hair changes\n\n"
-
-        "5. **COMPLICATING FACTORS**\n"
-        "   ✓ Chronic illness/inflammation\n"
-        "   ✓ Increased metabolic demand (infection, trauma)\n"
-        "   ✓ Medication effects on intake/absorption\n"
-        "   ✓ Psychosocial factors\n"
-    )
-
-    output_spec = (
-        "# OUTPUT REQUIREMENTS\n"
-        "Return a valid JSON object with these exact fields:\n"
-        "```json\n"
-        "{\n"
-        '  "malnutrition": "yes" | "no",\n'
-        '  "confidence": <decimal between 0.1 and 0.9>,\n'
-        '  "evidence": {\n'
-        '    "anthropometry": "<Specific anthropometric findings from notes>",\n'
-        '    "weight_trajectory": "<Comments on weight loss/gain patterns>",\n'
-        '    "intake_absorption": "<Details on eating patterns/absorption issues>",\n'
-        '    "clinical_signs": "<Observable clinical indicators>",\n'
-        '    "complicating_factors": "<Relevant comorbidities or risk factors>"\n'
-        '  },\n'
-        '  "explanation": "<2-3 sentences synthesizing the key evidence supporting your conclusion>"\n'
-        "}\n"
-        "```\n"
-        "- Provide only the complete JSON object without additional text\n"
-        "- Base assessment solely on evidence present in the notes\n"
-        "- Include specific metrics/findings for each evidence category (use \"None documented\" if no information available)\n"
-        "- Confidence reflects your certainty (0.1=very uncertain, 0.9=very certain)\n"
-        "- If evidence is sparse or ambiguous, use lower confidence values\n"
-        "- Explanations should directly cite the strongest evidence points\n"
-    )
-
-    # Enhanced few-shot examples block with more detailed examples
-    few_shot_block = ""
-    if few_shot_examples:
-        few_shot_block = (
-            "# EXAMPLES\n"
-            + "\n".join(self._format_detailed_example(ex) for ex in few_shot_examples)
-            + "\n---\n"
+        header = (
+            "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
         )
 
-    # assemble prompt
-    return (
-        f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
-        f"{few_shot_block}"
-        "# PATIENT NOTES\n"
-        f"{notes_clean}\n\n"
-        "# ASSESSMENT"
-    )
+        task = (
+            "# ASSESSMENT TASK\n"
+            "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
+            "Classification guidelines:\n"
+            "• \"yes\" - Patient meets at least MILD criteria for malnutrition\n"
+            "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
+            "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
+        )
+
+        checklist = (
+            "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
+            "1. **ANTHROPOMETRY**\n"
+            "   ✓ Mild:     z-score -1.0 to -1.9 SD\n"
+            "   ✓ Moderate: z-score -2.0 to -2.9 SD\n"
+            "   ✓ Severe:   z-score ≤ -3.0 SD\n"
+            "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
+            "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
+            "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
+
+            "2. **WEIGHT LOSS**\n"
+            "   ✓ Documented involuntary weight loss\n"
+            "   ✓ Failure to gain expected weight/height in child\n"
+            "   ✓ Declining percentile crossing on growth charts\n\n"
+
+            "3. **REDUCED INTAKE/ABSORPTION**\n"
+            "   ✓ Decreased appetite or food intake\n"
+            "   ✓ Feeding difficulties or dysphagia\n"
+            "   ✓ Restricted diet or food insecurity\n"
+            "   ✓ Malabsorption conditions\n\n"
+
+            "4. **CLINICAL ASSESSMENT**\n"
+            "   ✓ Muscle wasting (temporal, extremities)\n"
+            "   ✓ Subcutaneous fat loss\n"
+            "   ✓ Edema (can mask weight loss)\n"
+            "   ✓ Poor wound healing, skin/hair changes\n\n"
+
+            "5. **COMPLICATING FACTORS**\n"
+            "   ✓ Chronic illness/inflammation\n"
+            "   ✓ Increased metabolic demand (infection, trauma)\n"
+            "   ✓ Medication effects on intake/absorption\n"
+            "   ✓ Psychosocial factors\n"
+        )
+
+        output_spec = (
+            "# OUTPUT REQUIREMENTS\n"
+            "Return a valid JSON object with these exact fields:\n"
+            "```json\n"
+            "{\n"
+            '  "malnutrition": "yes" | "no",\n'
+            '  "confidence": <decimal between 0.1 and 0.9>,\n'
+            '  "evidence": {\n'
+            '    "anthropometry": "<Specific anthropometric findings from notes>",\n'
+            '    "weight_trajectory": "<Comments on weight loss/gain patterns>",\n'
+            '    "intake_absorption": "<Details on eating patterns/absorption issues>",\n'
+            '    "clinical_signs": "<Observable clinical indicators>",\n'
+            '    "complicating_factors": "<Relevant comorbidities or risk factors>"\n'
+            '  },\n'
+            '  "explanation": "<2-3 sentences synthesizing the key evidence supporting your conclusion>"\n'
+            "}\n"
+            "```\n"
+            "- Provide only the complete JSON object without additional text\n"
+            "- Base assessment solely on evidence present in the notes\n"
+            "- Include specific metrics/findings for each evidence category (use \"None documented\" if no information available)\n"
+            "- Confidence reflects your certainty (0.1=very uncertain, 0.9=very certain)\n"
+            "- If evidence is sparse or ambiguous, use lower confidence values\n"
+            "- Explanations should directly cite the strongest evidence points\n"
+        )
+
+        # Enhanced few-shot examples block with more detailed examples
+        few_shot_block = ""
+        if few_shot_examples:
+            few_shot_block = (
+                "# EXAMPLES\n"
+                + "\n".join(self._format_detailed_example(ex) for ex in few_shot_examples)
+                + "\n---\n"
+            )
+
+        # assemble prompt
+        return (
+            f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
+            f"{few_shot_block}"
+            "# PATIENT NOTES\n"
+            f"{notes_clean}\n\n"
+            "# ASSESSMENT"
+        )
 
     def _format_detailed_example(self, example: Dict[str, str]) -> str:
         """Return one example block with detailed evidence categorization."""
