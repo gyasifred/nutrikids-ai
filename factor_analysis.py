@@ -66,127 +66,67 @@ def extract_prompt_factors(explanations):
     """
     # Define factors from the prompt based on the provided classification criteria
     prompt_factors = {
-        'recent_illness': [
-            'illness', 'infection', 'sick', 'disease', 'surgery', 'trauma', 'hospitalization',
-            'acute', 'chronic', 'recovery', 'post-operative', 'procedure', 'injury', 'wound',
-            'fever', 'immune', 'inflammation', 'cancer', 'tumor', 'sepsis', 'respiratory',
-            'pneumonia', 'icu', 'intensive care', 'bed rest', 'immobility', 'immobilization',
-            'complications', 'comorbidity', 'organ failure', 'pathology', 'dysfunction'
+        # Anthropometric measurements
+        'anthropometric': [
+            'bmi', 'weight', 'height', 'weight-for-height', 'muac', 'mid-upper arm circumference',
+            'weight loss', 'weight gain', 'underweight', 'overweight', 'obese', 'thin', 'emaciated',
+            'percentile', 'z-score', 'triceps skinfold', 'muscle mass', 'body composition'
         ],
         
-        'socioeconomic': [
-            'socioeconomic', 'poverty', 'food insecurity', 'income', 'access', 'resources',
-            'financial', 'economic', 'unemployed', 'unemployment', 'homeless', 'housing',
-            'instability', 'education', 'literacy', 'transportation', 'safety', 'vulnerable',
-            'marginalized', 'disadvantaged', 'welfare', 'assistance', 'snap', 'wic', 'food stamps',
-            'food desert', 'food bank', 'meal program', 'social support', 'cooking facilities',
-            'refrigeration', 'utilities', 'social determinants', 'barriers'
+        # Clinical symptoms
+        'clinical': [
+            'muscle wasting', 'fatigue', 'weakness', 'lethargy', 'skin changes', 'hair changes',
+            'edema', 'dermatitis', 'glossitis', 'stomatitis', 'poor wound healing', 'bruising',
+            'pallor', 'dry skin', 'brittle nails', 'hair loss', 'muscle atrophy', 'sarcopenia'
         ],
         
-        'symptoms': [
-            'fatigue', 'weakness', 'appetite', 'weight loss', 'muscle wasting', 'edema',
-            'lethargy', 'malaise', 'exhaustion', 'tiredness', 'cachexia', 'sarcopenia',
-            'frailty', 'thinness', 'emaciation', 'wasting', 'dehydration', 'swelling',
-            'lethargic', 'weak', 'tired', 'anorexia', 'lack of energy', 'hair loss',
-            'poor wound healing', 'skin changes', 'pallor', 'brittle nails', 'bruising',
-            'anasarca', 'kwashiorkor', 'marasmus', 'poor growth', 'failure to thrive'
+        # Dietary factors
+        'dietary': [
+            'caloric intake', 'protein intake', 'diet', 'supplement', 'feeding', 'appetite',
+            'meal', 'nutrition', 'nutrient', 'malnutrition', 'deficiency', 'vitamin', 'mineral',
+            'food insecurity', 'limited access', 'poor diet', 'inadequate intake', 'fasting',
+            'anorexia', 'tube feeding', 'tpn', 'parenteral nutrition', 'enteral nutrition'
         ],
         
-        'family_history': [
-            'family', 'genetic', 'hereditary', 'familial', 'parent',
-            'sibling', 'relative', 'mother', 'father', 'inherited', 'predisposition',
-            'risk factor', 'generational', 'ancestry', 'lineage', 'pedigree',
-            'household', 'domestic', 'family environment', 'caregiver', 'guardian',
-            'family dynamic', 'family structure', 'family function', 'parenting',
-            'family medical history', 'relative with condition'
+        # Medical conditions
+        'medical': [
+            'chronic illness', 'gastrointestinal', 'infection', 'malabsorption', 'diarrhea',
+            'vomiting', 'nausea', 'constipation', 'dysphagia', 'gastroparesis', 'celiac',
+            'crohn', 'ulcerative colitis', 'pancreatic insufficiency', 'liver disease',
+            'cancer', 'diabetes', 'respiratory disease', 'renal disease', 'hiv', 'tuberculosis'
         ],
         
-        'lab_results': [
-            'albumin', 'hemoglobin', 'lab', 'laboratory', 'vitamin', 'mineral', 'deficiency',
-            'protein', 'prealbumin', 'transferrin', 'ferritin', 'iron', 'folate', 'b12',
-            'vitamin d', 'vitamin a', 'zinc', 'calcium', 'magnesium', 'phosphorus',
-            'electrolytes', 'sodium', 'potassium', 'chloride', 'anemia', 'lymphocyte',
-            'creatinine', 'nitrogen balance', 'cholesterol', 'triglycerides', 'glucose',
-            'a1c', 'chemistry panel', 'cbc', 'complete blood count', 'micronutrient'
+        # Lab values
+        'labs': [
+            'albumin', 'prealbumin', 'transferrin', 'total protein', 'lymphocyte count',
+            'cholesterol', 'hemoglobin', 'hematocrit', 'ferritin', 'folate', 'b12',
+            'vitamin d', 'zinc', 'magnesium', 'calcium', 'nitrogen balance', 
+            'blood pressure', 'bp', 'wbc', 'white blood cell', 'glucose', 'sodium', 'potassium',
+            'creatinine', 'bun', 'alt', 'ast', 'bilirubin', 'heart rate', 'hr', 'temperature',
+            'temp', 'oxygen', 'o2', 'sats', 'blood sugar'
         ],
         
+        # Risk factors
+        'risk_factors': [
+            'medications', 'polypharmacy', 'depression', 'anxiety', 'cognitive impairment',
+            'dementia', 'socioeconomic', 'poverty', 'homelessness', 'social isolation',
+            'elderly', 'pediatric', 'pregnancy', 'alcohol', 'substance abuse', 'surgery',
+            'hospitalization', 'immobility', 'disability',
+            'history of', 'hx of', 'smoking', 'smoker', 'hypertension', 'hypertensive', 
+            'diabetic', 'family history'
+        ],
+        
+        # Imaging
+        'imaging': [
+            'x-ray', 'xray', 'ct scan', 'ctscan', 'mri', 'ultrasound', 'chest x-ray', 
+            'cxr', 'ekg', 'ecg', 'angiogram', 'imaging', 'scan'
+        ],
+        
+        # Medications
         'medications': [
-            'medication', 'drug', 'side effect', 'treatment', 'therapy', 'chemotherapy', 'diuretic',
-            'antidepressant', 'antibiotic', 'corticosteroid', 'steroid', 'immunosuppressant',
-            'anticonvulsant', 'laxative', 'sedative', 'antipsychotic', 'nsaid', 'opioid',
-            'antacid', 'ppi', 'proton pump inhibitor', 'metformin', 'insulin', 'polypharmacy',
-            'appetite suppressant', 'stimulant', 'antiemetic', 'prescription', 'over-the-counter',
-            'supplement', 'herbal', 'medication adherence', 'regimen', 'dose', 'interaction'
-        ],
-        
-        'mental_health': [
-            'depression', 'anxiety', 'mental', 'psychological', 'eating disorder', 'cognitive',
-            'psychiatric', 'mood', 'stress', 'trauma', 'ptsd', 'social isolation', 'loneliness',
-            'grief', 'bereavement', 'schizophrenia', 'bipolar', 'dementia', 'alzheimer',
-            'memory', 'confusion', 'disorientation', 'anorexia nervosa', 'bulimia',
-            'binge eating', 'avoidant food intake', 'pica', 'rumination', 'suicidal',
-            'self-neglect', 'substance abuse', 'alcohol', 'addiction', 'emotional wellbeing'
-        ],
-        
-        'malabsorption': [
-            'diarrhea', 'malabsorption', 'absorption', 'digestive', 'gastrointestinal',
-            'celiac', 'crohn', 'ulcerative colitis', 'ibd', 'inflammatory bowel disease',
-            'short bowel', 'intestinal resection', 'pancreatic insufficiency', 'cystic fibrosis',
-            'bile acid deficiency', 'steatorrhea', 'constipation', 'bloating', 'gas',
-            'abdominal pain', 'nausea', 'vomiting', 'dysphagia', 'odynophagia',
-            'gerd', 'reflux', 'gastritis', 'enteritis', 'colitis', 'gastroparesis',
-            'bariatric surgery', 'ostomy', 'tube feeding', 'parenteral nutrition'
-        ],
-        
-        'weight_height': [
-            'weight-for-height', 'weight for height', 'weight/height', 'bmi', 'bmi-for-age', 'bmi for age',
-            'anthropometric', 'anthropometry', 'growth chart', 'weight', 'height', 'length',
-            'stature', 'percentile', 'growth curve', 'weight trajectory', 'weight velocity',
-            'stunting', 'wasting', 'underweight', 'low weight', 'height-for-age', 'weight-for-age',
-            'body mass', 'weight status', 'growth faltering', 'growth failure', 'poor growth',
-            'weight fluctuation', 'weight change', 'birth weight', 'head circumference'
-        ],
-        
-        'arm_circumference': [
-            'mid-upper arm', 'muac', 'arm circumference',
-            'mid-arm muscle circumference', 'mamc', 'arm muscle area', 'triceps skinfold',
-            'arm anthropometry', 'limb anthropometry', 'upper limb measurement',
-            'arm diameter', 'arm girth', 'midupper arm measurement', 'upper arm',
-            'arm muscle', 'arm fat', 'anthropometric assessment', 'arm measurement',
-            'limb measurement', 'body composition assessment'
-        ],
-        
-        'z_score': [
-            'z score', 'z-score', '-1', '-2', '-3',
-            'standard deviation', 'percentile', 'sd', 'standard score', 'normalized score',
-            'statistical measure', 'growth reference', 'who standards', 'cdc charts',
-            'distribution', 'normal curve', 'bell curve', 'reference population',
-            'cutoff', 'threshold', 'below average', 'significantly below', 'severely below',
-            'moderate deficit', 'severe deficit', 'mild deficit', '+1', '+2', '+3'
-        ],
-        
-        'dietary_intake': [
-            'diet', 'nutrition', 'intake', 'consumption', 'eating', 'meal', 'feeding',
-            'calorie', 'caloric', 'protein', 'carbohydrate', 'fat', 'nutrient', 'macronutrient',
-            'micronutrient', 'diet quality', 'diet diversity', 'meal frequency', 'portion size',
-            'restrictive diet', 'elimination diet', 'food allergy', 'food intolerance',
-            'food selectivity', 'picky eating', 'food refusal', 'feeding difficulty',
-            'appetite regulation', 'hunger', 'satiety', 'meal skipping', 'fasting'
-        ],
-        
-        'hydration': [
-            'hydration', 'fluid', 'water', 'dehydration', 'hyperhydration', 'thirst',
-            'dry mouth', 'poor skin turgor', 'urine output', 'concentrated urine',
-            'fluid balance', 'oral intake', 'liquid consumption', 'drinking', 'beverage',
-            'iv fluid', 'intravenous', 'rehydration', 'fluid restriction', 'fluid overload'
-        ],
-        
-        'functional_status': [
-            'functional', 'function', 'mobility', 'activity', 'exercise', 'physical activity',
-            'adl', 'activities of daily living', 'iadl', 'instrumental activities',
-            'independence', 'dependence', 'limitation', 'disability', 'impairment',
-            'weakness', 'strength', 'endurance', 'fatigue', 'energy', 'vitality',
-            'performance', 'capacity', 'rehabilitation', 'physical therapy', 'occupational therapy'
+            'mg', 'tablet', 'aspirin', 'metformin', 'insulin', 'penicillin', 'ibuprofen',
+            'acetaminophen', 'lisinopril', 'metoprolol', 'atorvastatin', 'drug', 'medication',
+            'dose', 'pill', 'therapy'
         ]
     }
 
