@@ -102,93 +102,6 @@ def determine_model_precision(args):
     else:
         return True, False
 
-# def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
-#     """
-#     Load model and tokenizer for evaluation with appropriate quantization settings.
-    
-#     - If base_model is provided: Loads the specified base model
-#     - If model_path is provided: Loads the adapter model (Unsloth handles base model internally)
-#     - If both are provided: Loads base_model first, then applies adapter weights from model_path
-
-#     Args:
-#         base_model (str, optional): Base model name or path
-#         model_path (str, optional): Path to fine-tuned model adapter weights
-#         args: Command line arguments with quantization settings
-
-#     Returns:
-#         tuple: (model, tokenizer)
-#     """
-#     # Check if at least one model source is provided
-#     if not base_model and not model_path:
-#         raise ValueError("Either base_model or model_path must be provided")
-
-#     # Get device
-#     device = get_device(args)
-#     print(f"Using device: {device}")
-    
-#     # Determine precision based on hardware and user preferences
-#     fp16, bf16 = determine_model_precision(args)
-#     dtype = torch.bfloat16 if bf16 else torch.float16
-#     print(f"Using compute dtype: {dtype}")
-    
-#     # Get appropriate quantization config
-#     quantization_config = get_quantization_config(args)
-#     if quantization_config:
-#         print(f"Quantization config: {quantization_config}")
-#     else:
-#         print("No quantization config created, using direct quantization flags")
-    
-#     try:
-#         # Set attention implementation based on flash attention flag
-#         attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
-        
-#         # Set up common model loading kwargs
-#         common_kwargs = {
-#             "dtype": dtype,
-#             "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
-#             "attn_implementation": attn_implementation
-#         }
-        
-#         # Add quantization settings
-#         if quantization_config is not None:
-#             common_kwargs["quantization_config"] = quantization_config
-#         else:
-#             # Direct quantization flags if no config is provided
-#             common_kwargs["load_in_4bit"] = args.load_in_4bit
-#             common_kwargs["load_in_8bit"] = args.load_in_8bit
-        
-#         # Case 1: Only base_model is provided - load base model directly
-#         if base_model:
-#             print(f"Loading base model: {base_model}")
-#             print(f"Loading with kwargs: {common_kwargs}")
-#             model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
-        
-#         # Case 2: Only model_path is provided - load adapter model directly
-#         if model_path and base_model:
-#             print(f"Loading adapter model: {model_path}")
-#             print(f"Loading with kwargs: {common_kwargs}")
-#             model, tokenizer = FastLanguageModel.from_pretrained(model_name=base_model,adapter_name=model_path, **common_kwargs)
-        
-        
-#         # Make sure max_seq_length is explicitly set in model config
-#         model_max_seq_length = get_model_max_length(model)
-#         print(f"Model's maximum sequence length: {model_max_seq_length}")
-        
-#         if args.max_seq_length and args.max_seq_length < model_max_seq_length:
-#             print(f"Note: Using user-specified max_seq_length={args.max_seq_length}, "
-#                   f"which is less than model's native {model_max_seq_length}")
-        
-#         # Enable native faster inference
-#         print("Enabling faster inference...")
-#         FastLanguageModel.for_inference(model)
-#         print("Model ready for inference")
-        
-#         return model, tokenizer
-#     except Exception as e:
-#         print(f"Detailed error loading model: {str(e)}")
-#         import traceback
-#         traceback.print_exc()  # This will print the full stack trace
-#         raise
 
 def load_model_and_tokenizer(
         base_model= None,
@@ -224,35 +137,23 @@ def load_model_and_tokenizer(
         attn_implementation="flash_attention_2" if getattr(args, "use_flash_attention", False) else "eager",
     )
 
-    # q_cfg = get_quantization_config(args)
-    # if q_cfg is not None:
-    #     common_kwargs["quantization_config"] = q_cfg
-    # else:
-    #     common_kwargs["load_in_4bit"] = getattr(args, "load_in_4bit", False)
-    #     common_kwargs["load_in_8bit"] = getattr(args, "load_in_8bit", False)
-
     # --------------------------- branch logic ---------------------------
     if base_model and model_path:  # both supplied → attach manually
         print(f"[loader] Loading base model: {base_model}")
-        base, tokenizer = FastLanguageModel.from_pretrained(base_model)
+        base, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
 
         print(f"[loader] Attaching adapter: {model_path}")
-        model = PeftModel.from_pretrained(base, model_path)  # default adapter name
+        model = PeftModel.from_pretrained(base, model_path) 
 
     elif model_path:  # adapter only
         print(f"[loader] Loading adapter (Unsloth auto‑fetches base): {model_path}")
-        model, tokenizer = FastLanguageModel.from_pretrained(model_path)
+        model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
 
     else:  # base only
         print(f"[loader] Loading base model only: {base_model}")
-        model, tokenizer = FastLanguageModel.from_pretrained(base_model)
+        model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
 
-    # ----------------------- post‑initialisation -----------------------
-    # max_len = get_model_max_length(model)
-    # if getattr(args, "max_seq_length", None) and args.max_seq_length < max_len:
-    #     print(f"[loader] WARNING: overriding model context {max_len} with user‑requested {args.max_seq_length}")
-
-    FastLanguageModel.for_inference(model)  # enable Triton kernels etc.
+    FastLanguageModel.for_inference(model)
     print("[loader] Model ready for inference ✔")
 
     return model, tokenizer
