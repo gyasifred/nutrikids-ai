@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from utils import load_and_filter_data
 
+
 def to_binary(series):
     """
     Map various positive labels ('yes', '1', True, 'malnourished') to 1,
@@ -104,27 +105,19 @@ def train_surrogate_model(factors_df, labels):
 
 
 def shap_analysis(model, X_test):
+    """
+    Perform SHAP analysis, handling both list and array outputs to avoid shape mismatches.
+    """
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_test)
+    values = shap_values[1] if isinstance(shap_values, list) else shap_values
     plt.figure(figsize=(12,6))
-    # Align features via numpy and names to avoid shape mismatch
-    shap.summary_plot(
-        shap_values[1],
-        X_test.values,
-        feature_names=X_test.columns,
-        show=False
-    )
+    shap.summary_plot(values, X_test, show=False)
     plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300)
     plt.close()
     for feature in X_test.columns[:5]:
         plt.figure(figsize=(8,5))
-        shap.dependence_plot(
-            feature,
-            shap_values[1],
-            X_test.values,
-            feature_names=X_test.columns,
-            show=False
-        )
+        shap.dependence_plot(feature, values, X_test, show=False)
         plt.savefig(os.path.join(OUT_DIR, f'shap_dependence_{feature}.png'), dpi=300)
         plt.close()
 
