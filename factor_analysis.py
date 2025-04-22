@@ -106,51 +106,54 @@ def train_surrogate_model(factors_df, labels):
 
 def shap_analysis(model, X_test):
     """
-    Perform SHAP analysis, handling both list and array outputs to avoid shape mismatches.
+    Perform SHAP analysis, handling both list and array outputs to avoid shape mismatches
+    and ambiguous-array errors in dependence_plot.
     """
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_test)
 
-    # For binary classification TreeExplainer returns a list [neg_vals, pos_vals]
+    # pick the positive‐class values if we got a list back
     values = shap_values[1] if isinstance(shap_values, list) else shap_values
 
-    feature_names = np.array(X_test.columns.tolist())
-    X_test_array = X_test.values
+    # bring everything into numpy
+    feature_names = np.array(X_test.columns)
+    X_np = X_test.values
 
-    # Sanity check
-    if values.shape[1] != X_test_array.shape[1]:
+    # sanity check
+    if values.shape[1] != X_np.shape[1]:
         raise ValueError(
-            f"SHAP values ({values.shape[1]} features) and X_test "
-            f"({X_test_array.shape[1]} features) have mismatched dimensions!"
+            f"SHAP has {values.shape[1]} features but X_test has {X_np.shape[1]}"
         )
 
-    # Summary plot
+    # 1) summary beeswarm
     plt.figure(figsize=(12,6))
     shap.summary_plot(
         values,
-        X_test_array,
+        X_np,
         feature_names=feature_names,
         show=False
     )
     plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300)
     plt.close()
 
-    # Dependence plots for top 5 features by mean(|SHAP|)
+    # 2) dependence plots for the top 5 features by mean(|SHAP|):
     mean_abs = np.abs(values).mean(axis=0)
-    top_indices = np.argsort(-mean_abs)[:5]
-    for idx in top_indices:
-        feat = feature_names[idx]
+    top_idxs = np.argsort(-mean_abs)[:5]
+
+    for idx in top_idxs:
         plt.figure(figsize=(8,5))
         shap.dependence_plot(
-            feat,                # single feature name
+            idx,            # <— integer index, not a list or array
             values,
-            X_test_array,
+            X_np,
             feature_names=feature_names,
-            interaction_index=None,  # <— disable auto-interaction to avoid the ambiguous-array compare
+            interaction_index=None,  # <— turn off interaction auto‐selection
             show=False
         )
+        feat = feature_names[idx]
         plt.savefig(os.path.join(OUT_DIR, f'shap_dependence_{feat}.png'), dpi=300)
         plt.close()
+
         
 def lime_analysis(model, X_test, sample_indices=None):
     explainer = lime.lime_tabular.LimeTabularExplainer(
