@@ -248,9 +248,9 @@ def load_model_and_tokenizer(
         model, tokenizer = FastLanguageModel.from_pretrained(base_model)
 
     # ----------------------- post‑initialisation -----------------------
-    max_len = get_model_max_length(model)
-    if getattr(args, "max_seq_length", None) and args.max_seq_length < max_len:
-        print(f"[loader] WARNING: overriding model context {max_len} with user‑requested {args.max_seq_length}")
+    # max_len = get_model_max_length(model)
+    # if getattr(args, "max_seq_length", None) and args.max_seq_length < max_len:
+    #     print(f"[loader] WARNING: overriding model context {max_len} with user‑requested {args.max_seq_length}")
 
     FastLanguageModel.for_inference(model)  # enable Triton kernels etc.
     print("[loader] Model ready for inference ✔")
