@@ -165,7 +165,7 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         if model_path and base_model:
             print(f"Loading adapter model: {model_path}")
             print(f"Loading with kwargs: {common_kwargs}")
-            model, tokenizer = FastLanguageModel.from_pretrained(base_model, model_path, **common_kwargs)
+            model, tokenizer = FastLanguageModel.from_pretrained(model_name=base_model,adapter_name=model_path, **common_kwargs)
         
         
         # Make sure max_seq_length is explicitly set in model config
