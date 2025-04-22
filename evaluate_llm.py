@@ -104,11 +104,11 @@ def determine_model_precision(args):
 
 
 def load_model_and_tokenizer(
-        base_model= None,
-        model_path= None,
+        base_model=None,
+        model_path=None,
         args=None,
 ):
-    """Load a (quantised) foundation model and optionally attach a LoRA adapter.
+    """Load a (quantised) foundation model and optionally attach a LoRA adapter.
 
     Parameters
     ----------
@@ -135,6 +135,7 @@ def load_model_and_tokenizer(
         dtype=dtype,
         device_map="auto" if device.type == "cuda" else {"": device},
         attn_implementation="flash_attention_2" if getattr(args, "use_flash_attention", False) else "eager",
+        max_seq_len=getattr(args, "max_seq_length", 4096),  # Pass max sequence length
     )
 
     # --------------------------- branch logic ---------------------------
@@ -155,8 +156,10 @@ def load_model_and_tokenizer(
 
     FastLanguageModel.for_inference(model)
     print("[loader] Model ready for inference ✔")
+    print(f"[loader] Model max sequence length: {get_model_max_length(model)}")
 
     return model, tokenizer
+    
     
 def get_model_max_length(model):
     """
@@ -339,6 +342,11 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args, device=No
             response_tokens = sequences[0][input_length:]
             response = tokenizer.decode(response_tokens, skip_special_tokens=True)
             
+            # Print full generated response for debugging
+            print(f"\n==== FULL GENERATED RESPONSE (Patient {idx+1}) ====")
+            print(response)
+            print(f"==== END OF RESPONSE ====\n")
+            
             # Extract decision and explanation
             decision, explanation = extract_malnutrition_decision(response)
             
@@ -362,8 +370,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args, device=No
             batch_results.append((0, f"Error: {str(e)}", 0.5))
     
     return batch_results
-
-
+    
 def calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer):
     """
     Calculate confidence score for the prediction.
@@ -678,6 +685,14 @@ def main():
         torch.cuda.empty_cache()
         print("GPU cache cleared")
 
+    # Log important parameters
+    print("===== Configuration =====")
+    print(f"Max sequence length: {args.max_seq_length}")
+    print(f"Generation max length: {args.max_length}")
+    print(f"Temperature: {args.temperature}")
+    print(f"Few-shot examples: {args.few_shot_count}")
+    print("========================")
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -707,7 +722,6 @@ def main():
     except Exception as e:
         print(f"Error during model evaluation: {e}")
         raise
-
     # Save predictions to CSV
     predictions_path = os.path.join(args.output_dir, "predictions.csv")
     results_df.to_csv(predictions_path, index=False)
