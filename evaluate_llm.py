@@ -637,7 +637,7 @@ def parse_arguments():
                         help="Random seed for reproducibility")
     parser.add_argument("--max_length", type=int, default=200,
                         help="Maximum number of tokens to generate (default: 200)")
-    parser.add_argument("--temperature", type=float, default=0.1,
+    parser.add_argument("--temperature", type=float, default=0.3,
                         help="Temperature for sampling")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for processing (default: 16)")
