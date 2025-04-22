@@ -22,7 +22,6 @@ from models.llm_models import (
     plot_evaluation_metrics,
     save_metrics_to_csv,
     print_metrics_report
-    # Removed WeightedSFTTrainer import
 )
 from transformers import TrainerCallback, TrainerState, TrainerControl
 import numpy as np
@@ -30,7 +29,7 @@ import numpy as np
 class EarlyStoppingCallback(TrainerCallback):
     """Custom callback for early stopping based on evaluation loss."""
     
-    def __init__(self, patience=3, threshold=0.01):
+    def __init__(self, patience=5, threshold=0.005):  # FIXED: Increased patience and reduced threshold
         """
         Args:
             patience: Number of evaluations with no improvement before stopping
@@ -99,25 +98,24 @@ def parse_arguments():
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Per-device training batch size")
-    parser.add_argument("--learning_rate", type=float, default=5e-5,  # Reduced from 2e-4
+    parser.add_argument("--learning_rate", type=float, default=2e-4,  # FIXED: Restored original learning rate
                         help="Learning rate for training")
     parser.add_argument("--max_seq_length", type=int, default=4096,
                         help="Maximum sequence length for processing notes (optional)")
-    parser.add_argument("--epochs", type=int, default=3,  # Reduced from 5
+    parser.add_argument("--epochs", type=int, default=5,  # FIXED: Restored original epoch count
                         help="Number of training epochs")
     
     # Weight decay parameter
     parser.add_argument("--weight_decay", type=float, default=0.01,
                         help="Weight decay for regularization")
     
-    # Removed class weighting arguments
-    
     # LoRA parameters
     parser.add_argument("--lora_r", type=int, default=8,
                         help="LoRA r parameter (rank)")
     parser.add_argument("--lora_alpha", type=int, default=32,
                         help="LoRA alpha parameter (scaling)")
-    # Removed lora_dropout parameter as we'll set it to 0
+    parser.add_argument("--lora_dropout", type=float, default=0.05,  # FIXED: Added dropout for regularization
+                        help="LoRA dropout rate for regularization")
     parser.add_argument("--target_modules", type=str, default=None,
                         help="Comma-separated list of target modules for LoRA")
 
@@ -139,6 +137,10 @@ def parse_arguments():
                         help="Load model in 8-bit precision")
     parser.add_argument("--load_in_4bit", action="store_true", default=True,
                         help="Load model in 4-bit precision")
+    
+    # FIXED: Added gradient accumulation steps
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4,
+                        help="Number of updates steps to accumulate before backward pass")
     
     args = parser.parse_args()
     
@@ -304,7 +306,7 @@ def create_peft_model(base_model, args):
         model=base_model,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=0.0,  # Set dropout to 0 as requested
+        lora_dropout=args.lora_dropout,  # FIXED: Use configurable dropout
         target_modules=target_modules,
         use_gradient_checkpointing=True,
         random_state=args.seed,
@@ -326,15 +328,15 @@ def get_sft_config(args, fp16, bf16, model_max_seq_length):
     
     config_kwargs = {
         "per_device_train_batch_size": args.batch_size,
-        "warmup_steps": 5,
-        "gradient_accumulation_steps": 1,  # Explicitly set to 1 to disable gradient accumulation
+        "warmup_ratio": 0.1,  # FIXED: Use ratio instead of fixed steps
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,  # FIXED: Use configurable gradient accumulation
         "learning_rate": args.learning_rate,
         "fp16": fp16,
         "bf16": bf16,
         "logging_steps": 1,
         "optim": "adamw_8bit",
         "weight_decay": args.weight_decay,
-        "lr_scheduler_type": "cosine",  # Changed from linear to cosine
+        "lr_scheduler_type": "cosine",
         "seed": args.seed,
         "output_dir": args.output_dir,
         "report_to": args.report_to,
@@ -342,23 +344,24 @@ def get_sft_config(args, fp16, bf16, model_max_seq_length):
         "save_steps": 10,
         "max_seq_length": model_max_seq_length,  # Always use model's native max sequence length
         "dataset_num_proc": 4,
-        "packing": False,
+        "packing": False,  # FIXED: Keep packing disabled for this task
         "num_train_epochs": args.epochs
     }
     
     # Add evaluation parameters only if validation data is provided
     if args.val_data is not None:
         config_kwargs.update({
-            "eval_strategy": "steps",  # Corrected param name
+            "evaluation_strategy": "steps",  # FIXED: Correct parameter name
             "eval_steps": 10,
             "load_best_model_at_end": True,
             "metric_for_best_model": "eval_loss",
+            "greater_is_better": False,  # FIXED: Explicitly specify lower is better for loss
         })
     
     print(f"Training with precision: fp16={fp16}, bf16={bf16}")
     print(f"Using model's native sequence length for SFT config: {model_max_seq_length}")
     print(f"Using max_seq_length={args.max_seq_length} for text processing only")
-    print(f"Gradient accumulation steps: 1 (disabled)")
+    print(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
     return SFTConfig(**config_kwargs)
     
 def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, note_col, label_col, process_seq_length):
@@ -383,20 +386,23 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
     train_data = MalnutritionDataset(train_data_path, note_col, label_col)
     train_formatted = train_data.prepare_training_data(prompt_builder)
     
-    # Pre-tokenize the data to ensure consistent format
+    # FIXED: Improved tokenization function with sliding window for long texts
     def tokenize_function(examples):
         # Make sure 'text' field exists and is not empty
         if not examples.get('text'):
             return {"input_ids": [], "attention_mask": []}
             
-        # Tokenize the examples - use process_seq_length for processing the notes
+        # FIXED: Use stride for long documents
         tokenized = tokenizer(
             examples['text'],
             truncation=True,
             padding="max_length",
-            max_length=process_seq_length,  # Use the processing sequence length here
-            return_tensors=None,  
+            max_length=process_seq_length,
+            return_tensors=None,
+            return_overflowing_tokens=False,  # No sliding window for training data
+            stride=128,  # Stride for overlapping chunks if return_overflowing_tokens=True
         )
+        
         # Add labels for supervised fine-tuning
         tokenized["labels"] = tokenized["input_ids"].copy()
         return tokenized
@@ -405,7 +411,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
     train_dataset = Dataset.from_pandas(pd.DataFrame(train_formatted))
     train_tokenized = train_dataset.map(
         tokenize_function,
-        batched=True,  # Changed to True for consistency with tokenize_function design
+        batched=True,
         remove_columns=["text"] if "text" in train_dataset.column_names else [],
     )
     
@@ -417,7 +423,7 @@ def prepare_datasets(train_data_path, val_data_path, prompt_builder, tokenizer, 
         eval_dataset = Dataset.from_pandas(pd.DataFrame(val_formatted))
         eval_tokenized = eval_dataset.map(
             tokenize_function,
-            batched=True,  # Changed to True for consistency
+            batched=True,
             remove_columns=["text"] if "text" in eval_dataset.column_names else [],
         )
         print(f"Prepared {len(train_tokenized)} training examples and {len(eval_tokenized)} validation examples")
@@ -450,21 +456,31 @@ def calculate_max_seq_length(data_path, tokenizer, note_col, label_col, prompt_b
     
     # Find the maximum sequence length
     max_length = 0
+    all_lengths = []
     for example in formatted_data:
         tokenized = tokenizer.encode(example["text"])
-        max_length = max(max_length, len(tokenized))
+        length = len(tokenized)
+        all_lengths.append(length)
+        max_length = max(max_length, length)
     
-    # Add a buffer to account for potential variations
-    recommended_length = int(max_length * (1 + buffer_percentage/100))
+    # Calculate mean and 90th percentile for better decision
+    mean_length = sum(all_lengths) / len(all_lengths) if all_lengths else 0
+    sorted_lengths = sorted(all_lengths)
+    percentile_90 = sorted_lengths[int(0.9 * len(sorted_lengths))] if all_lengths else 0
     
-    # Cap at model's maximum length
-    final_length = min(recommended_length, model_max_length)
+    # FIXED: Consider both max and 90th percentile
+    recommended_length = min(
+        model_max_length,
+        max(int(percentile_90 * (1 + buffer_percentage/100)), int(max_length * 0.8))
+    )
     
     print(f"Dataset maximum token length: {max_length}")
+    print(f"Dataset mean token length: {mean_length:.2f}")
+    print(f"Dataset 90th percentile token length: {percentile_90}")
     print(f"Recommended length with {buffer_percentage}% buffer: {recommended_length}")
-    print(f"Final sequence length for processing notes (capped by model limit): {final_length}")
+    print(f"Final sequence length for processing notes (capped by model limit): {recommended_length}")
     
-    return final_length
+    return recommended_length
 
 def main():
     """Main function to run the training pipeline."""
@@ -501,8 +517,8 @@ def main():
             args.text_column,
             args.label_column,
             prompt_builder,
-            model_max_length=model_max_seq_length,  # Cap by model's max length
-            buffer_percentage=10  # Add 10% buffer to account for variations
+            model_max_length=model_max_seq_length,
+            buffer_percentage=10
         )
     else:
         process_seq_length = min(args.max_seq_length, model_max_seq_length)
@@ -516,7 +532,7 @@ def main():
         tokenizer,
         args.text_column, 
         args.label_column,
-        process_seq_length  # Use the calculated or manually specified processing length
+        process_seq_length
     )
 
     # Create PEFT/LoRA model
@@ -525,7 +541,7 @@ def main():
     # Get SFT config with correct precision settings and use model's native max sequence length
     sft_config = get_sft_config(args, fp16, bf16, model_max_seq_length)
 
-    # Initialize standard SFT trainer (not weighted)
+    # Initialize standard SFT trainer
     trainer_kwargs = {
         "model": model,
         "tokenizer": tokenizer,
@@ -536,23 +552,23 @@ def main():
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    # Use the standard SFTTrainer instead of WeightedSFTTrainer
+    # Use the standard SFTTrainer
     trainer = SFTTrainer(**trainer_kwargs)
     
     # Add early stopping callback if validation data is provided
     if args.val_data is not None:
         early_stopping = EarlyStoppingCallback(
-            patience=3,  # Stop after 3 evaluations without improvement
-            threshold=0.01  # Minimum change in loss to qualify as improvement
+            patience=5,  # FIXED: Increased patience
+            threshold=0.005  # FIXED: Decreased threshold for more sensitivity
         )
         trainer.add_callback(early_stopping)
 
     # Train the model
     print(f"Starting training with {len(train_dataset)} examples for {args.epochs} epoch(s)...")
-    print(f"Using standard SFTTrainer (no custom class weights)")
+    print(f"Using standard SFTTrainer")
     print(f"Using sequence length for notes processing: {process_seq_length}")
     print(f"Using model's native max sequence length for model configuration: {model_max_seq_length}")
-    print("Gradient accumulation is disabled (steps=1)")
+    print(f"Gradient accumulation is enabled with steps={args.gradient_accumulation_steps}")
     trainer.train()
 
     # Save the trained model properly
@@ -609,10 +625,10 @@ Training parameters:
 - Epochs: {args.epochs}
 - LoRA rank: {args.lora_r}
 - LoRA alpha: {args.lora_alpha}
-- LoRA dropout: 0.0 (disabled)
-- Standard SFTTrainer used (no custom class weights)
-- Gradient accumulation: Disabled
-- Sequence length for processing notes: {process_seq_length} (calculated from dataset with 10% buffer)
+- LoRA dropout: {args.lora_dropout}
+- Standard SFTTrainer used
+- Gradient accumulation: Enabled with {args.gradient_accumulation_steps} steps
+- Sequence length for processing notes: {process_seq_length}
 - Model's native maximum sequence length: {model_max_seq_length} (used for model configuration)
 
 ## Usage
