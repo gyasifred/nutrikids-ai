@@ -111,7 +111,7 @@ def parse_args():
     p.add_argument("--model_output", default="./llm_adapter")
 
     # Train hyper‑params -----------------------------------------------------
-    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--learning_rate", type=float, default=2e-4)
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--weight_decay", type=float, default=0.01)
