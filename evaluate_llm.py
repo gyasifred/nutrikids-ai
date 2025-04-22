@@ -156,20 +156,17 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
             common_kwargs["load_in_8bit"] = args.load_in_8bit
         
         # Case 1: Only base_model is provided - load base model directly
-        if base_model and not model_path:
+        if base_model:
             print(f"Loading base model: {base_model}")
             print(f"Loading with kwargs: {common_kwargs}")
             model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
         
         # Case 2: Only model_path is provided - load adapter model directly
-        elif model_path and not base_model:
+        if model_path:
             print(f"Loading adapter model: {model_path}")
             print(f"Loading with kwargs: {common_kwargs}")
             model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
         
-        # We don't handle the case where both are provided, so raise an error
-        else:
-            raise ValueError("Please provide either base_model or model_path, not both")
         
         # Make sure max_seq_length is explicitly set in model config
         model_max_seq_length = get_model_max_length(model)
@@ -190,6 +187,7 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         import traceback
         traceback.print_exc()  # This will print the full stack trace
         raise
+    
 def get_model_max_length(model):
     """
     Get the maximum context length for the model.
@@ -600,7 +598,7 @@ def parse_arguments():
     parser.add_argument("--model_path", type=str, default=None,
                         help="Path to the fine-tuned model adapter weights (optional). "
                              "If not provided, the base model is used for inference.")
-    parser.add_argument("--base_model", type=str, default="unsloth/meta-llama-3.1-8b-instruct-unsloth-bnb-4bit",
+    parser.add_argument("--base_model", type=str, default=None,
                         help="Base model that was fine-tuned or to be used for inference")
 
     # Test data arguments
