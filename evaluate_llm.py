@@ -635,7 +635,7 @@ def parse_arguments():
                         help="Use Flash Attention 2 if available")
     parser.add_argument("--seed", type=int, default=3407,
                         help="Random seed for reproducibility")
-    parser.add_argument("--max_length", type=int, default=200,
+    parser.add_argument("--max_length", type=int, default=256,
                         help="Maximum number of tokens to generate (default: 200)")
     parser.add_argument("--temperature", type=float, default=0.3,
                         help="Temperature for sampling")
