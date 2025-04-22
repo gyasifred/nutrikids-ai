@@ -167,6 +167,10 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
             print(f"Loading with kwargs: {common_kwargs}")
             model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
         
+        # We don't handle the case where both are provided, so raise an error
+        else:
+            raise ValueError("Please provide either base_model or model_path, not both")
+        
         # Make sure max_seq_length is explicitly set in model config
         model_max_seq_length = get_model_max_length(model)
         print(f"Model's maximum sequence length: {model_max_seq_length}")
@@ -186,7 +190,6 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         import traceback
         traceback.print_exc()  # This will print the full stack trace
         raise
-
 def get_model_max_length(model):
     """
     Get the maximum context length for the model.
