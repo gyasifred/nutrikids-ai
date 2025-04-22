@@ -594,94 +594,149 @@ class MalnutritionPromptBuilder:
     # ------------------------------------------------------------------ #
     # ENHANCED PROMPT CONSTRUCTION - improved readability and effectiveness
     # ------------------------------------------------------------------ #
-    def _construct_prompt(
-        self,
-        patient_notes: str,
-        few_shot_examples: Optional[List[Dict[str, str]]] = None,
-    ) -> str:
-        notes_clean = preprocess_text(patient_notes)
+   def _construct_prompt(
+    self,
+    patient_notes: str,
+    few_shot_examples: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    notes_clean = preprocess_text(patient_notes)
 
-        header = (
-            "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
+    header = (
+        "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
+    )
+
+    task = (
+        "# ASSESSMENT TASK\n"
+        "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
+        "Classification guidelines:\n"
+        "• \"yes\" - Patient meets at least MILD criteria for malnutrition\n"
+        "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
+        "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
+    )
+
+    checklist = (
+        "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
+        "1. **ANTHROPOMETRY**\n"
+        "   ✓ Mild:     z-score -1.0 to -1.9 SD\n"
+        "   ✓ Moderate: z-score -2.0 to -2.9 SD\n"
+        "   ✓ Severe:   z-score ≤ -3.0 SD\n"
+        "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
+        "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
+        "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
+
+        "2. **WEIGHT LOSS**\n"
+        "   ✓ Documented involuntary weight loss\n"
+        "   ✓ Failure to gain expected weight/height in child\n"
+        "   ✓ Declining percentile crossing on growth charts\n\n"
+
+        "3. **REDUCED INTAKE/ABSORPTION**\n"
+        "   ✓ Decreased appetite or food intake\n"
+        "   ✓ Feeding difficulties or dysphagia\n"
+        "   ✓ Restricted diet or food insecurity\n"
+        "   ✓ Malabsorption conditions\n\n"
+
+        "4. **CLINICAL ASSESSMENT**\n"
+        "   ✓ Muscle wasting (temporal, extremities)\n"
+        "   ✓ Subcutaneous fat loss\n"
+        "   ✓ Edema (can mask weight loss)\n"
+        "   ✓ Poor wound healing, skin/hair changes\n\n"
+
+        "5. **COMPLICATING FACTORS**\n"
+        "   ✓ Chronic illness/inflammation\n"
+        "   ✓ Increased metabolic demand (infection, trauma)\n"
+        "   ✓ Medication effects on intake/absorption\n"
+        "   ✓ Psychosocial factors\n"
+    )
+
+    output_spec = (
+        "# OUTPUT REQUIREMENTS\n"
+        "Return a valid JSON object with these exact fields:\n"
+        "```json\n"
+        "{\n"
+        '  "malnutrition": "yes" | "no",\n'
+        '  "confidence": <decimal between 0.1 and 0.9>,\n'
+        '  "evidence": {\n'
+        '    "anthropometry": "<Specific anthropometric findings from notes>",\n'
+        '    "weight_trajectory": "<Comments on weight loss/gain patterns>",\n'
+        '    "intake_absorption": "<Details on eating patterns/absorption issues>",\n'
+        '    "clinical_signs": "<Observable clinical indicators>",\n'
+        '    "complicating_factors": "<Relevant comorbidities or risk factors>"\n'
+        '  },\n'
+        '  "explanation": "<2-3 sentences synthesizing the key evidence supporting your conclusion>"\n'
+        "}\n"
+        "```\n"
+        "- Provide only the complete JSON object without additional text\n"
+        "- Base assessment solely on evidence present in the notes\n"
+        "- Include specific metrics/findings for each evidence category (use \"None documented\" if no information available)\n"
+        "- Confidence reflects your certainty (0.1=very uncertain, 0.9=very certain)\n"
+        "- If evidence is sparse or ambiguous, use lower confidence values\n"
+        "- Explanations should directly cite the strongest evidence points\n"
+    )
+
+    # Enhanced few-shot examples block with more detailed examples
+    few_shot_block = ""
+    if few_shot_examples:
+        few_shot_block = (
+            "# EXAMPLES\n"
+            + "\n".join(self._format_detailed_example(ex) for ex in few_shot_examples)
+            + "\n---\n"
         )
 
-        task = (
-            "# ASSESSMENT TASK\n"
-            "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
-            "Classification guidelines:\n"
-            "• \"yes\" - Patient meets at least MILD criteria for malnutrition\n"
-            "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
-            "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
-        )
+    # assemble prompt
+    return (
+        f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
+        f"{few_shot_block}"
+        "# PATIENT NOTES\n"
+        f"{notes_clean}\n\n"
+        "# ASSESSMENT"
+    )
 
-        checklist = (
-            "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
-            "1. **ANTHROPOMETRY**\n"
-            "   ✓ Mild:     z-score -1.0 to -1.9 SD\n"
-            "   ✓ Moderate: z-score -2.0 to -2.9 SD\n"
-            "   ✓ Severe:   z-score ≤ -3.0 SD\n"
-            "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
-            "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
-            "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
-
-            "2. **WEIGHT LOSS**\n"
-            "   ✓ Documented involuntary weight loss\n"
-            "   ✓ Failure to gain expected weight/height in child\n"
-            "   ✓ Declining percentile crossing on growth charts\n\n"
-
-            "3. **REDUCED INTAKE/ABSORPTION**\n"
-            "   ✓ Decreased appetite or food intake\n"
-            "   ✓ Feeding difficulties or dysphagia\n"
-            "   ✓ Restricted diet or food insecurity\n"
-            "   ✓ Malabsorption conditions\n\n"
-
-            "4. **CLINICAL ASSESSMENT**\n"
-            "   ✓ Muscle wasting (temporal, extremities)\n"
-            "   ✓ Subcutaneous fat loss\n"
-            "   ✓ Edema (can mask weight loss)\n"
-            "   ✓ Poor wound healing, skin/hair changes\n\n"
-
-            "5. **COMPLICATING FACTORS**\n"
-            "   ✓ Chronic illness/inflammation\n"
-            "   ✓ Increased metabolic demand (infection, trauma)\n"
-            "   ✓ Medication effects on intake/absorption\n"
-            "   ✓ Psychosocial factors\n"
-        )
-
-        output_spec = (
-            "# OUTPUT REQUIREMENTS\n"
-            "Return a valid JSON object with these exact fields:\n"
-            "```json\n"
-            "{\n"
-            '  "malnutrition": "yes" | "no",\n'
-            '  "explanation": "<1-2 concise sentences citing specific evidence>"\n'
-            "}\n"
-            "```\n"
-            "- Provide only the JSON object without additional text\n"
-            "- Base assessment solely on evidence present in the notes\n"
-            "- Include specific metrics/findings that support your conclusion\n"
-            "- Do not show your detailed reasoning process\n"
-        )
-
-        # few‑shot examples block
-        few_shot_block = ""
-        if few_shot_examples:
-            few_shot_block = (
-                "# EXAMPLES\n"
-                + "\n".join(self._format_example(ex) for ex in few_shot_examples)
-                + "\n---\n"
-            )
-
-        # assemble prompt
+    def _format_detailed_example(self, example: Dict[str, str]) -> str:
+        """Return one example block with detailed evidence categorization."""
+        notes = preprocess_text(example["text"])
+        raw_label = str(example["label"]).lower()
+        label = "yes" if raw_label in {"1", "yes", "true"} else "no"
+        
+        # Set confidence based on label (could be randomized within ranges)
+        confidence = 0.75 if label == "yes" else 0.65
+        
+        # Generate plausible evidence categories based on label
+        if label == "yes":
+            anthropometry = "Weight-for-height z-score -2.3 SD (moderate); BMI 12.1 kg/m² (<1st percentile)"
+            weight_trajectory = "Lost 4.2 kg (10% body weight) over past 2 months; dropping from 25th to 5th percentile"
+            intake = "Poor oral intake (<50% of meals); refusing high-calorie foods; early satiety reported"
+            clinical = "Visible temporal wasting; reduced subcutaneous fat; reduced muscle mass in extremities"
+            factors = "Concurrent inflammatory bowel disease; increased energy requirements due to infection"
+            explanation = "Patient shows moderate malnutrition with weight-for-height z-score of -2.3 SD, significant weight loss of 10% over 2 months, and poor oral intake (<50% of meals). Clinical examination confirms temporal wasting and reduced muscle mass consistent with protein-energy malnutrition."
+        else:
+            anthropometry = "Weight-for-height z-score -0.8 SD (normal range); BMI 15.2 kg/m² (15th percentile)"
+            weight_trajectory = "Stable growth pattern; maintaining 25th percentile on growth chart"
+            intake = "Adequate caloric intake; eating 80-100% of meals; good variety in diet"
+            clinical = "No visible muscle wasting; normal fat stores; no edema"
+            factors = "Well-controlled chronic condition; normal activity levels"
+            explanation = "Patient does not meet malnutrition criteria with weight-for-height z-score within normal range (-0.8 SD) and stable growth pattern maintaining the 25th percentile. Clinical assessment shows no muscle wasting or fat loss, and dietary intake is reported as adequate with 80-100% of meals consumed."
+        
+        # Format detailed JSON response
+        response = {
+            "malnutrition": label,
+            "confidence": confidence,
+            "evidence": {
+                "anthropometry": anthropometry,
+                "weight_trajectory": weight_trajectory,
+                "intake_absorption": intake,
+                "clinical_signs": clinical,
+                "complicating_factors": factors
+            },
+            "explanation": explanation
+        }
+        
         return (
-            f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
-            f"{few_shot_block}"
-            "# PATIENT NOTES\n"
-            f"{notes_clean}\n\n"
-            "# ASSESSMENT"
+            "Patient notes:\n"
+            f"{notes}\n"
+            "Output:\n"
+            f"{json.dumps(response, indent=2)}\n"
         )
-
-    # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------ #
     # Improved balanced few‑shot sampling helper
     # ------------------------------------------------------------------ #
     def _get_balanced_prompt(
@@ -752,15 +807,17 @@ class MalnutritionPromptBuilder:
         random.shuffle(few_shot_examples)
         return self._construct_prompt(patient_notes, few_shot_examples)
 
-def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
+def extract_malnutrition_decision(response: str) -> Tuple[str, str, float, Dict]:
     """
-    Extract the malnutrition decision (yes|no) and explanation from model output.
-    Handles both JSON format and fallback extraction methods.
+    Extract the malnutrition decision, confidence level, evidence, and explanation from model output.
+    Handles both standard and enhanced JSON formats with fallback extraction methods.
 
     Returns
     -------
     decision : str  ("yes", "no", or "unknown")
     explanation : str
+    confidence : float (between 0.1 and 0.9, defaults to 0.5 if not found)
+    evidence : dict (containing evidence categories, empty if not found)
     """
     # Clean the input string to handle markdown code blocks
     cleaned = response.strip()
@@ -783,38 +840,51 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
     # Try direct JSON parsing first (most reliable method)
     try:
         parsed = json.loads(cleaned)
-        # Look for either "malnutrition" key as specified in prompt
-        if "malnutrition" in parsed:
-            decision = str(parsed.get("malnutrition", "unknown")).lower()
-            explanation = str(parsed.get("explanation", "")).strip()
-            if decision in ["yes", "no"]:
-                return decision, explanation
+        # Extract decision
+        decision = str(parsed.get("malnutrition", "unknown")).lower()
+        if decision not in ["yes", "no"]:
+            decision = "unknown"
+            
+        # Extract confidence (default to 0.5 if not present)
+        confidence = parsed.get("confidence", 0.5)
+        try:
+            confidence = float(confidence)
+            # Constrain to valid range
+            confidence = max(0.1, min(0.9, confidence))
+        except (ValueError, TypeError):
+            confidence = 0.5
+            
+        # Extract explanation
+        explanation = str(parsed.get("explanation", "")).strip()
+        
+        # Extract evidence dictionary
+        evidence = parsed.get("evidence", {})
+        if not isinstance(evidence, dict):
+            evidence = {}
+            
+        return decision, explanation, confidence, evidence
+        
     except json.JSONDecodeError:
         pass
 
     # Fallback extraction methods for both JSON and non-JSON formats
-
+    decision = "unknown"
+    explanation = ""
+    confidence = 0.5
+    evidence = {}
+    
     # 1. Extract malnutrition decision with improved patterns
     decision_patterns = [
-        # JSON format patterns
-        r'"malnutrition"\s*:\s*"(yes|no)"',  # Standard JSON format
-        r'"malnutrition"\s*:\s*"([^"]+)"',   # Any string in JSON format
-
-        # Non-JSON format patterns
-        r'malnutrition\s*[=:]\s*(yes|no)',   # Key-value pair format
-        r'malnutrition.*?(yes|no)',          # Loose format
-
-        # Sentence-based patterns
-        r"patient (does|doesn['']t) meet.*?malnutrition",  # Clinical statement
-        r'(evidence|signs|indications) of malnutrition',    # Evidence statement
+        r'"malnutrition"\s*:\s*"(yes|no)"',
+        r'malnutrition\s*[=:]\s*(yes|no)',
+        r"patient (does|doesn['']t) meet.*?malnutrition",
+        r'(evidence|signs|indications) of malnutrition',
     ]
 
-    decision = "unknown"
     for pattern in decision_patterns:
         decision_match = re.search(pattern, cleaned, flags=re.I)
         if decision_match:
             matched_text = decision_match.group(1).lower()
-            # Map various positive/negative expressions to yes/no
             if matched_text in ["yes", "does", "evidence", "signs", "indications"]:
                 decision = "yes"
                 break
@@ -825,50 +895,48 @@ def extract_malnutrition_decision(response: str) -> Tuple[str, str]:
                 decision = matched_text
                 break
 
-    # 2. Extract explanation with improved patterns
-    explanation = ""
+    # 2. Extract confidence
+    confidence_patterns = [
+        r'"confidence"\s*:\s*(0\.\d+)',
+        r'confidence\s*[=:]\s*(0\.\d+)',
+        r'confidence:?\s*(0\.\d+)',
+    ]
+    
+    for pattern in confidence_patterns:
+        conf_match = re.search(pattern, cleaned, flags=re.I)
+        if conf_match:
+            try:
+                confidence = float(conf_match.group(1))
+                confidence = max(0.1, min(0.9, confidence))
+                break
+            except (ValueError, TypeError):
+                pass
+
+    # 3. Extract explanation
     explanation_patterns = [
-        # JSON format patterns
-        r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',         # Quoted with possible escapes
-        r'"explanation"\s*:\s*\'([^\']*)\'',                # Single-quoted
-        r'"explanation"\s*:\s*"([^"]*)"',                   # Double-quoted simple
-
-        # Non-JSON formats
-        r'explanation\s*[:=]\s*["\'](.*?)["\']',            # Quoted after key
-        r'explanation\s*[:=]\s*([^",\s][^,}]*)',            # Unquoted after key
-
-        # Context-based patterns - capturing more content
-        r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))', # After "because" until end or delimiter
-        r'(due to\s+.*?)(?:$|(?=\n\n|\}))',                 # "Due to" phrase until delimiter
-        r'evidence includes\s+(.*?)(?:$|(?=\n\n|\}))',      # Evidence statement until delimiter
+        r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'explanation\s*[:=]\s*["\'](.*?)["\']',
+        r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))',
     ]
 
     for pattern in explanation_patterns:
         expl_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
         if expl_match:
-            # Get the first non-None group
-            groups = expl_match.groups()
-            explanation = next((g for g in groups if g is not None), "").strip()
+            explanation = expl_match.group(1).strip()
             if explanation:
                 break
 
-    # As last resort, try to extract relevant consecutive sentences if we have a decision but no explanation
-    if decision != "unknown" and not explanation:
-        sentences = re.split(r'[.!?]\s+', cleaned)
-        relevant_sentences = []
-        
-        for sentence in sentences:
-            # Check if sentence contains malnutrition-related terms
-            if re.search(r'malnutrition|nutritional|weight|growth|z-score|BMI|intake|wasting|anthropometric|MUAC', sentence, re.I):
-                relevant_sentences.append(sentence.strip())
-        
-        if relevant_sentences:
-            # Join up to 3 relevant sentences to form a coherent explanation
-            explanation = ". ".join(relevant_sentences[:3])
-            if not explanation.endswith((".", "!", "?")):
-                explanation += "."
+    # 4. Try to extract evidence categories
+    evidence_categories = ["anthropometry", "weight_trajectory", "intake_absorption", 
+                           "clinical_signs", "complicating_factors"]
+    
+    for category in evidence_categories:
+        pattern = r'"' + category + r'"\s*:\s*"((?:[^"\\]|\\.)*)"'
+        cat_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
+        if cat_match:
+            evidence[category] = cat_match.group(1).strip()
 
-    return decision, explanation
+    return decision, explanation, confidence, evidence
     
     
 class WeightedSFTTrainer(SFTTrainer):
