@@ -224,28 +224,28 @@ def load_model_and_tokenizer(
         attn_implementation="flash_attention_2" if getattr(args, "use_flash_attention", False) else "eager",
     )
 
-    q_cfg = get_quantization_config(args)
-    if q_cfg is not None:
-        common_kwargs["quantization_config"] = q_cfg
-    else:
-        common_kwargs["load_in_4bit"] = getattr(args, "load_in_4bit", False)
-        common_kwargs["load_in_8bit"] = getattr(args, "load_in_8bit", False)
+    # q_cfg = get_quantization_config(args)
+    # if q_cfg is not None:
+    #     common_kwargs["quantization_config"] = q_cfg
+    # else:
+    #     common_kwargs["load_in_4bit"] = getattr(args, "load_in_4bit", False)
+    #     common_kwargs["load_in_8bit"] = getattr(args, "load_in_8bit", False)
 
     # --------------------------- branch logic ---------------------------
     if base_model and model_path:  # both supplied → attach manually
         print(f"[loader] Loading base model: {base_model}")
-        base, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
+        base, tokenizer = FastLanguageModel.from_pretrained(base_model)
 
         print(f"[loader] Attaching adapter: {model_path}")
         model = PeftModel.from_pretrained(base, model_path)  # default adapter name
 
     elif model_path:  # adapter only
         print(f"[loader] Loading adapter (Unsloth auto‑fetches base): {model_path}")
-        model, tokenizer = FastLanguageModel.from_pretrained(model_path, **common_kwargs)
+        model, tokenizer = FastLanguageModel.from_pretrained(model_path)
 
     else:  # base only
         print(f"[loader] Loading base model only: {base_model}")
-        model, tokenizer = FastLanguageModel.from_pretrained(base_model, **common_kwargs)
+        model, tokenizer = FastLanguageModel.from_pretrained(base_model)
 
     # ----------------------- post‑initialisation -----------------------
     max_len = get_model_max_length(model)
