@@ -6,6 +6,10 @@ import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import unsloth  # Import unsloth first
+# Set the environment variable for Unsloth logits before any imports if needed
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
+
 from unsloth import FastLanguageModel
 from transformers import BitsAndBytesConfig
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
@@ -23,21 +27,23 @@ from models.llm_models import (
 
 def get_quantization_config(args):
     """Define quantization configuration for the model based on arguments."""
-    # Determine compute dtype based on hardware and user preferences
-    compute_dtype = torch.bfloat16 if is_bfloat16_supported(
-    ) and not args.force_fp16 else torch.float16
-
-    # Handle 8-bit quantization
+    # Determine if we should use 8-bit or 4-bit quantization (but not both)
     if args.load_in_8bit:
         return BitsAndBytesConfig(
             load_in_8bit=True,
-            load_in_4bit=False,
+            load_in_4bit=False,  
             llm_int8_enable_fp32_cpu_offload=True
         )
-    # Handle 4-bit quantization
     elif args.load_in_4bit:
+        # Determine compute dtype based on available hardware and args
+        if args.force_bf16 and is_bfloat16_supported():
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float16
+            
         return BitsAndBytesConfig(
             load_in_4bit=True,
+            load_in_8bit=False,  # Explicitly set to False
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
@@ -45,28 +51,54 @@ def get_quantization_config(args):
             llm_int8_threshold=6.0,
             llm_int8_has_fp16_weight=True
         )
-    # No quantization (full precision)
     else:
+        # No quantization
         return None
 
 
-def get_device():
+def get_device(args):
     """
     Get the appropriate device, prioritizing GPU usage.
 
     Returns:
         torch.device: The device to use for model inference
     """
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and not args.force_cpu:
         # Use CUDA GPU
-        device = torch.device("cuda")
-        print(f"GPU detected: {torch.cuda.get_device_name(0)}")
-        print(
-            f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        selected_gpu = min(args.gpu_id, torch.cuda.device_count() - 1)
+        device = torch.device("cuda", selected_gpu)
+        print(f"GPU detected: {torch.cuda.get_device_name(selected_gpu)}")
+        props = torch.cuda.get_device_properties(selected_gpu)
+        print(f"GPU memory: {props.total_memory / 1024**3:.2f} GB")
+        
+        # Optimize CUDA operations
+        torch.backends.cudnn.benchmark = True
+        print("cuDNN benchmark mode enabled for faster inference")
+        
         return device
     else:
-        print("No GPU detected, falling back to CPU. This may significantly slow down inference.")
+        print("No GPU detected or forced CPU, using CPU. This may significantly slow down inference.")
         return torch.device("cpu")
+
+
+def determine_model_precision(args):
+    """Determine appropriate precision settings for model inference."""
+    # Check if user explicitly specified precision
+    if args.force_fp16:
+        return True, False
+    
+    if args.force_bf16:
+        if is_bfloat16_supported():
+            return False, True
+        else:
+            print("Warning: BF16 requested but not supported by hardware. Falling back to FP16.")
+            return True, False
+    
+    # Auto-detect best precision
+    if is_bfloat16_supported():
+        return False, True
+    else:
+        return True, False
 
 
 def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
@@ -87,12 +119,13 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         raise ValueError("Either base_model or model_path must be provided")
 
     # Get device
-    device = get_device()
+    device = get_device(args)
     print(f"Using device: {device}")
     
-    # Determine compute dtype based on hardware and preferences
-    compute_dtype = torch.bfloat16 if is_bfloat16_supported() and not args.force_fp16 else torch.float16
-    print(f"Using compute dtype: {compute_dtype}")
+    # Determine precision based on hardware and user preferences
+    fp16, bf16 = determine_model_precision(args)
+    dtype = torch.bfloat16 if bf16 else torch.float16
+    print(f"Using compute dtype: {dtype}")
     
     # Get appropriate quantization config
     quantization_config = get_quantization_config(args)
@@ -102,13 +135,15 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         print("No quantization config created, using direct quantization flags")
     
     try:
+        # Set attention implementation based on flash attention flag
+        attn_implementation = "flash_attention_2" if args.use_flash_attention else "eager"
+        
         # Set up model loading kwargs with common parameters
         model_kwargs = {
-            # Force GPU usage if available instead of "auto" mapping
+            "model_name": base_model if base_model else model_path,
+            "dtype": dtype,
             "device_map": "cuda" if torch.cuda.is_available() and not args.force_cpu else "auto",
-            "use_flash_attention_2": args.use_flash_attention,
-            "use_cache": True,  # Enable caching for inference
-            "max_seq_length": args.max_seq_length  # Set model's maximum sequence length
+            "attn_implementation": attn_implementation
         }
         
         # Add quantization settings
@@ -118,44 +153,34 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
             # Direct quantization flags if no config is provided
             model_kwargs["load_in_4bit"] = args.load_in_4bit
             model_kwargs["load_in_8bit"] = args.load_in_8bit
-            
-        # Set dtype for the model
-        model_kwargs["dtype"] = compute_dtype
         
         # Debug print to show the complete model loading parameters
         print(f"Attempting to load model with kwargs: {model_kwargs}")
         
-        # Load fine-tuned model if path is provided
-        model = None
-        tokenizer = None
+        # Load the model with the appropriate parameters
+        model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
         
-        if model_path:
-            print(f"Starting to load fine-tuned model from: {model_path}")
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_path, 
-                **model_kwargs)
-            print(f"Model loaded successfully with adapter weights from {model_path}")
-        
-        # Load base model if provided
-        if base_model and not model:
-            print(f"Starting to load base model: {base_model}")
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                base_model,
-                **model_kwargs)
-            print(f"Base model loaded successfully: {base_model}")
-        
-        # # Print model details for debugging
-        # print(f"Model config: {model.config}")
-        # print(f"Tokenizer details: {tokenizer.__class__.__name__}")
+        # If we loaded a base model and have adapter weights, then merge them
+        if base_model and model_path and os.path.exists(model_path):
+            print(f"Loading and merging adapter weights from: {model_path}")
+            # Load the adapter weights
+            adapter_model = FastLanguageModel.get_peft_model(
+                model,
+                peft_model_id=model_path,
+                use_gradient_checkpointing=False
+            )
+            model = adapter_model  # Use the adapted model
+            print("Adapter weights loaded and merged successfully")
         
         # Make sure max_seq_length is explicitly set in model config
-        if not hasattr(model.config, 'max_seq_length'):
-            print(f"Setting max_seq_length={args.max_seq_length} in model config")
-            model.config.max_seq_length = args.max_seq_length
-        else:
-            print(f"Model's max sequence length from config: {model.config.max_seq_length}")
+        model_max_seq_length = get_model_max_length(model)
+        print(f"Model's maximum sequence length: {model_max_seq_length}")
         
-        # Enable native 2x faster inference
+        if args.max_seq_length and args.max_seq_length < model_max_seq_length:
+            print(f"Note: Using user-specified max_seq_length={args.max_seq_length}, "
+                  f"which is less than model's native {model_max_seq_length}")
+        
+        # Enable native faster inference
         print("Enabling faster inference...")
         FastLanguageModel.for_inference(model)
         print("Model ready for inference")
@@ -165,10 +190,9 @@ def load_model_and_tokenizer(base_model=None, model_path=None, args=None):
         print(f"Detailed error loading model: {str(e)}")
         import traceback
         traceback.print_exc()  # This will print the full stack trace
-        
-        # Don't provide fallback or model listings, just raise the exception
         raise
-        
+
+
 def get_model_max_length(model):
     """
     Get the maximum context length for the model.
@@ -180,27 +204,28 @@ def get_model_max_length(model):
         int: Maximum sequence length the model can handle
     """
     # Consistent handling of max sequence length
-    if hasattr(model.config, 'max_seq_length'):
-        return model.config.max_seq_length
-    elif hasattr(model.config, 'max_position_embeddings'):
+    if hasattr(model.config, 'max_position_embeddings'):
         return model.config.max_position_embeddings
+    elif hasattr(model.config, 'max_seq_length'):
+        return model.config.max_seq_length
     elif hasattr(model.config, 'context_length'):
         return model.config.context_length
     elif hasattr(model.config, 'max_length'):
         return model.config.max_length
     else:
         # Default fallback
-        return 2048
+        return 4096
 
 
-def truncate_text(text, tokenizer, max_tokens):
+def truncate_text(text, tokenizer, max_tokens, keep_beginning=True):
     """
-    Simple truncation function that keeps the beginning of text up to max_tokens.
+    Truncate text to fit within max_tokens, with option to keep beginning or end.
     
     Args:
         text (str): The text to truncate
         tokenizer: The tokenizer
         max_tokens (int): Maximum number of tokens allowed
+        keep_beginning (bool): Whether to keep the beginning (True) or end (False)
         
     Returns:
         str: Truncated text
@@ -212,8 +237,11 @@ def truncate_text(text, tokenizer, max_tokens):
     if len(tokens) <= max_tokens:
         return text
     
-    # Truncate to keep the beginning (first max_tokens)
-    truncated_tokens = tokens[:max_tokens]
+    # Truncate to keep the beginning or end
+    if keep_beginning:
+        truncated_tokens = tokens[:max_tokens]
+    else:
+        truncated_tokens = tokens[-max_tokens:]
     
     # Decode back to text
     truncated_text = tokenizer.decode(truncated_tokens)
@@ -223,58 +251,62 @@ def truncate_text(text, tokenizer, max_tokens):
 
 def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
     """
-    Process a batch of patient notes and extract predictions with specific confidence scores
+    Process a batch of patient notes and extract predictions with confidence scores
     for malnutrition classification.
     """
-    # Use GPU if available
-    device = torch.device("cuda") if torch.cuda.is_available() and not args.force_cpu else torch.device("cpu")
+    # Use device based on settings
+    device = get_device(args)
     
-    # Get model's maximum sequence length - using consistent method
+    # Get model's maximum sequence length
     model_max_length = get_model_max_length(model)
-    # print(f"Using model_max_length = {model_max_length} for batch processing")
+    actual_max_length = min(args.max_seq_length, model_max_length) if args.max_seq_length else model_max_length
     
     # Reserve tokens for generation and prompt formatting
-    generation_reserve = args.max_length
-    prompt_formatting_reserve = 256
+    generation_reserve = min(args.max_length + 50, actual_max_length // 4)  # Reserve for generated response
+    prompt_formatting_reserve = 256  # Reserve for prompt templates and instructions
     
     # Max tokens available for patient note
-    max_note_tokens = model_max_length - generation_reserve - prompt_formatting_reserve
+    max_note_tokens = actual_max_length - generation_reserve - prompt_formatting_reserve
+    max_note_tokens = max(128, max_note_tokens)  # Ensure we have at least 128 tokens for the note
     
     batch_results = []
     
     for text in batch_texts:
         try:
-            # First, check token count of raw text
+            # Use sliding window approach consistent with training
             text_token_count = len(tokenizer.encode(text, add_special_tokens=False))
             
-            # Truncate text if too long, before building prompt
+            # Truncate text if too long, before building prompt (keep beginning)
             if text_token_count > max_note_tokens:
-                text_tokens = tokenizer.encode(text, add_special_tokens=False)[:max_note_tokens]
-                text = tokenizer.decode(text_tokens)
+                text = truncate_text(text, tokenizer, max_note_tokens, keep_beginning=True)
             
             # Dynamically adjust few-shot examples based on available context
             current_few_shot_count = args.few_shot_count
             
             while True:
                 # Build prompt with current few-shot count
-                prompt = prompt_builder.get_balanced_inference_prompt(
-                    patient_notes=text,
-                    text_col=args.text_column,
-                    label_col=args.label_column,
-                    num_examples=current_few_shot_count
-                ) if args.balanced_examples else prompt_builder.get_inference_prompt(
-                    patient_notes=text,
-                    note_col=args.text_column,
-                    label_col=args.label_column,
-                    num_examples=current_few_shot_count
-                )
+                if args.balanced_examples:
+                    prompt = prompt_builder.get_balanced_inference_prompt(
+                        patient_notes=text,
+                        text_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=current_few_shot_count
+                    )
+                else:
+                    prompt = prompt_builder.get_inference_prompt(
+                        patient_notes=text,
+                        note_col=args.text_column,
+                        label_col=args.label_column,
+                        num_examples=current_few_shot_count
+                    )
                 
                 # Check prompt length
-                prompt_token_length = len(tokenizer.encode(prompt, add_special_tokens=True))
+                prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+                prompt_token_length = len(prompt_tokens)
                 total_required_length = prompt_token_length + generation_reserve
                 
                 # If prompt fits, proceed
-                if total_required_length <= model_max_length:
+                if total_required_length <= actual_max_length:
                     break
                 
                 # If still too long, reduce few-shot examples
@@ -284,19 +316,19 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 
                 # If zero few-shot and still too long, truncate text further
                 current_text_tokens = len(tokenizer.encode(text, add_special_tokens=False))
-                new_max_tokens = max(1, current_text_tokens - (total_required_length - model_max_length) - 50)  # 50 extra as buffer
+                new_max_tokens = max(64, current_text_tokens - (total_required_length - actual_max_length) - 50)
                 
                 if new_max_tokens < current_text_tokens:
-                    text_tokens = tokenizer.encode(text, add_special_tokens=False)[:new_max_tokens]
-                    text = tokenizer.decode(text_tokens)
+                    text = truncate_text(text, tokenizer, new_max_tokens, keep_beginning=True)
                     continue
                 
                 # Emergency truncation of prompt if still too long
                 prompt_template = "Analyze this patient note for malnutrition: "
                 text_tokens = tokenizer.encode(text, add_special_tokens=False)
-                available_tokens = model_max_length - len(tokenizer.encode(prompt_template, add_special_tokens=True)) - generation_reserve
-                truncated_text_tokens = text_tokens[:available_tokens]
-                prompt = prompt_template + tokenizer.decode(truncated_text_tokens)
+                available_tokens = actual_max_length - len(tokenizer.encode(prompt_template, add_special_tokens=True)) - generation_reserve
+                available_tokens = max(64, available_tokens)  # Ensure we have at least some space
+                truncated_text = truncate_text(text, tokenizer, available_tokens, keep_beginning=True)
+                prompt = prompt_template + truncated_text
                 break
             
             # Prepare chat format messages
@@ -304,7 +336,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
                 {"role": "user", "content": prompt}
             ]
             
-            # Apply chat template and verify length before processing
+            # Apply chat template
             inputs = tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
@@ -313,8 +345,8 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             )
             
             # Final safety check - truncate if still too long
-            if inputs.shape[1] > model_max_length - generation_reserve:
-                inputs = inputs[:, :model_max_length - generation_reserve]
+            if inputs.shape[1] > actual_max_length - generation_reserve:
+                inputs = inputs[:, :actual_max_length - generation_reserve]
             
             # Move to device
             inputs = inputs.to(device)
@@ -344,67 +376,98 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args):
             # Extract decision and explanation
             decision, explanation = extract_malnutrition_decision(response)
             
-            # Add print statement to show extracted decision and explanation
-            print(f"Extracted decision: {decision}, Explanation: {explanation}")
-            
             # Convert text decision to binary
             binary_decision = 1 if decision.lower() == "yes" else 0
             
-            # Extract confidence calculation (unchanged from original)
-            probs = [torch.softmax(score, dim=-1) for score in scores]
-            confidence_score = 0.5  # Default neutral score
+            # Improved confidence score calculation
+            confidence_score = calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer)
             
-            response_lower = response.lower()
-            decision_pattern = "malnutrition=yes" if binary_decision == 1 else "malnutrition=no"
-            alt_pattern = "malnutrition = yes" if binary_decision == 1 else "malnutrition = no"
-            
-            if decision_pattern in response_lower or alt_pattern in response_lower:
-                pattern_pos = response_lower.find(decision_pattern)
-                if pattern_pos == -1:
-                    pattern_pos = response_lower.find(alt_pattern)
-                
-                prefix_tokens = tokenizer.encode(response[:pattern_pos], add_special_tokens=False)
-                decision_tokens = tokenizer.encode(decision_pattern if decision_pattern in response_lower else alt_pattern, 
-                                                 add_special_tokens=False)
-                
-                start_pos = len(prefix_tokens)
-                end_pos = start_pos + len(decision_tokens)
-                
-                start_pos = min(start_pos, len(response_tokens) - 1)
-                end_pos = min(end_pos, len(response_tokens))
-                
-                if end_pos > start_pos:
-                    token_probs = []
-                    for idx in range(start_pos, end_pos):
-                        if idx < len(probs):
-                            token_id = response_tokens[idx].item()
-                            token_prob = probs[idx][0, token_id].item()
-                            token_probs.append(token_prob)
-                    
-                    if token_probs:
-                        confidence_score = sum(token_probs) / len(token_probs)
-            
-            if confidence_score == 0.5:
-                all_probs = []
-                for i, token_id in enumerate(response_tokens):
-                    if i < len(probs):
-                        token_prob = probs[i][0, token_id.item()].item()
-                        all_probs.append(token_prob)
-                
-                if all_probs:
-                    confidence_score = sum(all_probs) / len(all_probs)
-            
-            if binary_decision == 0:
-                confidence_score = 1.0 - confidence_score
-            
-            batch_results.append((binary_decision, explanation, float(confidence_score)))
+            # Add result to batch results
+            batch_results.append((binary_decision, explanation, confidence_score))
             
         except Exception as e:
-            # Only keep minimal error reporting
+            print(f"Error processing text: {str(e)}")
+            # Include a reasonable fallback
             batch_results.append((0, f"Error: {str(e)}", 0.5))
     
     return batch_results
+
+
+def calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer):
+    """
+    Calculate confidence score for the prediction.
     
+    Args:
+        binary_decision: The binary decision (0 or 1)
+        response: The full text response
+        response_tokens: The tokens of the response
+        scores: The scores from the model generation
+        tokenizer: The tokenizer
+        
+    Returns:
+        float: Confidence score between 0 and 1
+    """
+    # Start with a moderate confidence based on the model's decision
+    base_confidence = 0.65 if binary_decision == 1 else 0.35
+    
+    # Look for decision indicators that would strengthen confidence
+    response_lower = response.lower()
+    confidence_modifiers = 0.0
+    
+    # Check for strong indicators in the response
+    if binary_decision == 1:  # Yes to malnutrition
+        if "definite" in response_lower or "clear evidence" in response_lower:
+            confidence_modifiers += 0.2
+        elif "likely" in response_lower or "probable" in response_lower:
+            confidence_modifiers += 0.1
+        elif "possible" in response_lower or "may" in response_lower:
+            confidence_modifiers -= 0.1
+    else:  # No to malnutrition
+        if "no evidence" in response_lower or "normal nutritional" in response_lower:
+            confidence_modifiers += 0.2
+        elif "unlikely" in response_lower or "not likely" in response_lower:
+            confidence_modifiers += 0.1
+        elif "can't determine" in response_lower or "insufficient" in response_lower:
+            confidence_modifiers -= 0.1
+    
+    # Use token probabilities for the decision section if we can identify it
+    decision_keywords = ["malnutrition", "malnourished", "nutritional"]
+    token_confidence = 0.0
+    token_count = 0
+    
+    try:
+        # Convert token IDs to tokens for analysis
+        tokens = [tokenizer.decode([token_id.item()]) for token_id in response_tokens]
+        
+        # Find segments related to the decision
+        for idx, token in enumerate(tokens):
+            if any(keyword in token.lower() for keyword in decision_keywords) and idx < len(scores):
+                # Get probability for this token from scores
+                token_id = response_tokens[idx].item()
+                token_prob = torch.softmax(scores[idx][0], dim=-1)[token_id].item()
+                token_confidence += token_prob
+                token_count += 1
+        
+        # If we found relevant tokens, use their average probability
+        if token_count > 0:
+            # Convert to a confidence score and scale it
+            avg_token_confidence = token_confidence / token_count
+            
+            # Combine base confidence with modifiers and token confidence
+            confidence_score = base_confidence + confidence_modifiers + (avg_token_confidence - 0.5) * 0.2
+        else:
+            confidence_score = base_confidence + confidence_modifiers
+    except Exception as e:
+        # If token confidence calculation fails, fall back to base+modifiers
+        print(f"Warning: Token confidence calculation failed: {e}")
+        confidence_score = base_confidence + confidence_modifiers
+    
+    # Ensure confidence is between 0.05 and 0.95
+    confidence_score = max(0.05, min(0.95, confidence_score))
+    
+    return float(confidence_score)
+
+
 def evaluate_model(args, model, tokenizer, prompt_builder):
     """
     Evaluate model on test dataset using batch processing.
@@ -487,7 +550,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "predicted_label": predicted_label,
                         "prediction_score": pred_score,
                         "explanation": explanation,
-                        "original_note": batch_texts[i]  # Add the original note text to the results
+                        "original_note": batch_texts[i][:500] + "..." if len(batch_texts[i]) > 500 else batch_texts[i]
                     })
                 except Exception as e:
                     print(f"Error processing result for item {i} in batch {batch_idx}: {e}")
@@ -498,7 +561,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "predicted_label": -1,
                         "prediction_score": -1,
                         "explanation": f"Error: {str(e)}",
-                        "original_note": batch_texts[i]  # Add the original note even for error cases
+                        "original_note": batch_texts[i][:500] + "..." if len(batch_texts[i]) > 500 else batch_texts[i]
                     })
     
     # Convert to DataFrame
@@ -523,7 +586,8 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             metrics = evaluate_predictions(y_true, y_pred, y_scores)  # Pass scores
             # Add metrics to results_df as attributes or save separately as needed
             for metric_name, metric_value in metrics.items():
-                results_df.attrs[metric_name] = metric_value
+                if isinstance(metric_value, (int, float, str, bool, np.number)) or metric_value is None:
+                    results_df.attrs[metric_name] = metric_value
         except Exception as e:
             print(f"Error computing evaluation metrics: {e}")
     
@@ -610,6 +674,8 @@ def parse_arguments():
         args.force_bf16 = False
 
     return args
+
+
 def main():
     """Main function to run the evaluation pipeline."""
     args = parse_arguments()
@@ -637,21 +703,12 @@ def main():
         torch.cuda.empty_cache()
         print("GPU cache cleared")
 
-        # Verify GPU is being used
-        device = torch.device("cuda", selected_gpu)
-        print(f"Using device: {device}")
-
-        # Optimize CUDA operations - set these for maximum performance
-        torch.backends.cudnn.benchmark = True
-        print("cuDNN benchmark mode enabled for faster training")
-    else:
-        device = torch.device("cpu")
-        print(f"Using device: {device}")
-        if torch.cuda.is_available():
-            print("Note: GPU is available but not being used due to --force_cpu flag")
-
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # Save configuration for reproducibility
+    with open(os.path.join(args.output_dir, "config.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     # Initialize prompt builder
     try:
