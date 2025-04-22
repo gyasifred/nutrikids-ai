@@ -106,54 +106,104 @@ def train_surrogate_model(factors_df, labels):
 
 def shap_analysis(model, X_test):
     """
-    Perform SHAP analysis, handling both list and array outputs to avoid shape mismatches
-    and ambiguous-array errors in dependence_plot.
+    Perform SHAP analysis with robust error handling and debugging.
+    
+    Args:
+        model: Trained surrogate model (must be Tree-based for TreeExplainer)
+        X_test: Test features (pandas DataFrame)
     """
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_test)
-
-    # pick the positive‐class values if we got a list back
-    values = shap_values[1] if isinstance(shap_values, list) else shap_values
-
-    # bring everything into numpy
-    feature_names = np.array(X_test.columns)
-    X_np = X_test.values
-
-    # sanity check
-    if values.shape[1] != X_np.shape[1]:
-        raise ValueError(
-            f"SHAP has {values.shape[1]} features but X_test has {X_np.shape[1]}"
-        )
-
-    # 1) summary beeswarm
-    plt.figure(figsize=(12,6))
-    shap.summary_plot(
-        values,
-        X_np,
-        feature_names=feature_names,
-        show=False
-    )
-    plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300)
-    plt.close()
-
-    # 2) dependence plots for the top 5 features by mean(|SHAP|):
-    mean_abs = np.abs(values).mean(axis=0)
-    top_idxs = np.argsort(-mean_abs)[:5]
-
-    for idx in top_idxs:
-        plt.figure(figsize=(8,5))
-        shap.dependence_plot(
-            idx,            # <— integer index, not a list or array
-            values,
-            X_np,
-            feature_names=feature_names,
-            interaction_index=None,  # <— turn off interaction auto‐selection
-            show=False
-        )
-        feat = feature_names[idx]
-        plt.savefig(os.path.join(OUT_DIR, f'shap_dependence_{feat}.png'), dpi=300)
-        plt.close()
-
+    try:
+        # Initialize explainer
+        explainer = shap.TreeExplainer(model)
+        
+        # Calculate SHAP values
+        shap_values = explainer.shap_values(X_test)
+        
+        # Debug: Print SHAP values structure
+        print(f"SHAP values type: {type(shap_values)}")
+        if isinstance(shap_values, list):
+            print(f"Number of SHAP arrays: {len(shap_values)}")
+            for i, arr in enumerate(shap_values):
+                print(f"Array {i} shape: {arr.shape}")
+        
+        # Handle binary classification case
+        if isinstance(shap_values, list):
+            values = shap_values[1]  # Use SHAP values for class 1
+        else:
+            values = shap_values
+            
+        # Convert to numpy array if not already
+        if not isinstance(values, np.ndarray):
+            values = np.array(values)
+            
+        # Prepare feature names and data
+        feature_names = X_test.columns.tolist()
+        X_test_array = X_test.values
+        
+        # Debug shapes
+        print(f"SHAP values shape: {values.shape}")
+        print(f"X_test shape: {X_test_array.shape}")
+        print(f"Number of features: {len(feature_names)}")
+        
+        # Verify shape compatibility
+        if values.shape[1] != X_test_array.shape[1]:
+            raise ValueError(
+                f"SHAP values ({values.shape[1]} features) and X_test ({X_test_array.shape[1]} features) "
+                "have mismatched dimensions!"
+            )
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(OUT_DIR, exist_ok=True)
+        
+        # Summary plot with error handling
+        plt.figure(figsize=(12, 6))
+        try:
+            shap.summary_plot(
+                values, 
+                X_test_array, 
+                feature_names=feature_names,
+                show=False
+            )
+            plt.savefig(os.path.join(OUT_DIR, 'shap_summary.png'), dpi=300, bbox_inches='tight')
+            plt.close()
+        except Exception as e:
+            print(f"Error creating summary plot: {str(e)}")
+            # Try alternative approach if the standard one fails
+            try:
+                shap.summary_plot(
+                    values, 
+                    features=X_test_array, 
+                    feature_names=feature_names,
+                    show=False
+                )
+                plt.savefig(os.path.join(OUT_DIR, 'shap_summary_alt.png'), dpi=300, bbox_inches='tight')
+                plt.close()
+            except Exception as alt_e:
+                print(f"Alternative approach also failed: {str(alt_e)}")
+        
+        # Dependence plots for top features
+        for i, feature in enumerate(feature_names[:5]):  # Limit to top 5 features
+            try:
+                plt.figure(figsize=(8, 5))
+                shap.dependence_plot(
+                    i,  # Using feature index instead of name for stability
+                    values, 
+                    X_test_array, 
+                    feature_names=feature_names,
+                    show=False
+                )
+                plt.savefig(
+                    os.path.join(OUT_DIR, f'shap_dependence_{feature}.png'), 
+                    dpi=300, 
+                    bbox_inches='tight'
+                )
+                plt.close()
+            except Exception as e:
+                print(f"Error creating dependence plot for {feature}: {str(e)}")
+                
+    except Exception as e:
+        print(f"SHAP analysis failed: {str(e)}")
+        raise
         
 def lime_analysis(model, X_test, sample_indices=None):
     explainer = lime.lime_tabular.LimeTabularExplainer(
