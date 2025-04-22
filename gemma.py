@@ -601,5 +601,5 @@ trainer_stats = trainer.train()
 #     return {"malnutrition": decision, "explanation": explanation}
 
 # Save the model
-model.save_pretrained("trained/LLm_final/final_model")
+model.save_pretrained("trained/LLm_final/gemma/final_model")
 tokenizer.save_pretrained("trained/LLm_final/gemma/final_model")
