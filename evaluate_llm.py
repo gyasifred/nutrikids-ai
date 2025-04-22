@@ -633,7 +633,7 @@ def parse_arguments():
     # Model settings
     parser.add_argument("--use_flash_attention", action="store_true",
                         help="Use Flash Attention 2 if available")
-    parser.add_argument("--seed", type=int, default=42,
+    parser.add_argument("--seed", type=int, default=3407,
                         help="Random seed for reproducibility")
     parser.add_argument("--max_length", type=int, default=200,
                         help="Maximum number of tokens to generate (default: 200)")
