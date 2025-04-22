@@ -342,32 +342,40 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args, device=No
             response_tokens = sequences[0][input_length:]
             response = tokenizer.decode(response_tokens, skip_special_tokens=True)
             
+            # Store the full response for debugging and later analysis
+            full_response = response.strip()
+            
             # Print full generated response for debugging
             print(f"\n==== FULL GENERATED RESPONSE (Patient {idx+1}) ====")
-            print(response)
+            print(full_response)
             print(f"==== END OF RESPONSE ====\n")
             
             # Extract decision and explanation
-            decision, explanation = extract_malnutrition_decision(response)
-            
-            # Convert text decision to binary
-            binary_decision = 1 if decision.lower() == "yes" else 0
-            
-            # Improved confidence score calculation
-            confidence_score = calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer)
-            
-            # Print decision and explanation for monitoring
-            decision_text = "Yes" if binary_decision == 1 else "No"
-            explanation_preview = explanation[:100] + "..." if len(explanation) > 100 else explanation
-            print(f"Patient {idx+1}: Decision: {decision_text}, Confidence: {confidence_score:.2f}, Explanation: {explanation_preview}")
-            
-            # Add result to batch results
-            batch_results.append((binary_decision, explanation, confidence_score))
+            try:
+                decision, explanation = extract_malnutrition_decision(response)
+                
+                # Convert text decision to binary
+                binary_decision = 1 if decision.lower() == "yes" else 0
+                
+                # Calculate confidence score
+                confidence_score = calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer)
+                
+                # Print decision and explanation for monitoring
+                decision_text = "Yes" if binary_decision == 1 else "No"
+                explanation_preview = explanation[:100] + "..." if len(explanation) > 100 else explanation
+                print(f"Patient {idx+1}: Decision: {decision_text}, Confidence: {confidence_score:.2f}, Explanation: {explanation_preview}")
+                
+                # Add result to batch results including the full response
+                batch_results.append((binary_decision, explanation, confidence_score, full_response))
+            except Exception as e:
+                print(f"Error extracting decision from response for patient {idx+1}: {str(e)}")
+                # Include a reasonable fallback
+                batch_results.append((0, f"Error: {str(e)}", 0.5, full_response))
             
         except Exception as e:
             print(f"Error processing text {idx+1}: {str(e)}")
             # Include a reasonable fallback
-            batch_results.append((0, f"Error: {str(e)}", 0.5))
+            batch_results.append((0, f"Error: {str(e)}", 0.5, "Error occurred during processing"))
     
     return batch_results
     
@@ -525,7 +533,8 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             # Store results
             for i in range(len(batch_texts)):
                 try:
-                    predicted_label, explanation, pred_score = batch_results[i]
+                    # Now unpack 4 values including the full response
+                    predicted_label, explanation, pred_score, full_response = batch_results[i]
                     
                     results.append({
                         "patient_id": batch_ids[i],
@@ -533,6 +542,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "predicted_label": predicted_label,
                         "prediction_score": pred_score,
                         "explanation": explanation,
+                        "full_response": full_response,  # Store the full response
                         "original_note": batch_texts[i][:500] + "..." if len(batch_texts[i]) > 500 else batch_texts[i]
                     })
                 except Exception as e:
@@ -544,6 +554,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
                         "predicted_label": -1,
                         "prediction_score": -1,
                         "explanation": f"Error: {str(e)}",
+                        "full_response": "Error occurred during processing",
                         "original_note": batch_texts[i][:500] + "..." if len(batch_texts[i]) > 500 else batch_texts[i]
                     })
     
@@ -575,6 +586,7 @@ def evaluate_model(args, model, tokenizer, prompt_builder):
             print(f"Error computing evaluation metrics: {e}")
     
     return results_df
+    
 def parse_arguments():
     """Parse command line arguments for the evaluation script."""
     parser = argparse.ArgumentParser(
