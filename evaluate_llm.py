@@ -6,6 +6,7 @@ import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from peft import PeftModel  
 from typing  import  Optional
 import unsloth  # Import unsloth first
 # Set the environment variable for Unsloth logits before any imports if needed
