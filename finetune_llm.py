@@ -5,6 +5,7 @@ Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment.
 """
 
 import os
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 import argparse
 import pandas as pd
 import torch
