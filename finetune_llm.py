@@ -25,7 +25,7 @@ def parse_arguments():
     parser.add_argument("--epochs", type=float, default=10, help="Epochs")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
-    parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints"
+    parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints")
     return parser.parse_args()
 
 
