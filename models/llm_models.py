@@ -600,11 +600,11 @@ class MalnutritionPromptBuilder:
         few_shot_examples: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         notes_clean = preprocess_text(patient_notes)
-
+    
         header = (
             "You are a board‑certified clinical dietitian with expertise in pediatric malnutrition assessment."
         )
-
+    
         task = (
             "# ASSESSMENT TASK\n"
             "Evaluate the patient notes to determine if there is clinical evidence of malnutrition.\n\n"
@@ -613,7 +613,7 @@ class MalnutritionPromptBuilder:
             "• \"no\" - Patient does not meet ANY malnutrition criteria\n"
             "• IMPORTANT: If evidence is borderline or ambiguous, classify as \"no\"\n"
         )
-
+    
         checklist = (
             "# MALNUTRITION DIAGNOSTIC CRITERIA\n\n"
             "1. **ANTHROPOMETRY**\n"
@@ -623,31 +623,31 @@ class MalnutritionPromptBuilder:
             "   ✓ Weight-for-height, BMI-for-age, or weight-for-age\n"
             "   ✓ Height-for-age z-score ≤ -3 SD indicates severe stunting\n"
             "   ✓ MUAC (Mid-Upper Arm Circumference) follows same cutoffs\n\n"
-
+    
             "2. **WEIGHT LOSS**\n"
             "   ✓ Documented involuntary weight loss\n"
             "   ✓ Failure to gain expected weight/height in child\n"
             "   ✓ Declining percentile crossing on growth charts\n\n"
-
+    
             "3. **REDUCED INTAKE/ABSORPTION**\n"
             "   ✓ Decreased appetite or food intake\n"
             "   ✓ Feeding difficulties or dysphagia\n"
             "   ✓ Restricted diet or food insecurity\n"
             "   ✓ Malabsorption conditions\n\n"
-
+    
             "4. **CLINICAL ASSESSMENT**\n"
             "   ✓ Muscle wasting (temporal, extremities)\n"
             "   ✓ Subcutaneous fat loss\n"
             "   ✓ Edema (can mask weight loss)\n"
             "   ✓ Poor wound healing, skin/hair changes\n\n"
-
+    
             "5. **COMPLICATING FACTORS**\n"
             "   ✓ Chronic illness/inflammation\n"
             "   ✓ Increased metabolic demand (infection, trauma)\n"
             "   ✓ Medication effects on intake/absorption\n"
             "   ✓ Psychosocial factors\n"
         )
-
+    
         output_spec = (
             "# OUTPUT REQUIREMENTS\n"
             "Return a valid JSON object with these exact fields:\n"
@@ -670,9 +670,13 @@ class MalnutritionPromptBuilder:
             "- Include specific metrics/findings for each evidence category (use \"None documented\" if no information available)\n"
             "- Confidence reflects your certainty (0.1=very uncertain, 0.9=very certain)\n"
             "- If evidence is sparse or ambiguous, use lower confidence values\n"
-            "- Explanations should directly cite the strongest evidence points\n"
+            "- IMPORTANT: Never use generic explanations like \"Based on the clinical evidence in the patient notes\"\n"
+            "- Always include specific details from the notes in your explanation\n"
+            "- Refer to actual z-scores, percentiles, measurements, or clinical observations when available\n"
+            "- If you're making a malnutrition diagnosis, clearly state which criteria are met\n"
+            "- If ruling out malnutrition, explain which normal findings support this conclusion\n"
         )
-
+    
         # Enhanced few-shot examples block with more detailed examples
         few_shot_block = ""
         if few_shot_examples:
@@ -681,14 +685,15 @@ class MalnutritionPromptBuilder:
                 + "\n".join(self._format_detailed_example(ex) for ex in few_shot_examples)
                 + "\n---\n"
             )
-
+    
         # assemble prompt
         return (
             f"{header}\n\n{task}\n{checklist}\n{output_spec}\n"
             f"{few_shot_block}"
             "# PATIENT NOTES\n"
             f"{notes_clean}\n\n"
-            "# ASSESSMENT"
+            "# ASSESSMENT\n"
+            "Analyze the patient notes carefully and provide a detailed assessment based on the malnutrition criteria."
         )
 
     def _format_detailed_example(self, example: Dict[str, str]) -> str:
@@ -818,7 +823,7 @@ def extract_malnutrition_decision(response: str):
     Returns:
         tuple: (decision, explanation) where:
             - decision: "yes" or "no" string
-            - explanation: Explanation text string
+            - explanation: Explanation text string with specific details
     """
     # Clean the input string
     cleaned = response.strip()
@@ -851,9 +856,29 @@ def extract_malnutrition_decision(response: str):
             if decision not in ["yes", "no"]:
                 decision = "unknown"
         
-        # Extract explanation
-        if "explanation" in parsed:
+        # Extract explanation - more comprehensive approach
+        if "explanation" in parsed and parsed["explanation"] and not parsed["explanation"].strip() == "Based on the clinical evidence in the patient notes.":
             explanation = str(parsed["explanation"]).strip()
+        elif "evidence" in parsed:
+            # Build explanation from evidence if detailed explanation not provided
+            evidence_parts = []
+            if isinstance(parsed["evidence"], dict):
+                for category, details in parsed["evidence"].items():
+                    if details and details.lower() not in ["none", "none documented", "n/a"]:
+                        # Convert snake_case to readable format
+                        readable_category = category.replace("_", " ").title()
+                        evidence_parts.append(f"{readable_category}: {details}")
+            
+            if evidence_parts:
+                explanation = " ".join(evidence_parts)
+            
+        # If we still don't have a good explanation, check for other fields
+        if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
+            explanation_fields = ["reasoning", "rationale", "assessment", "conclusion"]
+            for field in explanation_fields:
+                if field in parsed and parsed[field]:
+                    explanation = str(parsed[field]).strip()
+                    break
             
         return decision, explanation
         
@@ -885,24 +910,46 @@ def extract_malnutrition_decision(response: str):
                 decision = matched_text
                 break
 
-    # Extract explanation
+    # Extract explanation with more patterns to find specific details
     explanation_patterns = [
         r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'explanation\s*[:=]\s*["\'](.*?)["\']',
         r'explanation:\s*(.*?)(?=\n\n|\}|$)',
+        r'evidence:.*?((?:[^:]+:[^:]+)+)(?=\n\n|\}|$)',  # Try to capture structured evidence
+        r'anthropometry:.*?((?:z-score|BMI|weight|height).*?)(?=\n|$)',  # Specific anthropometry 
+        r'weight_trajectory:.*?((?:lost|gain|stable|decline).*?)(?=\n|$)',  # Weight patterns
         r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))',
         r'assessment:.*?([^.]*?(?:malnutrition|nutritional)[^.]*\.)'
     ]
 
+    explanation_parts = []
     for pattern in explanation_patterns:
-        expl_match = re.search(pattern, cleaned, flags=re.I | re.DOTALL)
-        if expl_match:
-            candidate_explanation = expl_match.group(1).strip()
-            if candidate_explanation:
-                explanation = candidate_explanation
-                break
+        matches = re.finditer(pattern, cleaned, flags=re.I | re.DOTALL)
+        for match in matches:
+            candidate_explanation = match.group(1).strip()
+            if candidate_explanation and candidate_explanation != "Based on the clinical evidence in the patient notes.":
+                explanation_parts.append(candidate_explanation)
+    
+    if explanation_parts:
+        explanation = " ".join(explanation_parts)
+    
+    # If we still have no explanation or just the default one
+    if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
+        # Extract any sentences that might contain relevant information
+        evidence_sentences = re.findall(r'(?:weight|height|BMI|z-score|nutritional|diet|intake|muscle|clinical)[^.]*\.', 
+                                        cleaned, flags=re.I)
+        if evidence_sentences:
+            explanation = " ".join(evidence_sentences[:3])  # Use up to 3 relevant sentences
+    
+    # Final fallback - still use generic text but with more context
+    if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
+        if decision == "yes":
+            explanation = "The patient shows clinical indicators consistent with malnutrition based on the provided notes."
+        else:
+            explanation = "The patient does not meet the clinical criteria for malnutrition based on the provided notes."
     
     return decision, explanation
+    
     
 class WeightedSFTTrainer(SFTTrainer):
     """
