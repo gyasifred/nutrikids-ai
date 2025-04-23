@@ -12,6 +12,7 @@ from datasets import Dataset
 from trl import SFTTrainer
 from transformers import TrainingArguments
 from unsloth import is_bfloat16_supported
+from unsloth import FastLanguageModel 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification")
