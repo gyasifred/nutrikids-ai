@@ -85,14 +85,14 @@ def extract_json_from_output(text):
         print(f"Raw text excerpt: {text[:200]}...")
         return None
 
-def get_model_prediction(model, tokenizer, prompt, device, temperature, top_p):
+def get_model_prediction(model, tokenizer, prompt, device, temperature, top_p,max_seq_length):
     """Get model prediction for a single prompt."""
     # Debug: Print prompt length and first/last part
     print(f"\nDebug - Prompt length: {len(prompt)} characters")
     print(f"Prompt starts with: {prompt[:100]}...")
     print(f"Prompt ends with: ...{prompt[-100:]}")
     
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer(prompt,truncation=True, max_seq_length=max_seq_length, return_tensors="pt").to(device)
     outputs = model.generate(
         **inputs,
         max_new_tokens=512,
@@ -207,7 +207,7 @@ def main():
             
             # Get model prediction
             raw_output = get_model_prediction(
-                model, tokenizer, prompt, device, args.temperature, args.top_p
+                model, tokenizer, prompt, device, args.temperature, args.top_p,args.max_seq_length
             )
             
             # Parse JSON from output
