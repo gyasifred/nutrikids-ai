@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 import argparse
 from datasets import Dataset
-from trl import SFTTrainer
+from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 from transformers import TrainingArguments
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
@@ -17,26 +17,16 @@ from unsloth import FastLanguageModel, is_bfloat16_supported
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Train a model for pediatric malnutrition classification")
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
-    parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", 
-                        help="Base model to use for fine-tuning")
-    parser.add_argument("--output_dir", type=str, default="./malnutrition_model", 
-                        help="Directory to save the model")
-    parser.add_argument("--max_seq_length", type=int, default=4096, 
-                        help="Maximum sequence length for the model")
-    parser.add_argument("--batch_size", type=int, default=2, 
-                        help="Per device training batch size")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, 
-                        help="Number of gradient accumulation steps")
-    parser.add_argument("--epochs", type=float, default=10, 
-                        help="Number of training epochs")
-    parser.add_argument("--learning_rate", type=float, default=2e-4, 
-                        help="Learning rate for training")
-    parser.add_argument("--load_in_4bit", action="store_true", 
-                        help="Load model in 4-bit quantization")
-    parser.add_argument("--save_steps", type=int, default=50, 
-                        help="Save checkpoint every X steps")
-    parser.add_argument("--max_steps", type=int, default=None, 
-                        help="Max training steps (overrides epochs if set)")
+    parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use for fine-tuning")
+    parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Directory to save the model")
+    parser.add_argument("--max_seq_length", type=int, default=4096, help="Maximum sequence length for the model")
+    parser.add_argument("--batch_size", type=int, default=2, help="Per device training batch size")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Number of gradient accumulation steps")
+    parser.add_argument("--epochs", type=float, default=10, help="Number of training epochs")
+    parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate for training")
+    parser.add_argument("--load_in_4bit", action="store_true", help="Load model in 4-bit quantization")
+    parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X steps")
+    parser.add_argument("--max_steps", type=int, default=None, help="Max training steps (overrides epochs if set)")
     return parser.parse_args()
 
 
@@ -73,56 +63,32 @@ Based on the clinical note below, determine if the child is malnourished. Answer
 def prepare_dataset(data_path):
     """Load and prepare the dataset from CSV file."""
     df = pd.read_csv(data_path)
-    
-    # Ensure required columns exist
     required_cols = ["DEID", "txt", "label"]
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Required column '{col}' not found in data file")
-    
-    # Create dataset
-    dataset_dict = {
+    return Dataset.from_dict({
         "id": df["DEID"].tolist(),
         "note": df["txt"].tolist(),
         "label": df["label"].tolist()
-    }
-    
-    # Convert to HF Dataset
-    dataset = Dataset.from_dict(dataset_dict)
-    return dataset
+    })
 
-
-def formatting_prompts_func(examples, tokenizer):
-    """Format examples for training."""
-    notes = examples["note"]
-    labels = examples["label"]
-    
-    texts = []
-    for note, label in zip(notes, labels):
-        # Format the prompt with the note and label
-        text = create_malnutrition_prompt(note, label) + tokenizer.eos_token
-        texts.append(text)
-    
-    return {"text": texts}
 
 def main():
     args = parse_arguments()
-    
+
     print(f"Loading base model: {args.model_name}")
-    # Load model with sequence length configuration
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=args.max_seq_length,  # Set maximum context window
+        max_seq_length=args.max_seq_length,
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
-    
-    # LoRA configuration remains unchanged
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_alpha=16,
         lora_dropout=0,
         bias="none",
@@ -130,27 +96,33 @@ def main():
         random_state=3407,
         use_rslora=False,
     )
-    
+
     print(f"Loading dataset from: {args.data_path}")
     dataset = prepare_dataset(args.data_path)
 
-    # Formatting function with EOS handling
+    # Tokenization + truncation formatting function
     def formatting_func(example):
-        prompt = create_malnutrition_prompt(example["note"], example["label"])
-        return prompt + tokenizer.eos_token  # Add EOS token explicitly
+        prompt = create_malnutrition_prompt(example["note"], example["label"]) + tokenizer.eos_token
+        tokens = tokenizer(
+            prompt,
+            truncation=True,
+            max_length=args.max_seq_length,
+            padding=False,
+            return_tensors="pt",
+        )
+        return {
+            "input_ids": tokens["input_ids"][0],
+            "attention_mask": tokens["attention_mask"][0],
+        }
 
-    # Data collator with sequence length enforcement
-    from trl import DataCollatorForCompletionOnlyLM
     response_template = "\n### Assessment:\n"
     data_collator = DataCollatorForCompletionOnlyLM(
         response_template=response_template,
         tokenizer=tokenizer,
         mlm=False,
-        max_length=args.max_seq_length,  # Enforce sequence length here
         pad_to_multiple_of=8,
     )
 
-    # Corrected training arguments without sequence length params
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -167,33 +139,29 @@ def main():
         max_steps=args.max_steps,
         num_train_epochs=args.epochs if args.max_steps is None else None,
         report_to="none",
-        # Removed sequence length-related parameters
     )
-    
-    # Final trainer configuration
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         formatting_func=formatting_func,
         data_collator=data_collator,
-        max_seq_length=args.max_seq_length,  # Set sequence length here
+        max_seq_length=args.max_seq_length,
         dataset_num_proc=4,
         packing=False,
     )
-    # Display memory stats before training
+
     if torch.cuda.is_available():
         gpu_stats = torch.cuda.get_device_properties(0)
         start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
         max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
         print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
         print(f"{start_gpu_memory} GB of memory reserved.")
-    
-    # Train the model
+
     print("Starting training...")
     trainer_stats = trainer.train()
-    
-    # Display final stats
+
     if torch.cuda.is_available():
         used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
         used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
@@ -205,8 +173,7 @@ def main():
         print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
         print(f"Peak reserved memory % of max memory = {used_percentage} %.")
         print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
-    
-    # Save the model and tokenizer
+
     print(f"Saving model to {args.output_dir}")
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
