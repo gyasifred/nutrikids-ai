@@ -105,18 +105,19 @@ def formatting_prompts_func(examples, tokenizer):
     
     return {"text": texts}
 
-
 def main():
     args = parse_arguments()
     
     print(f"Loading base model: {args.model_name}")
+    # Load model with updated parameters
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=args.max_seq_length,
+        max_seq_length=args.max_seq_length,  # Set sequence length here
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
     
+    # LoRA configuration remains the same
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -133,15 +134,22 @@ def main():
     print(f"Loading dataset from: {args.data_path}")
     dataset = prepare_dataset(args.data_path)
 
-    # Define formatting function with access to tokenizer
+    # Define formatting function without EOS token
     def formatting_func(example):
         note = example["note"]
         label = example["label"]
-        formatted_text = create_malnutrition_prompt(note, label) + tokenizer.eos_token
-        return formatted_text
+        return create_malnutrition_prompt(note, label)  # EOS handled by data collator
 
-    # Set up training arguments (unchanged)
-    # Set up training arguments
+    # Create data collator for LM training
+    from trl import DataCollatorForCompletionOnlyLM
+    response_template = "\n### Assessment:\n"
+    data_collator = DataCollatorForCompletionOnlyLM(
+        response_template=response_template,
+        tokenizer=tokenizer,
+        mlm=False
+    )
+
+    # Updated training arguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -158,18 +166,21 @@ def main():
         max_steps=args.max_steps,
         num_train_epochs=args.epochs if args.max_steps is None else None,
         report_to="none",
+        # Add sequence length parameters here
+        max_seq_length=args.max_seq_length,
+        truncation=True,
+        padding="max_length",
     )
     
-    # Create trainer with formatting function
+    # Create updated trainer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        args=training_args,
         train_dataset=dataset,
         formatting_func=formatting_func,
-        max_seq_length=args.max_seq_length,
+        data_collator=data_collator,
         dataset_num_proc=4,
         packing=False,
-        args=training_args,
     )
     # Display memory stats before training
     if torch.cuda.is_available():
