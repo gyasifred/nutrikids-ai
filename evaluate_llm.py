@@ -47,7 +47,7 @@ def parse_arguments():
                         help="Column name for clinical notes")
     parser.add_argument("--id_column", type=str, default="DEID", 
                         help="Column name for patient IDs")
-    parser.add_argument("--label_column", type=str, default="", 
+    parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
     parser.add_argument("--generate_explanations", action="store_true", 
                         help="Generate explanations for each prediction")
