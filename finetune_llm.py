@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment.
+Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment with reasoning.
 """
 
 import os
@@ -16,7 +16,7 @@ from unsloth import is_bfloat16_supported
 from unsloth import FastLanguageModel 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification")
+    parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification with reasoning")
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
     parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use")
     parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Where to save the model")
@@ -30,8 +30,8 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def create_malnutrition_prompt(note, label=""):
-    """Your custom expert-level clinical prompt for fine-tuning."""
+def create_malnutrition_prompt(note, label="", reasoning=""):
+    """Expert-level clinical prompt for fine-tuning with reasoning component."""
     prompt = """You are a pediatric dietitian evaluating malnutrition status in children based on clinical notes.
 MALNUTRITION CRITERIA
 * Mild: z-score -1 to -1.9 SD (weight-for-height, BMI-for-age)
@@ -50,14 +50,17 @@ CLASSIFICATION GUIDANCE
 * Moderate malnutrition: undernutrition of significant duration with below-normal weight-for-height/BMI-for-age
 * Severe malnutrition: prolonged undernutrition with stunting
 
-Based on the clinical note below, determine if the child is malnourished. Answer with only 'yes' or 'no'.
+Based on the clinical note below, determine if the child is malnourished. First provide your detailed reasoning by analyzing all relevant clinical factors, growth parameters, and physical findings. Then conclude with your assessment as 'yes' or 'no'.
 
 ### Clinical Note:
 {}
 
+### Clinical Reasoning:
+{}
+
 ### Assessment:
 {}"""
-    return prompt.format(note, label)
+    return prompt.format(note, reasoning, label)
 
 
 def prepare_dataset(data_path, tokenizer, max_seq_length):
@@ -65,10 +68,14 @@ def prepare_dataset(data_path, tokenizer, max_seq_length):
     if not {"DEID", "txt", "label"}.issubset(df.columns):
         raise ValueError("CSV must include 'DEID', 'txt', and 'label' columns.")
 
+    # Check if a reasoning column exists, otherwise use empty strings
+    has_reasoning = "reasoning" in df.columns
+
     prompts = []
     for _, row in df.iterrows():
         label_text = "yes" if str(row["label"]).lower() in {"1", "yes", "true"} else "no"
-        prompt = create_malnutrition_prompt(row["txt"], label_text)
+        reasoning_text = row.get("reasoning", "") if has_reasoning else ""
+        prompt = create_malnutrition_prompt(row["txt"], label_text, reasoning_text)
         prompts.append(prompt + tokenizer.eos_token)
 
     return Dataset.from_dict({"text": prompts})
@@ -99,24 +106,7 @@ def main():
 
     dataset = prepare_dataset(args.data_path, tokenizer, args.max_seq_length)
 
-    # training_args = TrainingArguments(
-    #     output_dir=args.output_dir,
-    #     per_device_train_batch_size=args.batch_size,
-    #     gradient_accumulation_steps=args.gradient_accumulation_steps,
-    #     learning_rate=args.learning_rate,
-    #     fp16=not is_bfloat16_supported(),
-    #     bf16=is_bfloat16_supported(),
-    #     logging_steps=10,
-    #     save_steps=args.save_steps,
-    #     num_train_epochs=args.epochs if args.max_steps is None else None,
-    #     report_to="none",
-    #     optim="adamw_8bit",
-    #     weight_decay=0.01,
-    #     lr_scheduler_type="linear",
-    #     warmup_steps=10,
-    # )
-
-    # Fixed version - use formatting_func instead of dataset_text_field
+    # Use formatting_func for proper dataset handling
     def formatting_prompts_func(examples):
         return examples["text"]
 
@@ -125,6 +115,7 @@ def main():
         processing_class=tokenizer,
         train_dataset=dataset,
         formatting_func=formatting_prompts_func, 
+        dataset_num_proc=4,
         args=TrainingArguments(
             output_dir=args.output_dir,
             per_device_train_batch_size=args.batch_size,
