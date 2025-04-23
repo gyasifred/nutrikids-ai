@@ -825,6 +825,7 @@ def extract_malnutrition_decision(response: str):
             - decision: "yes" or "no" string
             - explanation: Explanation text string with specific details
     """
+    import re
     # Clean the input string
     cleaned = response.strip()
     
