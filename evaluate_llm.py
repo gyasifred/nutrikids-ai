@@ -92,7 +92,7 @@ def get_model_prediction(model, tokenizer, prompt, device, temperature, top_p,ma
     print(f"Prompt starts with: {prompt[:100]}...")
     print(f"Prompt ends with: ...{prompt[-100:]}")
     
-    inputs = tokenizer(prompt,truncation=True, max_length=max_seq_length, return_tensors="pt").to(device)
+    inputs = tokenizer(prompt,truncation=True, max_seq_length=max_seq_length, return_tensors="pt").to(device)
     outputs = model.generate(
         **inputs,
         max_new_tokens=512,
@@ -207,7 +207,7 @@ def main():
             
             # Get model prediction
             raw_output = get_model_prediction(
-                model, tokenizer, prompt, device, args.temperature, args.top_p,args.max_seq_length
+                model, tokenizer, prompt, device, args.temperature, args.top_p,args.max_length
             )
             
             # Parse JSON from output
