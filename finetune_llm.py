@@ -99,7 +99,34 @@ def main():
 
     dataset = prepare_dataset(args.data_path, tokenizer, args.max_seq_length)
 
-    training_args = TrainingArguments(
+    # training_args = TrainingArguments(
+    #     output_dir=args.output_dir,
+    #     per_device_train_batch_size=args.batch_size,
+    #     gradient_accumulation_steps=args.gradient_accumulation_steps,
+    #     learning_rate=args.learning_rate,
+    #     fp16=not is_bfloat16_supported(),
+    #     bf16=is_bfloat16_supported(),
+    #     logging_steps=10,
+    #     save_steps=args.save_steps,
+    #     max_steps=args.max_steps,
+    #     num_train_epochs=args.epochs if args.max_steps is None else None,
+    #     report_to="none",
+    #     optim="adamw_8bit",
+    #     weight_decay=0.01,
+    #     lr_scheduler_type="linear",
+    #     warmup_steps=10,
+    # )
+
+    # Fixed version - use formatting_func instead of dataset_text_field
+    def formatting_prompts_func(examples):
+        return examples["text"]
+
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=tokenizer,
+        train_dataset=dataset,
+        formatting_func=formatting_prompts_func, 
+        args=TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -116,18 +143,6 @@ def main():
         lr_scheduler_type="linear",
         warmup_steps=10,
     )
-
-    # Fixed version - use formatting_func instead of dataset_text_field
-    def formatting_prompts_func(examples):
-        return examples["text"]
-
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
-        formatting_func=formatting_prompts_func,  # Use this instead of dataset_text_field
-        max_seq_length=args.max_seq_length,
-        args=training_args,
     )
 
     print("[INFO] Starting training...")
