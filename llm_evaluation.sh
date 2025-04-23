@@ -24,9 +24,9 @@ FEW_SHOT_COUNT=0        # Zero-shot evaluation by default
 BALANCED_EXAMPLES=false  # Set to true to balance few-shot examples
 
 # Evaluation parameters
-SEED=3407
-MAX_NEW_TOKENS=256
-TEMPERATURE=0.3
+SEED=42
+MAX_NEW_TOKENS=768
+TEMPERATURE=0.5
 BATCH_SIZE=8
 # Model settings
 # Array of base models to evaluate
