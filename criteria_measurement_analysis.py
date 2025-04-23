@@ -68,9 +68,34 @@ def analyze_reasoning_consistency(explanation, original_note):
             continue
             
         # Look for key clinical terms that might indicate reasoning
-        clinical_terms = ['bmi', 'weight', 'malnutrition', 'diagnosis', 
-                         'evidence', 'symptom', 'nutrition', 'intake']
-                         
+        clinical_terms = [
+            # Anthropometric measurements
+            'bmi', 'weight', 'height', 'length', 'muac', 'z-score', 'percentile', 'growth chart',
+            
+            # Nutritional status indicators
+            'malnutrition', 'undernutrition', 'undernourished', 'nutritional status', 'failure to thrive',
+            'stunting', 'stunted', 'wasting', 'underweight', 'growth faltering', 'cachexia',
+            
+            # Physical assessment findings
+            'muscle wasting', 'muscle mass', 'subcutaneous fat', 'fat stores', 'edema', 'mid-upper arm',
+            'skinfold', 'triceps', 'kwashiorkor', 'marasmus', 'emaciated',
+            
+            # Clinical/diagnostic terms
+            'diagnosis', 'assessment', 'impression', 'protein-energy', 'pem', 'sam', 'mam',
+            
+            # Symptoms and functional indicators
+            'weakness', 'fatigue', 'lethargy', 'decreased strength', 'poor feeding', 'anorexia',
+            'appetite', 'food intake', 'decreased intake', 'poor oral intake',
+            
+            # Dietary factors
+            'nutrition', 'intake', 'diet', 'feeding', 'formula', 'breastfeeding', 'supplement',
+            'caloric', 'protein', 'calories', 'nutrient', 'fortification',
+            
+            # Clinical context
+            'food insecurity', 'neglect', 'feeding disorder', 'dysphagia', 'malabsorption',
+            'chronic illness', 'hospitalization', 'weight loss'
+        ]
+                             
         has_clinical_term = any(term in sentence.lower() for term in clinical_terms)
         
         # Check if key sentence content appears in original note
@@ -530,45 +555,55 @@ def main():
     # Define comprehensive criteria dictionary
     criteria_dict = {
         # Anthropometric measurements
-        'BMI': ['bmi', 'body mass index', 'kg/m2', 'quetelet index'],
-        'weight_for_height': ['weight for height', 'weight-for-height', 'wfh', 'whz'],
-        'BMI_for_age': ['bmi for age', 'bmi-for-age', 'baz'],
-        'MUAC': ['muac', 'mid upper arm circumference', 'mid-upper arm circumference', 'arm circumference'],
-        'weight_loss': ['weight loss', 'lost weight', 'decrease in weight', 'declining weight', 'unintentional weight loss'],
+        'BMI': ['bmi', 'body mass index', 'kg/m2', 'quetelet index', 'mass index', 'weight/height ratio'],
+        'weight_for_height': ['weight for height', 'weight-for-height', 'wfh', 'whz', 'weight/height', 'weight-height ratio', 'wasting index'],
+        'BMI_for_age': ['bmi for age', 'bmi-for-age', 'baz', 'age-adjusted bmi', 'age appropriate bmi', 'age-specific bmi'],
+        'MUAC': ['muac', 'mid upper arm circumference', 'mid-upper arm circumference', 'arm circumference', 'arm anthropometry', 'upper arm measurement'],
+        'weight_loss': ['weight loss', 'lost weight', 'decrease in weight', 'declining weight', 'unintentional weight loss', 'weight deficit', 'faltering weight', 'failure to gain weight'],
+        'growth_metrics': ['height-for-age', 'length-for-age', 'head circumference', 'z-score', 'standard deviation', 'sd score', 'growth velocity', 'growth chart percentile', 'stunting'],
         
         # Clinical symptoms
-        'muscle_wasting': ['muscle wasting', 'muscle loss', 'decreased muscle mass', 'muscle atrophy', 'sarcopenia'],
-        'fatigue': ['fatigue', 'weakness', 'tired', 'low energy', 'lethargy'],
-        'skin_changes': ['skin changes', 'dry skin', 'thin skin', 'skin breakdown', 'poor skin turgor'],
-        'hair_changes': ['hair changes', 'hair loss', 'thin hair', 'brittle hair'],
-        'edema': ['edema', 'swelling', 'fluid retention', 'pitting edema'],
+        'muscle_wasting': ['muscle wasting', 'muscle loss', 'decreased muscle mass', 'muscle atrophy', 'sarcopenia', 'reduced muscle bulk', 'temporal wasting', 'quadriceps wasting', 'muscle depletion'],
+        'fatigue': ['fatigue', 'weakness', 'tired', 'low energy', 'lethargy', 'exhaustion', 'decreased stamina', 'reduced endurance', 'asthenia'],
+        'skin_changes': ['skin changes', 'dry skin', 'thin skin', 'skin breakdown', 'poor skin turgor', 'flaky skin', 'scaling', 'dermatitis', 'hyperkeratosis'],
+        'hair_changes': ['hair changes', 'hair loss', 'thin hair', 'brittle hair', 'sparse hair', 'hair depigmentation', 'flag sign', 'alopecia', 'hair pulling out easily'],
+        'edema': ['edema', 'swelling', 'fluid retention', 'pitting edema', 'nutritional edema', 'bilateral pitting edema', 'kwashiorkor', 'anasarca'],
+        'oral_changes': ['cheilosis', 'angular stomatitis', 'glossitis', 'oral lesions', 'gum disease', 'bleeding gums', 'pale mucous membranes', 'mouth sores'],
         
         # Dietary intake
-        'inadequate_intake': ['inadequate intake', 'poor intake', 'decreased intake', 'reduced appetite'],
-        'caloric_deficit': ['caloric deficit', 'insufficient calories', 'low calorie', 'calorie restriction'],
-        'protein_deficit': ['protein deficit', 'low protein', 'insufficient protein', 'protein-energy malnutrition'],
-        'food_insecurity': ['food insecurity', 'limited access to food', 'cannot afford food', 'food scarcity'],
+        'inadequate_intake': ['inadequate intake', 'poor intake', 'decreased intake', 'reduced appetite', 'anorexia', 'poor feeding', 'food refusal', 'decreased oral intake', 'insufficient feeding'],
+        'caloric_deficit': ['caloric deficit', 'insufficient calories', 'low calorie', 'calorie restriction', 'energy deficit', 'hypocaloric', 'caloric inadequacy', 'negative energy balance'],
+        'protein_deficit': ['protein deficit', 'low protein', 'insufficient protein', 'protein-energy malnutrition', 'pem', 'hypoproteinemia', 'protein inadequacy', 'low nitrogen intake'],
+        'food_insecurity': ['food insecurity', 'limited access to food', 'cannot afford food', 'food scarcity', 'food poverty', 'food desert', 'meal skipping', 'hunger', 'inadequate food supply'],
+        'feeding_difficulties': ['feeding difficulties', 'difficulty swallowing', 'dysphagia', 'poor suck', 'chewing problems', 'feeding aversion', 'feeding disorder', 'feeding tube dependency'],
         
         # Medical conditions
-        'chronic_illness': ['chronic illness', 'chronic disease', 'comorbidity', 'long-term condition'],
-        'gi_disorders': ['gi disorder', 'gastrointestinal disorder', 'malabsorption', 'diarrhea', 'vomiting'],
-        'infection': ['infection', 'sepsis', 'inflammatory', 'infectious process'],
-        'cancer': ['cancer', 'malignancy', 'oncology', 'tumor', 'chemotherapy'],
+        'chronic_illness': ['chronic illness', 'chronic disease', 'comorbidity', 'long-term condition', 'chronic condition', 'ongoing medical issues', 'persistent health problem'],
+        'gi_disorders': ['gi disorder', 'gastrointestinal disorder', 'malabsorption', 'diarrhea', 'vomiting', 'celiac disease', 'ibd', 'short bowel', 'enteropathy', 'maldigestion'],
+        'infection': ['infection', 'sepsis', 'inflammatory', 'infectious process', 'recurrent infections', 'chronic infection', 'tb', 'hiv', 'parasitic infection'],
+        'cancer': ['cancer', 'malignancy', 'oncology', 'tumor', 'chemotherapy', 'radiation therapy', 'metastatic', 'neoplasm', 'carcinoma'],
+        'metabolic_disorders': ['metabolic disorder', 'inborn error', 'enzyme deficiency', 'metabolic acidosis', 'renal tubular acidosis', 'organic acidemia', 'urea cycle disorder'],
         
         # Risk factors
-        'medications': ['medication', 'drug induced', 'steroid', 'chemotherapy', 'immunosuppressants'],
-        'mental_health': ['depression', 'dementia', 'cognitive impairment', 'psychiatric', 'anxiety'],
-        'socioeconomic': ['socioeconomic', 'homeless', 'poverty', 'financial', 'low income'],
-        'functional_status': ['functional decline', 'immobility', 'bed bound', 'decreased activity'],
+        'medications': ['medication', 'drug induced', 'steroid', 'chemotherapy', 'immunosuppressants', 'appetite suppressant', 'anticonvulsant', 'polypharmacy', 'medication side effect'],
+        'mental_health': ['depression', 'dementia', 'cognitive impairment', 'psychiatric', 'anxiety', 'eating disorder', 'anorexia nervosa', 'mental illness', 'psychological stress'],
+        'socioeconomic': ['socioeconomic', 'homeless', 'poverty', 'financial', 'low income', 'resource limited', 'financial constraint', 'disadvantaged', 'social determinants'],
+        'functional_status': ['functional decline', 'immobility', 'bed bound', 'decreased activity', 'impaired mobility', 'adl limitation', 'self-care deficit', 'dependent', 'wheelchair bound'],
+        'substance_use': ['alcohol use', 'alcoholism', 'substance abuse', 'drug abuse', 'addiction', 'alcohol dependence', 'illicit drug use', 'tobacco', 'smoking'],
         
         # Lab markers
-        'lab_markers': ['albumin', 'prealbumin', 'transferrin', 'hemoglobin', 'lymphocyte', 'protein'],
+        'lab_markers': ['albumin', 'prealbumin', 'transferrin', 'hemoglobin', 'lymphocyte', 'protein', 'total protein', 'cholesterol', 'crp', 'nitrogen balance', 'phosphate', 'magnesium'],
+        'micronutrients': ['vitamin deficiency', 'mineral deficiency', 'iron deficiency', 'vitamin d', 'zinc', 'folate', 'b12', 'vitamin a', 'scurvy', 'rickets', 'anemia'],
         
-        # Special categories
-        'pediatric': ['child', 'infant', 'pediatric', 'growth chart', 'percentile'],
-        'geriatric': ['elderly', 'geriatric', 'frail', 'aging', 'older adult']
+        # Special populations
+        'pediatric': ['child', 'infant', 'pediatric', 'growth chart', 'percentile', 'toddler', 'adolescent', 'newborn', 'premature', 'neonatal', 'failure to thrive', 'ftt'],
+        'geriatric': ['elderly', 'geriatric', 'frail', 'aging', 'older adult', 'senior', 'advanced age', 'nursing home', 'long-term care', 'senile', 'elder'],
+        'pregnancy': ['pregnant', 'pregnancy', 'gestational', 'maternal', 'antenatal', 'prenatal', 'gravid', 'expectant mother'],
+        
+        # Clinical diagnoses
+        'malnutrition_diagnoses': ['malnutrition', 'undernutrition', 'marasmus', 'kwashiorkor', 'cachexia', 'severe acute malnutrition', 'sam', 'moderate acute malnutrition', 'mam', 'nutritional deficit'],
+        'nutritional_intervention': ['nutrition consult', 'dietary consult', 'nutrition support', 'enteral feeding', 'tube feeding', 'tpn', 'parenteral nutrition', 'nutrition supplement', 'refeeding']
     }
-
     # ------------------------------------------------
     # 2. Comprehensive Analysis Pipeline
     # ------------------------------------------------
