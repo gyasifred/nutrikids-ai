@@ -335,6 +335,10 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
             explanation = None
             if args.generate_explanations and assessment in ['yes', 'no']:
                 explanation = generate_explanation(model, tokenizer, note, assessment, args)
+                # Print explanation to terminal
+                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}) -----")
+                print(explanation)
+                print("-" * 80)
             
             result = {
                 "DEID": patient_id,
