@@ -381,7 +381,7 @@ def process_batch(batch_texts, model, tokenizer, prompt_builder, args, device=No
     
 def calculate_confidence_score(binary_decision, response, response_tokens, scores, tokenizer):
     """
-    Calculate confidence score for the prediction.
+    Calculate confidence score for the prediction with improved accuracy.
     
     Args:
         binary_decision: The binary decision (0 or 1)
@@ -393,31 +393,100 @@ def calculate_confidence_score(binary_decision, response, response_tokens, score
     Returns:
         float: Confidence score between 0 and 1
     """
-    # Start with a moderate confidence based on the model's decision
-    base_confidence = 0.65 if binary_decision == 1 else 0.35
+    # Start with initial confidence based on the model's decision
+    # More balanced starting values
+    base_confidence = 0.6 if binary_decision == 1 else 0.4
+    
+    # Check if the model provided its own confidence score
+    confidence_match = re.search(r'"confidence"\s*:\s*([0-9.]+)', response)
+    if confidence_match:
+        try:
+            model_confidence = float(confidence_match.group(1))
+            if 0 <= model_confidence <= 1:
+                # Use model's own confidence if available
+                return model_confidence
+        except ValueError:
+            pass
     
     # Look for decision indicators that would strengthen confidence
     response_lower = response.lower()
     confidence_modifiers = 0.0
     
-    # Check for strong indicators in the response
+    # Check for strong indicators in the response - expanded patterns
     if binary_decision == 1:  # Yes to malnutrition
-        if "definite" in response_lower or "clear evidence" in response_lower:
-            confidence_modifiers += 0.2
-        elif "likely" in response_lower or "probable" in response_lower:
-            confidence_modifiers += 0.1
-        elif "possible" in response_lower or "may" in response_lower:
-            confidence_modifiers -= 0.1
+        strong_indicators = [
+            "definite", "clear evidence", "clearly meets", "severe malnutrition", 
+            "significant", "conclusive", "definitely", "strongly indicate", 
+            "z-score [<-][23]", "well below", "markedly reduced"
+        ]
+        moderate_indicators = [
+            "likely", "probable", "meets criteria", "moderate malnutrition", 
+            "consistent with", "suggestive of", "indicate", "points to"
+        ]
+        weak_indicators = [
+            "possible", "may", "mild", "borderline", "could be", "might", 
+            "uncertain", "unclear", "insufficient data", "limited evidence"
+        ]
+        
+        for term in strong_indicators:
+            if term in response_lower:
+                confidence_modifiers += 0.15
+                break
+                
+        for term in moderate_indicators:
+            if term in response_lower:
+                confidence_modifiers += 0.1
+                break
+                
+        for term in weak_indicators:
+            if term in response_lower:
+                confidence_modifiers -= 0.1
+                break
     else:  # No to malnutrition
-        if "no evidence" in response_lower or "normal nutritional" in response_lower:
-            confidence_modifiers += 0.2
-        elif "unlikely" in response_lower or "not likely" in response_lower:
-            confidence_modifiers += 0.1
-        elif "can't determine" in response_lower or "insufficient" in response_lower:
-            confidence_modifiers -= 0.1
+        strong_indicators = [
+            "no evidence", "normal nutritional", "well-nourished", "definitely not", 
+            "within normal", "no signs", "no indication", "normal growth", 
+            "appropriate for age", "adequate nutrition"
+        ]
+        moderate_indicators = [
+            "unlikely", "not likely", "appears normal", "suggests normal", 
+            "likely adequate", "no significant", "does not meet"
+        ]
+        weak_indicators = [
+            "can't determine", "insufficient", "unclear", "inconclusive", 
+            "limited data", "insufficient information", "difficult to assess"
+        ]
+        
+        for term in strong_indicators:
+            if term in response_lower:
+                confidence_modifiers += 0.15
+                break
+                
+        for term in moderate_indicators:
+            if term in response_lower:
+                confidence_modifiers += 0.1
+                break
+                
+        for term in weak_indicators:
+            if term in response_lower:
+                confidence_modifiers -= 0.1
+                break
+    
+    # Check evidence completeness - more evidence = higher confidence
+    evidence_categories = ["anthropometry", "weight_trajectory", "intake_absorption", 
+                          "clinical_signs", "complicating_factors"]
+    evidence_count = 0
+    for category in evidence_categories:
+        if f'"{category}"' in response_lower and "none documented" not in response_lower[response_lower.find(f'"{category}"'):response_lower.find(f'"{category}"')+100]:
+            evidence_count += 1
+    
+    # Scale evidence contribution - more complete evidence raises confidence
+    evidence_modifier = min(0.15, evidence_count * 0.03)
+    confidence_modifiers += evidence_modifier
     
     # Use token probabilities for the decision section if we can identify it
-    decision_keywords = ["malnutrition", "malnourished", "nutritional"]
+    decision_keywords = ["malnutrition", "malnourished", "nutritional", "anthropometry", 
+                        "weight", "height", "BMI", "z-score", "percentile"]
     token_confidence = 0.0
     token_count = 0
     
@@ -430,9 +499,10 @@ def calculate_confidence_score(binary_decision, response, response_tokens, score
             if any(keyword in token.lower() for keyword in decision_keywords) and idx < len(scores):
                 # Get probability for this token from scores
                 token_id = response_tokens[idx].item()
-                token_prob = torch.softmax(scores[idx][0], dim=-1)[token_id].item()
-                token_confidence += token_prob
-                token_count += 1
+                if idx < len(scores) and len(scores[idx]) > 0:
+                    token_prob = torch.softmax(scores[idx][0], dim=-1)[token_id].item()
+                    token_confidence += token_prob
+                    token_count += 1
         
         # If we found relevant tokens, use their average probability
         if token_count > 0:
@@ -445,14 +515,17 @@ def calculate_confidence_score(binary_decision, response, response_tokens, score
             confidence_score = base_confidence + confidence_modifiers
     except Exception as e:
         # If token confidence calculation fails, fall back to base+modifiers
-        print(f"Warning: Token confidence calculation failed: {e}")
         confidence_score = base_confidence + confidence_modifiers
+    
+    # Check for specific metrics that would increase confidence
+    if re.search(r'z-score\s*[:=]\s*-[0-9.]+', response_lower) or re.search(r'BMI\s*[:=]\s*[0-9.]+', response_lower):
+        confidence_score += 0.05
     
     # Ensure confidence is between 0.05 and 0.95
     confidence_score = max(0.05, min(0.95, confidence_score))
     
     return float(confidence_score)
-
+    
 
 def evaluate_model(args, model, tokenizer, prompt_builder):
     """
