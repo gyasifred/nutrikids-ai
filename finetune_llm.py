@@ -9,8 +9,9 @@ import argparse
 import pandas as pd
 import torch
 from datasets import Dataset
-from unsloth import FastLanguageModel, SFTTrainer, is_bfloat16_supported
+from trl import SFTTrainer
 from transformers import TrainingArguments
+from unsloth import is_bfloat16_supported
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification")
