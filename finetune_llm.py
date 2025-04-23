@@ -166,7 +166,7 @@ def main():
         model=model,
         tokenizer=tokenizer,
         train_dataset=formatted_dataset,
-        dataset_text_field="text",
+        text_column="text",
         max_seq_length=args.max_seq_length,
         dataset_num_proc=4,
         packing=False,
