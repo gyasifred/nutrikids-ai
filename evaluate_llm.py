@@ -56,9 +56,9 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def create_malnutrition_prompt(note):
-    """Create a formatted prompt for malnutrition assessment."""
-    prompt = """You are a pediatric dietitian evaluating malnutrition status in children based on clinical notes.
+def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
+    """Create a formatted prompt for malnutrition assessment with optional length control."""
+    base_prompt = """You are a pediatric dietitian evaluating malnutrition status in children based on clinical notes.
 MALNUTRITION CRITERIA
 * Mild: z-score -1 to -1.9 SD (weight-for-height, BMI-for-age)
 * Moderate: z-score -2 to -2.9 SD (weight-for-height, BMI-for-age)
@@ -79,39 +79,49 @@ CLASSIFICATION GUIDANCE
 Based on the clinical note below, determine if the child is malnourished. Answer with only 'yes' or 'no'.
 
 ### Clinical Note:
-{}
-
-### Assessment:
 """
-    return prompt.format(note)
+
+    # If tokenizer and max_tokens are provided, truncate the note if needed
+    if tokenizer and max_tokens:
+        # Calculate approximate token count for the base prompt and ending
+        base_tokens = len(tokenizer.encode(base_prompt))
+        ending_tokens = len(tokenizer.encode("\n\n### Assessment:\n"))
+        
+        # Calculate how many tokens we can allocate to the note
+        available_tokens = max_tokens - base_tokens - ending_tokens - 50  # 50 tokens buffer
+        
+        # Tokenize and truncate the note if needed
+        note_tokens = tokenizer.encode(note)
+        if len(note_tokens) > available_tokens:
+            truncated_note_tokens = note_tokens[:available_tokens]
+            note = tokenizer.decode(truncated_note_tokens)
+            print(f"Note truncated from {len(note_tokens)} to {available_tokens} tokens")
+    
+    # Complete the prompt
+    prompt = base_prompt + note + "\n\n### Assessment:\n"
+    return prompt
 
 
-def create_explanation_prompt(note, assessment, prompt_style="explain"):
-    """Create a prompt for generating explanations of the model's prediction."""
+def create_explanation_prompt(note, assessment, prompt_style="explain", tokenizer=None, max_tokens=None):
+    """Create a prompt for generating explanations of the model's prediction with optional length control."""
     if prompt_style == "explain":
-        prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
+        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
 Provide a brief explanation (2-3 sentences) for this assessment, focusing on the key factors that led to this conclusion.
 
 ### Clinical Note:
-{}
-
-### Explanation:
 """
-        return prompt.format("" if assessment.lower() == "yes" else "not ", note)
+        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
     
     elif prompt_style == "evidence":
-        prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
+        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
 List the specific evidence from the clinical note that supports this assessment.
 
 ### Clinical Note:
-{}
-
-### Evidence:
 """
-        return prompt.format("" if assessment.lower() == "yes" else "not ", note)
+        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
     
     elif prompt_style == "detailed":
-        prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
+        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
 Provide a detailed explanation of this assessment, addressing:
 1. Key anthropometric data that influenced the decision
 2. Growth trajectory indicators noted in the chart
@@ -119,15 +129,45 @@ Provide a detailed explanation of this assessment, addressing:
 4. Other relevant nutritional factors
 
 ### Clinical Note:
-{}
-
-### Detailed Explanation:
 """
-        return prompt.format("" if assessment.lower() == "yes" else "not ", note)
+        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
     
     else:
         # Default to the simple explain prompt
-        return create_explanation_prompt(note, assessment, "explain")
+        return create_explanation_prompt(note, assessment, "explain", tokenizer, max_tokens)
+    
+    # If tokenizer and max_tokens are provided, truncate the note if needed
+    if tokenizer and max_tokens:
+        # Calculate approximate token count for the base prompt and ending
+        if prompt_style == "explain":
+            ending = "\n\n### Explanation:\n"
+        elif prompt_style == "evidence":
+            ending = "\n\n### Evidence:\n"
+        elif prompt_style == "detailed":
+            ending = "\n\n### Detailed Explanation:\n"
+            
+        base_tokens = len(tokenizer.encode(base_prompt))
+        ending_tokens = len(tokenizer.encode(ending))
+        
+        # Calculate how many tokens we can allocate to the note
+        available_tokens = max_tokens - base_tokens - ending_tokens - 50  # 50 tokens buffer
+        
+        # Tokenize and truncate the note if needed
+        note_tokens = tokenizer.encode(note)
+        if len(note_tokens) > available_tokens:
+            truncated_note_tokens = note_tokens[:available_tokens]
+            note = tokenizer.decode(truncated_note_tokens)
+            print(f"Note truncated from {len(note_tokens)} to {available_tokens} tokens for explanation")
+    
+    # Complete the prompt
+    if prompt_style == "explain":
+        prompt = base_prompt + note + "\n\n### Explanation:\n"
+    elif prompt_style == "evidence":
+        prompt = base_prompt + note + "\n\n### Evidence:\n"
+    elif prompt_style == "detailed":
+        prompt = base_prompt + note + "\n\n### Detailed Explanation:\n"
+        
+    return prompt
 
 
 def load_model(model_path, max_seq_length, load_in_4bit):
@@ -158,10 +198,24 @@ def load_model(model_path, max_seq_length, load_in_4bit):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None):
-    """Generate text from the model using the provided prompt."""
-    inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None):
+    """Generate text from the model using the provided prompt with length control."""
+    # Tokenize the prompt
+    inputs = tokenizer([prompt], return_tensors="pt")
     
+    # Check if the input is too long
+    if max_seq_length and inputs.input_ids.shape[1] > max_seq_length - max_new_tokens:
+        print(f"Warning: Input length {inputs.input_ids.shape[1]} exceeds maximum allowed when combined with max_new_tokens.")
+        # Truncate to leave room for generated tokens
+        inputs.input_ids = inputs.input_ids[:, -(max_seq_length - max_new_tokens):]
+        if hasattr(inputs, 'attention_mask'):
+            inputs.attention_mask = inputs.attention_mask[:, -(max_seq_length - max_new_tokens):]
+        print(f"Input was truncated to {inputs.input_ids.shape[1]} tokens to fit within model context")
+    
+    # Move input to model device
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
+    # Generate output
     if streamer:
         outputs = model.generate(
             **inputs, 
@@ -182,7 +236,13 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None):
 
 def generate_explanation(model, tokenizer, note, assessment, args):
     """Generate an explanation for the model's prediction."""
-    explanation_prompt = create_explanation_prompt(note, assessment, args.explanation_prompt)
+    explanation_prompt = create_explanation_prompt(
+        note, 
+        assessment, 
+        args.explanation_prompt,
+        tokenizer=tokenizer,
+        max_tokens=args.max_seq_length - 256  # Reserve tokens for the explanation
+    )
     
     # Generate a longer response for explanation
     streamer = None
@@ -195,7 +255,8 @@ def generate_explanation(model, tokenizer, note, assessment, args):
         tokenizer, 
         explanation_prompt, 
         max_new_tokens=256,
-        streamer=streamer
+        streamer=streamer,
+        max_seq_length=args.max_seq_length
     )
     
     # Extract just the explanation part
@@ -228,17 +289,34 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
         batch_labels = true_labels[i:i+args.batch_size] if true_labels else [None] * len(batch_notes)
         
         for note, patient_id, true_label in zip(batch_notes, batch_ids, batch_labels):
-            # Create prompt for the current note
-            prompt = create_malnutrition_prompt(note)
+            # Create prompt for the current note with length control
+            prompt = create_malnutrition_prompt(
+                note, 
+                tokenizer=tokenizer, 
+                max_tokens=args.max_seq_length - args.max_new_tokens
+            )
             
             # Generate prediction
             start_time = time.time()
             
             if args.stream_output:
                 print(f"\nGenerating assessment for patient {patient_id}...")
-                prediction = generate_text(model, tokenizer, prompt, args.max_new_tokens, streamer)
+                prediction = generate_text(
+                    model, 
+                    tokenizer, 
+                    prompt, 
+                    args.max_new_tokens, 
+                    streamer,
+                    max_seq_length=args.max_seq_length
+                )
             else:
-                prediction = generate_text(model, tokenizer, prompt, args.max_new_tokens)
+                prediction = generate_text(
+                    model, 
+                    tokenizer, 
+                    prompt, 
+                    args.max_new_tokens,
+                    max_seq_length=args.max_seq_length
+                )
             
             inference_time = time.time() - start_time
             
