@@ -147,7 +147,6 @@ def main():
         train_dataset=dataset,
         formatting_func=formatting_func,
         data_collator=data_collator,
-        packing=False,
     )
 
     if torch.cuda.is_available():
