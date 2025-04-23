@@ -650,33 +650,29 @@ class MalnutritionPromptBuilder:
     
         output_spec = (
             "# OUTPUT REQUIREMENTS\n"
-            "Return a valid JSON object with these exact fields:\n"
+            "You MUST return a valid JSON object with these exact fields:\n"
             "```json\n"
             "{\n"
             '  "malnutrition": "yes" | "no",\n'
             '  "confidence": <decimal between 0.1 and 0.9>,\n'
             '  "evidence": {\n'
-            '    "anthropometry": "<Specific anthropometric findings from notes>",\n'
-            '    "weight_trajectory": "<Comments on weight loss/gain patterns>",\n'
-            '    "intake_absorption": "<Details on eating patterns/absorption issues>",\n'
-            '    "clinical_signs": "<Observable clinical indicators>",\n'
-            '    "complicating_factors": "<Relevant comorbidities or risk factors>"\n'
+            '    "anthropometry": "<Specific findings - include z-scores/BMI if available>",\n'
+            '    "weight_trajectory": "<Documented weight changes>",\n'
+            '    "intake_absorption": "<Dietary intake details>",\n'
+            '    "clinical_signs": "<Physical exam findings>",\n'
+            '    "complicating_factors": "<Relevant comorbidities>"\n'
             '  },\n'
-            '  "explanation": "<2-3 sentences synthesizing the key evidence supporting your conclusion>"\n'
+            '  "explanation": "<2-3 sentences synthesizing the evidence. NEVER use generic phrases like \'Based on clinical evidence\'>"\n'
             "}\n"
             "```\n"
-            "- Provide only the complete JSON object without additional text\n"
-            "- Base assessment solely on evidence present in the notes\n"
-            "- Include specific metrics/findings for each evidence category (use \"None documented\" if no information available)\n"
-            "- Confidence reflects your certainty (0.1=very uncertain, 0.9=very certain)\n"
-            "- If evidence is sparse or ambiguous, use lower confidence values\n"
-            "- IMPORTANT: Never use generic explanations like \"Based on the clinical evidence in the patient notes\"\n"
-            "- Always include specific details from the notes in your explanation\n"
-            "- Refer to actual z-scores, percentiles, measurements, or clinical observations when available\n"
-            "- If you're making a malnutrition diagnosis, clearly state which criteria are met\n"
-            "- If ruling out malnutrition, explain which normal findings support this conclusion\n"
+            "\n"
+            "IMPORTANT RULES:\n"
+            "1. ALWAYS include specific metrics (z-scores, weights, etc.) when available\n"
+            "2. NEVER use generic explanations - be specific about what evidence supports your conclusion\n"
+            "3. If no data exists for an evidence category, use \"None documented\"\n"
+            "4. Your explanation MUST reference specific details from the notes\n"
         )
-    
+            
         # Enhanced few-shot examples block with more detailed examples
         few_shot_block = ""
         if few_shot_examples:
@@ -812,142 +808,70 @@ class MalnutritionPromptBuilder:
         random.shuffle(few_shot_examples)
         return self._construct_prompt(patient_notes, few_shot_examples)
 
+
 def extract_malnutrition_decision(response: str):
-    """
-    Extract the malnutrition decision and explanation from model output.
-    Handles both structured JSON responses and free-text responses.
+    # First try to find JSON block if wrapped in markdown
+    json_match = re.search(r'```json\s*({.*?})\s*```', response, re.DOTALL)
+    if json_match:
+        response = json_match.group(1)
     
-    Args:
-        response: The model's generated response text
+    # Try direct JSON parsing
+    try:
+        data = json.loads(response)
+        decision = str(data.get("malnutrition", "unknown")).lower()
+        explanation = data.get("explanation", "")
         
-    Returns:
-        tuple: (decision, explanation) where:
-            - decision: "yes" or "no" string
-            - explanation: Explanation text string with specific details
-    """
-    import re
-    # Clean the input string
-    cleaned = response.strip()
+        # If explanation is generic, try to build from evidence
+        if not explanation or "Based on the clinical evidence" in explanation:
+            evidence = data.get("evidence", {})
+            explanation_parts = []
+            for category, details in evidence.items():
+                if details and "none" not in str(details).lower():
+                    explanation_parts.append(f"{category}: {details}")
+            
+            if explanation_parts:
+                explanation = " ".join(explanation_parts)
+        
+        return decision, explanation
+    except json.JSONDecodeError:
+        pass
     
-    # Initialize default values
+    # Fallback to regex parsing
     decision = "unknown"
     explanation = ""
     
-    # Try to parse as JSON first
-    try:
-        # Check for JSON code blocks
-        if "```json" in cleaned or "```" in cleaned:
-            pattern = r'```(?:json)?\s*(.*?)\s*```'
-            matches = re.findall(pattern, cleaned, re.DOTALL)
-            if matches:
-                for match in matches:
-                    try:
-                        parsed = json.loads(match.strip())
-                        cleaned = match.strip()
-                        break
-                    except:
-                        continue
-        
-        # Try direct JSON parsing
-        parsed = json.loads(cleaned)
-        
-        # Extract decision
-        if "malnutrition" in parsed:
-            decision = str(parsed["malnutrition"]).lower()
-            if decision not in ["yes", "no"]:
-                decision = "unknown"
-        
-        # Extract explanation - more comprehensive approach
-        if "explanation" in parsed and parsed["explanation"] and not parsed["explanation"].strip() == "Based on the clinical evidence in the patient notes.":
-            explanation = str(parsed["explanation"]).strip()
-        elif "evidence" in parsed:
-            # Build explanation from evidence if detailed explanation not provided
-            evidence_parts = []
-            if isinstance(parsed["evidence"], dict):
-                for category, details in parsed["evidence"].items():
-                    if details and details.lower() not in ["none", "none documented", "n/a"]:
-                        # Convert snake_case to readable format
-                        readable_category = category.replace("_", " ").title()
-                        evidence_parts.append(f"{readable_category}: {details}")
-            
-            if evidence_parts:
-                explanation = " ".join(evidence_parts)
-            
-        # If we still don't have a good explanation, check for other fields
-        if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
-            explanation_fields = ["reasoning", "rationale", "assessment", "conclusion"]
-            for field in explanation_fields:
-                if field in parsed and parsed[field]:
-                    explanation = str(parsed[field]).strip()
-                    break
-            
-        return decision, explanation
-        
-    except json.JSONDecodeError:
-        # Fallback to regex extraction if JSON parsing fails
-        pass
-    
-    # Extract decision with regex patterns
+    # Decision patterns
     decision_patterns = [
         r'"malnutrition"\s*:\s*"(yes|no)"',
         r'malnutrition\s*[=:]\s*(yes|no)',
-        r"patient (does|doesn['']t) meet.*?malnutrition",
-        r'(evidence|signs|indications) of malnutrition',
-        r'assessment:\s*(malnutrition|no malnutrition)',
-        r'diagnosis:\s*(malnutrition|no malnutrition)'
+        r'patient (has|does not have) malnutrition',
+        r'assessment:\s*(malnutrition present|no malnutrition)'
     ]
-
-    for pattern in decision_patterns:
-        decision_match = re.search(pattern, cleaned, flags=re.I)
-        if decision_match:
-            matched_text = decision_match.group(1).lower()
-            if matched_text in ["yes", "does", "evidence", "signs", "indications", "malnutrition"]:
-                decision = "yes"
-                break
-            elif matched_text in ["no", "doesn't", "doesn't", "doesnt", "no malnutrition"]:
-                decision = "no"
-                break
-            elif matched_text in ["yes", "no"]:
-                decision = matched_text
-                break
-
-    # Extract explanation with more patterns to find specific details
+    
+    # Explanation patterns
     explanation_patterns = [
-        r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        r'explanation\s*[:=]\s*["\'](.*?)["\']',
-        r'explanation:\s*(.*?)(?=\n\n|\}|$)',
-        r'evidence:.*?((?:[^:]+:[^:]+)+)(?=\n\n|\}|$)',  # Try to capture structured evidence
-        r'anthropometry:.*?((?:z-score|BMI|weight|height).*?)(?=\n|$)',  # Specific anthropometry 
-        r'weight_trajectory:.*?((?:lost|gain|stable|decline).*?)(?=\n|$)',  # Weight patterns
-        r'malnutrition.*?because\s+(.*?)(?:$|(?=\n\n|\}))',
-        r'assessment:.*?([^.]*?(?:malnutrition|nutritional)[^.]*\.)'
+        r'"explanation"\s*:\s*"([^"]+)"',
+        r'explanation:\s*(.*?)(?=\n|$)',
+        r'reason:\s*(.*?)(?=\n|$)',
+        r'because\s+(.*?)(?=\n|$)'
     ]
-
+    
+    # Extract decision
+    for pattern in decision_patterns:
+        match = re.search(pattern, response, re.I)
+        if match:
+            decision = "yes" if match.group(1).lower() in ["yes", "has", "present"] else "no"
+            break
+    
+    # Extract explanation
     explanation_parts = []
     for pattern in explanation_patterns:
-        matches = re.finditer(pattern, cleaned, flags=re.I | re.DOTALL)
-        for match in matches:
-            candidate_explanation = match.group(1).strip()
-            if candidate_explanation and candidate_explanation != "Based on the clinical evidence in the patient notes.":
-                explanation_parts.append(candidate_explanation)
+        matches = re.findall(pattern, response, re.I)
+        for m in matches:
+            if m and "based on the clinical evidence" not in m.lower():
+                explanation_parts.append(m.strip())
     
-    if explanation_parts:
-        explanation = " ".join(explanation_parts)
-    
-    # If we still have no explanation or just the default one
-    if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
-        # Extract any sentences that might contain relevant information
-        evidence_sentences = re.findall(r'(?:weight|height|BMI|z-score|nutritional|diet|intake|muscle|clinical)[^.]*\.', 
-                                        cleaned, flags=re.I)
-        if evidence_sentences:
-            explanation = " ".join(evidence_sentences[:3])  # Use up to 3 relevant sentences
-    
-    # Final fallback - still use generic text but with more context
-    if not explanation or explanation == "Based on the clinical evidence in the patient notes.":
-        if decision == "yes":
-            explanation = "The patient shows clinical indicators consistent with malnutrition based on the provided notes."
-        else:
-            explanation = "The patient does not meet the clinical criteria for malnutrition based on the provided notes."
+    explanation = " ".join(explanation_parts) if explanation_parts else "No detailed explanation provided"
     
     return decision, explanation
     
