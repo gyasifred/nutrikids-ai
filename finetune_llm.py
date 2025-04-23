@@ -136,7 +136,7 @@ def main():
             logging_steps=10,
             save_steps=args.save_steps,
             max_steps=args.max_steps,
-            num_train_epochs=args.epochs
+            num_train_epochs=args.epochs,
             report_to="none",
             optim="adamw_8bit",
             weight_decay=0.01,
