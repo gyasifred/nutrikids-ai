@@ -110,18 +110,16 @@ def main():
     args = parse_arguments()
     
     print(f"Loading base model: {args.model_name}")
-    # Load the model and tokenizer
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
         max_seq_length=args.max_seq_length,
-        dtype=None,  # Auto detect
+        dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
     
-    # Add LoRA adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        r=16,  # LoRA attention dimension
+        r=16,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                         "gate_proj", "up_proj", "down_proj"],
         lora_alpha=16,
@@ -133,15 +131,16 @@ def main():
     )
     
     print(f"Loading dataset from: {args.data_path}")
-    # Load and prepare the dataset
     dataset = prepare_dataset(args.data_path)
-    
-    # Format the dataset
-    formatted_dataset = dataset.map(
-        lambda examples: formatting_prompts_func(examples, tokenizer),
-        batched=True,
-    )
-    
+
+    # Define formatting function with access to tokenizer
+    def formatting_func(example):
+        note = example["note"]
+        label = example["label"]
+        formatted_text = create_malnutrition_prompt(note, label) + tokenizer.eos_token
+        return formatted_text
+
+    # Set up training arguments (unchanged)
     # Set up training arguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -161,18 +160,17 @@ def main():
         report_to="none",
     )
     
-    # Create trainer
+    # Create trainer with formatting function
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
-        train_dataset=formatted_dataset,
-        dataset_text_field="text",
+        train_dataset=dataset,
+        formatting_func=formatting_func,
         max_seq_length=args.max_seq_length,
         dataset_num_proc=4,
         packing=False,
         args=training_args,
     )
-    
     # Display memory stats before training
     if torch.cuda.is_available():
         gpu_stats = torch.cuda.get_device_properties(0)
