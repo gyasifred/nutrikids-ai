@@ -19,7 +19,7 @@ def parse_arguments():
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
     parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use")
     parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Where to save the model")
-    parser.add_argument("--max_seq_length", type=int, default=4096, help="Max sequence length"
+    parser.add_argument("--max_seq_length", type=int, default=4096, help="Max sequence length")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per device")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation")
     parser.add_argument("--epochs", type=float, default=10, help="Epochs")
