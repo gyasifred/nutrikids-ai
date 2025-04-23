@@ -16,7 +16,7 @@ from tqdm.auto import tqdm
 # Import your prompt builder
 # This assumes the MalnutritionPromptBuilder is in a file called prompt_builder.py
 # If not, adjust the import statement accordingly
-from models.llm_models.prompt_builder import MalnutritionPromptBuilder, preprocess_text
+from models.llm_models import MalnutritionPromptBuilder, preprocess_text
 
 def parse_arguments():
     """Parse command line arguments."""
