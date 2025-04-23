@@ -117,15 +117,17 @@ def main():
         warmup_steps=10,
     )
 
-    # Updated SFTTrainer initialization without dataset_text_field
+    # Fixed version - use formatting_func instead of dataset_text_field
+    def formatting_prompts_func(examples):
+        return examples["text"]
+
     trainer = SFTTrainer(
         model=model,
-        args=training_args,
-        train_dataset=dataset,
         tokenizer=tokenizer,
+        train_dataset=dataset,
+        formatting_func=formatting_prompts_func,  # Use this instead of dataset_text_field
         max_seq_length=args.max_seq_length,
-        dataset_num_proc=2,
-        packing=False,
+        args=training_args,
     )
 
     print("[INFO] Starting training...")
