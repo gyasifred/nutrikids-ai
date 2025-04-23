@@ -127,22 +127,22 @@ def main():
         train_dataset=dataset,
         formatting_func=formatting_prompts_func, 
         args=TrainingArguments(
-        output_dir=args.output_dir,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        learning_rate=args.learning_rate,
-        fp16=not is_bfloat16_supported(),
-        bf16=is_bfloat16_supported(),
-        logging_steps=10,
-        save_steps=args.save_steps,
-        max_steps=args.max_steps,
-        num_train_epochs=args.epochs if args.max_steps is None else None,
-        report_to="none",
-        optim="adamw_8bit",
-        weight_decay=0.01,
-        lr_scheduler_type="linear",
-        warmup_steps=10,
-    )
+            output_dir=args.output_dir,
+            per_device_train_batch_size=args.batch_size,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            learning_rate=args.learning_rate,
+            fp16=not is_bfloat16_supported(),
+            bf16=is_bfloat16_supported(),
+            logging_steps=10,
+            save_steps=args.save_steps,
+            max_steps=args.max_steps,
+            num_train_epochs=args.epochs if args.max_steps is None else 1,
+            report_to="none",
+            optim="adamw_8bit",
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            warmup_steps=10,
+        )
     )
 
     print("[INFO] Starting training...")
