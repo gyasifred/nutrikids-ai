@@ -117,15 +117,15 @@ def main():
         warmup_steps=10,
     )
 
+    # Updated SFTTrainer initialization without dataset_text_field
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        args=training_args,
         train_dataset=dataset,
-        dataset_text_field="text",
+        tokenizer=tokenizer,
         max_seq_length=args.max_seq_length,
         dataset_num_proc=2,
         packing=False,
-        args=training_args,
     )
 
     print("[INFO] Starting training...")
