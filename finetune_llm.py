@@ -19,14 +19,13 @@ def parse_arguments():
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
     parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use")
     parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Where to save the model")
-    parser.add_argument("--max_seq_length", type=int, default=4096, help="Max sequence length")
+    parser.add_argument("--max_seq_length", type=int, default=4096, help="Max sequence length"
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per device")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation")
     parser.add_argument("--epochs", type=float, default=10, help="Epochs")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
-    parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints")
-    parser.add_argument("--max_steps", type=int, default=None, help="Total steps (overrides epochs)")
+    parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints"
     return parser.parse_args()
 
 
@@ -108,7 +107,6 @@ def main():
     #     bf16=is_bfloat16_supported(),
     #     logging_steps=10,
     #     save_steps=args.save_steps,
-    #     max_steps=args.max_steps,
     #     num_train_epochs=args.epochs if args.max_steps is None else None,
     #     report_to="none",
     #     optim="adamw_8bit",
@@ -135,7 +133,6 @@ def main():
             bf16=is_bfloat16_supported(),
             logging_steps=10,
             save_steps=args.save_steps,
-            max_steps=args.max_steps,
             num_train_epochs=args.epochs,
             report_to="none",
             optim="adamw_8bit",
