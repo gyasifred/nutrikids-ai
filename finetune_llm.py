@@ -166,8 +166,6 @@ def main():
         max_steps=args.max_steps,
         num_train_epochs=args.epochs if args.max_steps is None else None,
         report_to="none",
-        # Add sequence length parameters here
-        max_seq_length=args.max_seq_length,
         truncation=True,
         padding="max_length",
     )
