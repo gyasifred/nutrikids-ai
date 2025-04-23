@@ -109,15 +109,15 @@ def main():
     args = parse_arguments()
     
     print(f"Loading base model: {args.model_name}")
-    # Load model with updated parameters
+    # Load model with sequence length configuration
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=args.max_seq_length,  # Set sequence length here
+        max_seq_length=args.max_seq_length,  # Set maximum context window
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
     
-    # LoRA configuration remains the same
+    # LoRA configuration remains unchanged
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -134,22 +134,23 @@ def main():
     print(f"Loading dataset from: {args.data_path}")
     dataset = prepare_dataset(args.data_path)
 
-    # Define formatting function without EOS token
+    # Formatting function with EOS handling
     def formatting_func(example):
-        note = example["note"]
-        label = example["label"]
-        return create_malnutrition_prompt(note, label)  # EOS handled by data collator
+        prompt = create_malnutrition_prompt(example["note"], example["label"])
+        return prompt + tokenizer.eos_token  # Add EOS token explicitly
 
-    # Create data collator for LM training
+    # Data collator with sequence length enforcement
     from trl import DataCollatorForCompletionOnlyLM
     response_template = "\n### Assessment:\n"
     data_collator = DataCollatorForCompletionOnlyLM(
         response_template=response_template,
         tokenizer=tokenizer,
-        mlm=False
+        mlm=False,
+        max_length=args.max_seq_length,  # Enforce sequence length here
+        pad_to_multiple_of=8,
     )
 
-    # Updated training arguments
+    # Corrected training arguments without sequence length params
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -166,17 +167,17 @@ def main():
         max_steps=args.max_steps,
         num_train_epochs=args.epochs if args.max_steps is None else None,
         report_to="none",
-        truncation=True,
-        padding="max_length",
+        # Removed sequence length-related parameters
     )
     
-    # Create updated trainer
+    # Final trainer configuration
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         formatting_func=formatting_func,
         data_collator=data_collator,
+        max_seq_length=args.max_seq_length,  # Set sequence length here
         dataset_num_proc=4,
         packing=False,
     )
