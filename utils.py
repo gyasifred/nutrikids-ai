@@ -741,13 +741,22 @@ def extract_criteria_mentions(explanations, criteria_dict=None):
     """
     # Comprehensive criteria dictionary if not provided
     if criteria_dict is None:
-        criteria_dict = {
+       criteria_dict = {
             # Anthropometric measurements
             'BMI': ['bmi', 'body mass index'],
             'weight_for_height': ['weight for height', 'weight-for-height', 'wfh'],
             'BMI_for_age': ['bmi for age', 'bmi-for-age'],
             'MUAC': ['muac', 'mid upper arm circumference', 'mid-upper arm circumference'],
             'weight_loss': ['weight loss', 'lost weight', 'decrease in weight', 'declining weight'],
+            
+            # Z-score related measurements
+            'weight_for_age_z': ['weight for age z', 'weight-for-age z', 'wfa z', 'waz', 'weight z'],
+            'height_for_age_z': ['height for age z', 'height-for-age z', 'hfa z', 'haz', 'height z', 'length for age z'],
+            'weight_for_length_z': ['weight for length z', 'weight-for-length z', 'wfl z', 'wlz'],
+            'head_circumference_z': ['head circumference z', 'hc z', 'head circumference for age z'],
+            'MUAC_z': ['muac z', 'muac-for-age z', 'mid upper arm circumference z'],
+            'triceps_skinfold_z': ['triceps skinfold z', 'tsf z', 'triceps z'],
+            'subscapular_skinfold_z': ['subscapular skinfold z', 'ssf z', 'subscapular z'],
             
             # Clinical symptoms
             'muscle_wasting': ['muscle wasting', 'muscle loss', 'decreased muscle mass', 'muscle atrophy'],
@@ -777,7 +786,6 @@ def extract_criteria_mentions(explanations, criteria_dict=None):
             # Lab markers
             'lab_markers': ['albumin', 'prealbumin', 'transferrin', 'hemoglobin', 'lymphocyte', 'protein']
         }
-    
     # Initialize DataFrame for criteria mentions with confidence scores
     criteria_df = pd.DataFrame(0.0, index=range(len(explanations)),
                                columns=list(criteria_dict.keys()))
@@ -864,25 +872,33 @@ def extract_clinical_measurements(explanations):
     """
     # Enhanced patterns with more clinical values and flexibile formatting
     patterns = {
-        'BMI': r'(?:BMI|body mass index)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*kg/?m2)?',
-        'weight_for_height': r'(?:weight[- ]for[- ]height|WFH)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
-        'BMI_for_age': r'(?:BMI[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
-        'MUAC': r'(?:MUAC|mid[- ]upper arm circumference)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*cm)?',
-        'albumin': r'(?:albumin|serum albumin)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
-        'prealbumin': r'(?:prealbumin|transthyretin)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/dL)?',
-        'transferrin': r'(?:transferrin|TIBC)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/dL)?',
-        'hemoglobin': r'(?:hemoglobin|haemoglobin|Hgb|Hb)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
-        'weight': r'(?:weight|body weight)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:kg|kilograms)?',
-        'height': r'(?:height|body height)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:cm|meters|m)?',
-        'weight_loss': r'(?:weight loss|lost)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:%|percent|kg)?',
-        'length_height_for_age': r'(?:length/height[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
-        'total_protein': r'(?:total protein|serum protein|protein level)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
-        'lymphocyte_count': r'(?:lymphocyte count|lymphocytes|ALC)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*cells/mm3)?',
-        'CRP': r'(?:CRP|C-reactive protein)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/L)?',
-        'caloric_intake': r'(?:caloric intake|calorie intake|calories)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*kcal)?',
-        'protein_intake': r'(?:protein intake|dietary protein)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g)?'
+    'BMI': r'(?:BMI|body mass index)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*kg/?m2)?',
+    'weight_for_height': r'(?:weight[- ]for[- ]height|WFH)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'BMI_for_age': r'(?:BMI[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'MUAC': r'(?:MUAC|mid[- ]upper arm circumference)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*cm)?',
+    'albumin': r'(?:albumin|serum albumin)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
+    'prealbumin': r'(?:prealbumin|transthyretin)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/dL)?',
+    'transferrin': r'(?:transferrin|TIBC)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/dL)?',
+    'hemoglobin': r'(?:hemoglobin|haemoglobin|Hgb|Hb)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
+    'weight': r'(?:weight|body weight)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:kg|kilograms)?',
+    'height': r'(?:height|body height)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:cm|meters|m)?',
+    'weight_loss': r'(?:weight loss|lost)\s*(?:is|of|:|=|at)?\s*([\d.]+)\s*(?:%|percent|kg)?',
+    'length_height_for_age': r'(?:length/height[- ]for[- ]age)\s*(?:z[- ]score)?\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'total_protein': r'(?:total protein|serum protein|protein level)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g/dL)?',
+    'lymphocyte_count': r'(?:lymphocyte count|lymphocytes|ALC)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*cells/mm3)?',
+    'CRP': r'(?:CRP|C-reactive protein)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*mg/L)?',
+    'caloric_intake': r'(?:caloric intake|calorie intake|calories)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*kcal)?',
+    'protein_intake': r'(?:protein intake|dietary protein)\s*(?:is|of|:|=|at)?\s*([\d.]+)(?:\s*g)?',
+    
+    # Added z-score specific patterns
+    'weight_for_age_z': r'(?:weight[- ]for[- ]age|WFA)\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'height_for_age_z': r'(?:height[- ]for[- ]age|HFA)\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'head_circumference_z': r'(?:head circumference|HC)[- ]for[- ]age\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'MUAC_z': r'(?:MUAC|mid[- ]upper arm circumference)[- ]for[- ]age\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'weight_for_length_z': r'(?:weight[- ]for[- ]length|WFL)\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'triceps_skinfold_z': r'(?:triceps skinfold|TSF)[- ]for[- ]age\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)',
+    'subscapular_skinfold_z': r'(?:subscapular skinfold|SSF)[- ]for[- ]age\s*z[- ]score\s*(?:is|of|:|=|at)?\s*([-\d.]+)'
     }
-
     # Initialize result list with context indicators
     measurements = []
 
