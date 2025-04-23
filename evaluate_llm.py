@@ -45,7 +45,7 @@ def parse_arguments():
                         help='Temperature for text generation')
     parser.add_argument('--top_p', type=float, default=0.9,
                         help='Top-p value for text generation')
-    parser.add_argument('--seed', type=int, default=42,
+    parser.add_argument('--seed', type=int, default=3407,
                         help='Random seed for reproducibility')
     parser.add_argument('--load_in_4bit', action='store_true',
                         help='Load model in 4-bit precision')
