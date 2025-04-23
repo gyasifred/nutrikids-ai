@@ -115,7 +115,7 @@ def main():
         processing_class=tokenizer,
         train_dataset=dataset,
         formatting_func=formatting_prompts_func, 
-        num_proc=8
+        num_proc=4,
         args=TrainingArguments(
             output_dir=args.output_dir,
             per_device_train_batch_size=args.batch_size,
