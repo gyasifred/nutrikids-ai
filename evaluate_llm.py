@@ -53,6 +53,10 @@ def parse_arguments():
                         help="Generate explanations for each prediction")
     parser.add_argument("--explanation_prompt", type=str, default="explain",
                         help="Prompt style for explanations: 'explain', 'evidence', or 'detailed'")
+    parser.add_argument("--temperature", type=float, default=0.3,
+                        help="Temperature for sampling during generation (default: 0.3)")
+    parser.add_argument("--top_p", type=float, default=0.9,
+                        help="Top-p (nucleus) sampling parameter (default: 0.9)")
     return parser.parse_args()
 
 
@@ -198,8 +202,8 @@ def load_model(model_path, max_seq_length, load_in_4bit):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None):
-    """Generate text from the model using the provided prompt with length control."""
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9):
+    """Generate text from the model using the provided prompt with length control and sampling parameters."""
     # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
     
@@ -215,20 +219,19 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     # Move input to model device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     
-    # Generate output
+    # Generate output with temperature and top_p parameters
+    generation_kwargs = {
+        **inputs,
+        "max_new_tokens": max_new_tokens,
+        "use_cache": True,
+        "temperature": temperature,
+        "top_p": top_p
+    }
+    
     if streamer:
-        outputs = model.generate(
-            **inputs, 
-            max_new_tokens=max_new_tokens, 
-            streamer=streamer,
-            use_cache=True
-        )
-    else:
-        outputs = model.generate(
-            **inputs, 
-            max_new_tokens=max_new_tokens, 
-            use_cache=True
-        )
+        generation_kwargs["streamer"] = streamer
+    
+    outputs = model.generate(**generation_kwargs)
     
     prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return prediction
@@ -256,7 +259,9 @@ def generate_explanation(model, tokenizer, note, assessment, args):
         explanation_prompt, 
         max_new_tokens=256,
         streamer=streamer,
-        max_seq_length=args.max_seq_length
+        max_seq_length=args.max_seq_length,
+        temperature=args.temperature,
+        top_p=args.top_p
     )
     
     # Extract just the explanation part
@@ -307,7 +312,9 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
                     prompt, 
                     args.max_new_tokens, 
                     streamer,
-                    max_seq_length=args.max_seq_length
+                    max_seq_length=args.max_seq_length,
+                    temperature=args.temperature,
+                    top_p=args.top_p
                 )
             else:
                 prediction = generate_text(
@@ -315,7 +322,9 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
                     tokenizer, 
                     prompt, 
                     args.max_new_tokens,
-                    max_seq_length=args.max_seq_length
+                    max_seq_length=args.max_seq_length,
+                    temperature=args.temperature,
+                    top_p=args.top_p
                 )
             
             inference_time = time.time() - start_time
@@ -527,6 +536,7 @@ def main():
     # Calculate average inference time
     avg_time = sum(r["inference_time"] for r in results) / len(results)
     print(f"Average inference time per note: {avg_time:.3f} seconds")
+    print(f"Sampling parameters: temperature={args.temperature}, top_p={args.top_p}")
     
     if args.generate_explanations:
         print(f"Explanations generated and saved to: {args.output_file}")
