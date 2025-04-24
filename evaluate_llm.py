@@ -27,10 +27,8 @@ def parse_arguments():
                         help="Path to the trained model")
     parser.add_argument("--input_file", type=str, required=True, 
                         help="Path to the CSV file with clinical notes")
-    parser.add_argument("--output_file", type=str, required=True, 
-                        help="Path to save the results")
-    parser.add_argument("--metrics_dir", type=str, default="metrics", 
-                        help="Directory to save metrics and visualizations")
+    parser.add_argument("--output_dir", type=str, required=True, 
+                        help="Directory to save all results and metrics")
     parser.add_argument("--batch_size", type=int, default=8, 
                         help="Batch size for inference")
     parser.add_argument("--max_seq_length", type=int, default=4096, 
@@ -353,7 +351,6 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
                 "DEID": patient_id,
                 "true_label": true_label if true_label is not None else "unknown",
                 "predicted_label": assessment,
-                "inference_time": inference_time,
                 "explanation": explanation if explanation else "",
                 "original_note": note
             }
@@ -365,9 +362,6 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args):
 
 def calculate_metrics(results, args):
     """Calculate and save performance metrics."""
-    # Create metrics directory if it doesn't exist
-    os.makedirs(args.metrics_dir, exist_ok=True)
-    
     # Check if we have true labels to calculate metrics
     if all(r["true_label"] == "unknown" for r in results):
         print("No true labels available - skipping metrics calculation")
@@ -392,15 +386,15 @@ def calculate_metrics(results, args):
         "true_binary": y_true,
         "pred_binary": y_pred
     })
-    metrics_df.to_csv(os.path.join(args.metrics_dir, "raw_predictions.csv"), index=False)
+    metrics_df.to_csv(os.path.join(args.output_dir, "raw_predictions_metrics.csv"), index=False)
     
     # Classification Report
     report = classification_report(y_true, y_pred, output_dict=True, target_names=["Non-malnourished", "Malnourished"])
     report_df = pd.DataFrame(report).transpose()
-    report_df.to_csv(os.path.join(args.metrics_dir, "classification_report.csv"))
+    report_df.to_csv(os.path.join(args.output_dir, "classification_report.csv"))
     
     # Save classification report as text
-    with open(os.path.join(args.metrics_dir, "classification_report.txt"), "w") as f:
+    with open(os.path.join(args.output_dir, "classification_report.txt"), "w") as f:
         f.write(classification_report(y_true, y_pred, target_names=["Non-malnourished", "Malnourished"]))
     
     # Confusion Matrix
@@ -410,7 +404,7 @@ def calculate_metrics(results, args):
         index=["Actual Non-malnourished", "Actual Malnourished"],
         columns=["Predicted Non-malnourished", "Predicted Malnourished"]
     )
-    cm_df.to_csv(os.path.join(args.metrics_dir, "confusion_matrix.csv"))
+    cm_df.to_csv(os.path.join(args.output_dir, "confusion_matrix.csv"))
     
     # Plot and save confusion matrix
     plt.figure(figsize=(8, 6))
@@ -419,7 +413,7 @@ def calculate_metrics(results, args):
     plt.ylabel("True Label")
     plt.xlabel("Predicted Label")
     plt.title("Confusion Matrix")
-    plt.savefig(os.path.join(args.metrics_dir, "confusion_matrix.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(args.output_dir, "confusion_matrix.png"), dpi=300, bbox_inches="tight")
     
     # ROC Curve and AUC
     fpr, tpr, _ = roc_curve(y_true, y_pred)
@@ -427,7 +421,7 @@ def calculate_metrics(results, args):
     
     # Save ROC data
     roc_df = pd.DataFrame({"fpr": fpr, "tpr": tpr})
-    roc_df.to_csv(os.path.join(args.metrics_dir, "roc_data.csv"), index=False)
+    roc_df.to_csv(os.path.join(args.output_dir, "roc_data.csv"), index=False)
     
     # Plot ROC curve
     plt.figure(figsize=(8, 6))
@@ -439,7 +433,7 @@ def calculate_metrics(results, args):
     plt.ylabel("True Positive Rate")
     plt.title("Receiver Operating Characteristic")
     plt.legend(loc="lower right")
-    plt.savefig(os.path.join(args.metrics_dir, "roc_curve.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(args.output_dir, "roc_curve.png"), dpi=300, bbox_inches="tight")
     
     # Save metrics summary
     metrics_summary = {
@@ -456,7 +450,7 @@ def calculate_metrics(results, args):
         "nonmalnourished_count": len(y_true) - sum(y_true)
     }
     
-    with open(os.path.join(args.metrics_dir, "metrics_summary.json"), "w") as f:
+    with open(os.path.join(args.output_dir, "metrics_summary.json"), "w") as f:
         json.dump(metrics_summary, f, indent=2)
     
     return metrics_summary
@@ -464,6 +458,9 @@ def calculate_metrics(results, args):
 
 def main():
     args = parse_arguments()
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
     
     # Load the data
     print(f"Loading data from: {args.input_file}")
@@ -506,8 +503,21 @@ def main():
     
     # Save results to CSV
     results_df = pd.DataFrame(results)
-    results_df.to_csv(args.output_file, index=False)
-    print(f"Results saved to: {args.output_file}")
+    results_df.to_csv(os.path.join(args.output_dir, "predictions.csv"), index=False)
+    print(f"Results saved to: {os.path.join(args.output_dir, 'predictions.csv')}")
+    
+    # Save all inference data for potential reanalysis
+    inference_data = {
+        "model_path": args.model_path,
+        "date_processed": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "max_seq_length": args.max_seq_length,
+        "max_new_tokens": args.max_new_tokens,
+        "total_samples": len(results)
+    }
+    with open(os.path.join(args.output_dir, "inference_metadata.json"), "w") as f:
+        json.dump(inference_data, f, indent=2)
     
     # Calculate and save metrics if true labels are available
     if true_labels:
@@ -519,7 +529,7 @@ def main():
             print(f"Malnourished cases - Precision: {metrics['precision_malnourished']:.4f}, Recall: {metrics['recall_malnourished']:.4f}, F1: {metrics['f1_malnourished']:.4f}")
             print(f"Non-malnourished cases - Precision: {metrics['precision_nonmalnourished']:.4f}, Recall: {metrics['recall_nonmalnourished']:.4f}, F1: {metrics['f1_nonmalnourished']:.4f}")
             print(f"AUC-ROC: {metrics['auc']:.4f}")
-            print(f"Metrics saved to: {args.metrics_dir}/")
+            print(f"Metrics saved to: {args.output_dir}/")
     
     # Show summary statistics
     yes_count = sum(1 for r in results if r["predicted_label"] == "yes")
@@ -533,13 +543,13 @@ def main():
     if error_count > 0:
         print(f"Error cases: {error_count} ({error_count/len(results)*100:.1f}%)")
     
-    # Calculate average inference time
-    avg_time = sum(r["inference_time"] for r in results) / len(results)
-    print(f"Average inference time per note: {avg_time:.3f} seconds")
+    # Calculate average inference time (displayed in terminal but not saved in results)
+    # Start and end times are still captured during inference for performance analysis
+    
     print(f"Sampling parameters: temperature={args.temperature}, top_p={args.top_p}")
     
     if args.generate_explanations:
-        print(f"Explanations generated and saved to: {args.output_file}")
+        print(f"Explanations generated and saved to: {os.path.join(args.output_dir, 'predictions.csv')}")
 
 
 if __name__ == "__main__":
