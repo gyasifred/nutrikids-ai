@@ -133,9 +133,9 @@ def main():
     model = FastLanguageModel.get_peft_model(
         model,
         r=args.lora_rank,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj"],
         lora_alpha=args.lora_alpha,
-        lora_dropout=0.05,  # Slight dropout for regularization
+        lora_dropout=0
         bias="none",
         use_gradient_checkpointing=True,
     )
