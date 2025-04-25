@@ -9,6 +9,7 @@ os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 import argparse
 import pandas as pd
 import torch
+import re
 from datasets import Dataset
 from trl import SFTTrainer
 from transformers import TrainingArguments
@@ -27,7 +28,41 @@ def parse_arguments():
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
     parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints")
+    parser.add_argument("--preprocess_tokens", action="store_true", help="Preprocess </s> tokens in clinical notes")
     return parser.parse_args()
+
+
+def preprocess_clinical_note(note_text):
+    """
+    Preprocess clinical notes to handle special tokens like </s> that might interfere with model training.
+    
+    Args:
+        note_text (str): The raw clinical note text
+        
+    Returns:
+        str: Processed clinical note text with special tokens handled
+    """
+    if not note_text:
+        return note_text
+    
+    # Replace '</s>' tokens with a more appropriate separator that won't be interpreted as special
+    # Options:
+    # 1. Replace with newlines (most common in clinical notes)
+    processed_text = note_text.replace('</s>', '\n\n')
+    
+    # 2. Alternative: Replace with a descriptive separator
+    # processed_text = note_text.replace('</s>', '[SECTION_BREAK]')
+    
+    # 3. Remove completely if you want continuous text
+    # processed_text = note_text.replace('</s>', ' ')
+    
+    # Check for any remaining special tokens that might interfere
+    special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
+    for token in special_tokens:
+        if token in processed_text:
+            processed_text = processed_text.replace(token, f"[{token}]")  # Escape them
+    
+    return processed_text
 
 
 def create_malnutrition_prompt(note, label="", reasoning=""):
@@ -63,7 +98,7 @@ Based on the clinical note below, determine if the child is malnourished. First 
     return prompt.format(note, reasoning, label)
 
 
-def prepare_dataset(data_path, tokenizer, max_seq_length):
+def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
     df = pd.read_csv(data_path)
     if not {"DEID", "txt", "label"}.issubset(df.columns):
         raise ValueError("CSV must include 'DEID', 'txt', and 'label' columns.")
@@ -73,9 +108,14 @@ def prepare_dataset(data_path, tokenizer, max_seq_length):
 
     prompts = []
     for _, row in df.iterrows():
+        # Apply preprocessing to the clinical note text if enabled
+        note_text = row["txt"]
+        if preprocess_tokens:
+            note_text = preprocess_clinical_note(note_text)
+            
         label_text = "yes" if str(row["label"]).lower() in {"1", "yes", "true"} else "no"
         reasoning_text = row.get("reasoning", "") if has_reasoning else ""
-        prompt = create_malnutrition_prompt(row["txt"], label_text, reasoning_text)
+        prompt = create_malnutrition_prompt(note_text, label_text, reasoning_text)
         prompts.append(prompt + tokenizer.eos_token)
 
     return Dataset.from_dict({"text": prompts})
@@ -104,7 +144,8 @@ def main():
         use_rslora=False,
     )
 
-    dataset = prepare_dataset(args.data_path, tokenizer, args.max_seq_length)
+    print(f"[INFO] Preparing dataset with preprocessing={'enabled' if args.preprocess_tokens else 'disabled'}")
+    dataset = prepare_dataset(args.data_path, tokenizer, args.max_seq_length, args.preprocess_tokens)
 
     # Use formatting_func for proper dataset handling
     def formatting_prompts_func(examples):
