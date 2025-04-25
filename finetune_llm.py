@@ -21,7 +21,8 @@ def parse_arguments():
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
     parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use")
     parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Where to save the model")
-    parser.add_argument("--max_seq_length", type=int, default=4096, help="Max sequence length")
+    parser.add_argument("--max_seq_length", type=int, default=None, 
+                        help="Max sequence length (if None, uses model's native max length)")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size per device")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation")
     parser.add_argument("--epochs", type=float, default=10, help="Epochs")
@@ -29,6 +30,8 @@ def parse_arguments():
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
     parser.add_argument("--save_steps", type=int, default=50, help="Steps between checkpoints")
     parser.add_argument("--preprocess_tokens", action="store_true", help="Preprocess </s> tokens in clinical notes")
+    parser.add_argument("--use_native_max_len", action="store_true", 
+                        help="Use the model's native maximum sequence length")
     return parser.parse_args()
 
 
@@ -121,13 +124,47 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
     return Dataset.from_dict({"text": prompts})
 
 
+def get_model_max_length(model_name):
+    """
+    Get the model's native maximum sequence length.
+    
+    Args:
+        model_name (str): The name of the model
+        
+    Returns:
+        int: Native maximum sequence length
+    """
+    try:
+        # Use FastLanguageModel's auto_get_max_seq_length method if available
+        from unsloth.models.llama import auto_get_max_seq_length
+        return auto_get_max_seq_length(model_name)
+    except (ImportError, AttributeError):
+        # Fallback method using AutoConfig
+        from transformers import AutoConfig
+        try:
+            config = AutoConfig.from_pretrained(model_name)
+            return getattr(config, "max_position_embeddings", 4096)
+        except Exception as e:
+            print(f"[WARNING] Failed to get model's native max length: {e}")
+            return 4096  # Default fallback value
+
+
 def main():
     args = parse_arguments()
+
+    # Determine the max sequence length to use
+    if args.use_native_max_len or args.max_seq_length is None:
+        native_max_length = get_model_max_length(args.model_name)
+        max_seq_length = native_max_length
+        print(f"[INFO] Using model's native maximum sequence length: {max_seq_length}")
+    else:
+        max_seq_length = args.max_seq_length
+        print(f"[INFO] Using manually specified maximum sequence length: {max_seq_length}")
 
     print(f"[INFO] Loading model: {args.model_name}")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=args.max_seq_length,
+        max_seq_length=max_seq_length,
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
@@ -145,7 +182,7 @@ def main():
     )
 
     print(f"[INFO] Preparing dataset with preprocessing={'enabled' if args.preprocess_tokens else 'disabled'}")
-    dataset = prepare_dataset(args.data_path, tokenizer, args.max_seq_length, args.preprocess_tokens)
+    dataset = prepare_dataset(args.data_path, tokenizer, max_seq_length, args.preprocess_tokens)
 
     # Use formatting_func for proper dataset handling
     def formatting_prompts_func(examples):
