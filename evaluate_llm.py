@@ -29,51 +29,51 @@ class YesNoLogitsProcessor(LogitsProcessor):
     """
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        # Find token IDs for yes and no (considering potential casing)
+        self.step = 0  # Track generation step
+
+        # Find token IDs for yes and no, considering possible variations
         self.yes_token_ids = []
         self.no_token_ids = []
-        for yes_token in ["yes", "Yes", "YES"]:
-            if yes_token in tokenizer.get_vocab():
-                self.yes_token_ids.append(tokenizer.get_vocab()[yes_token])
-            else:
-                # Try to tokenize and get first token ID
-                yes_tokens = tokenizer.tokenize(yes_token)
-                if yes_tokens:
-                    yes_id = tokenizer.convert_tokens_to_ids(yes_tokens[0])
-                    if yes_id not in self.yes_token_ids:
-                        self.yes_token_ids.append(yes_id)
+
+        # Check various possible encodings for "yes"
+        for text in ["yes", " yes", "Yes", " Yes", "YES", " YES"]:
+            tokens = tokenizer.encode(text, add_special_tokens=False)
+            if tokens:
+                self.yes_token_ids.extend(tokens)
         
-        for no_token in ["no", "No", "NO"]:
-            if no_token in tokenizer.get_vocab():
-                self.no_token_ids.append(tokenizer.get_vocab()[no_token])
-            else:
-                # Try to tokenize and get first token ID
-                no_tokens = tokenizer.tokenize(no_token)
-                if no_tokens:
-                    no_id = tokenizer.convert_tokens_to_ids(no_tokens[0])
-                    if no_id not in self.no_token_ids:
-                        self.no_token_ids.append(no_id)
+        # Check various possible encodings for "no"
+        for text in ["no", " no", "No", " No", "NO", " NO"]:
+            tokens = tokenizer.encode(text, add_special_tokens=False)
+            if tokens:
+                self.no_token_ids.extend(tokens)
+        
+        # Remove duplicates
+        self.yes_token_ids = list(set(self.yes_token_ids))
+        self.no_token_ids = list(set(self.no_token_ids))
         
         self.probabilities = {"yes": 0.0, "no": 0.0}
         
     def __call__(self, input_ids, scores):
-        # Extract probabilities for yes/no tokens at the first generation step
-        if len(input_ids.shape) > 1 and input_ids.shape[1] > 0:
-            # We're only interested in the first token's probabilities
-            if input_ids.shape[1] == 1:  # First generation step
-                # Apply softmax to convert logits to probabilities
-                probs = F.softmax(scores, dim=-1)
-                
-                # Extract yes/no probabilities
-                yes_prob = sum(probs[0, yes_id].item() for yes_id in self.yes_token_ids)
-                no_prob = sum(probs[0, no_id].item() for no_id in self.no_token_ids)
-                
-                # Normalize to sum to 1
-                total = yes_prob + no_prob
-                if total > 0:
-                    self.probabilities["yes"] = yes_prob / total
-                    self.probabilities["no"] = no_prob / total
-                    
+        # Only process the first generation step
+        if self.step == 0:
+            # Apply softmax to convert logits to probabilities
+            probs = F.softmax(scores, dim=-1)
+            
+            # Extract yes/no probabilities
+            yes_prob = sum(probs[0, yes_id].item() for yes_id in self.yes_token_ids)
+            no_prob = sum(probs[0, no_id].item() for no_id in self.no_token_ids)
+            
+            # Normalize to sum to 1
+            total = yes_prob + no_prob
+            if total > 0:
+                self.probabilities["yes"] = yes_prob / total
+                self.probabilities["no"] = no_prob / total
+            else:
+                # Handle case where neither token was found
+                self.probabilities["yes"] = 0.0
+                self.probabilities["no"] = 0.0
+        
+        self.step += 1  # Increment step counter
         return scores
     
     def get_probabilities(self):
@@ -142,52 +142,62 @@ def preprocess_clinical_note(note_text):
     
     return processed_text
 
-
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create a formatted prompt for malnutrition assessment with optional length control."""
-    base_prompt = """You are a pediatric dietitian evaluating malnutrition status in children based on clinical notes.
-MALNUTRITION CRITERIA
-* Mild: z-score -1 to -1.9 SD (weight-for-height, BMI-for-age)
-* Moderate: z-score -2 to -2.9 SD (weight-for-height, BMI-for-age)
-* Severe: z-score ≤ -3 SD or severe stunting (length/height-for-age ≤ -3 SD)
-* Physical signs: muscle wasting, reduced subcutaneous fat, edema
-* Growth trajectory: declining percentiles, weight loss, poor weight gain
-IMPORTANT GUIDELINES
-* Weight is primarily affected during acute undernutrition
-* Chronic undernutrition typically manifests as stunting
-* Severe acute undernutrition (ages 6–60 months): very low weight-for-height (< -3 SD z-scores), visible severe wasting (MUAC ≤115 mm), or nutritional edema
-* Chronic undernutrition/stunting: height-for-age < -2 SD z-score
-* Growth monitoring is the primary outcome measure of nutritional status
-CLASSIFICATION GUIDANCE
-* Mild malnutrition: usually from acute events (economic circumstances or illness) with unintentional weight loss
-* Moderate malnutrition: undernutrition of significant duration with below-normal weight-for-height/BMI-for-age
-* Severe malnutrition: prolonged undernutrition with stunting
+    """Create optimized malnutrition assessment prompt with strict output controls."""
+    base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
 
-Based on the clinical note below, determine if the child is malnourished. Answer with only 'yes' or 'no'.
+[WHO Diagnostic Framework]
+<<CRITERIA>>
+1. **Severe Acute Malnutrition (SAM):**
+   - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
+   - MUAC < 115 mm (6-59mo) **OR**
+   - Bilateral pitting edema
+2. **Moderate Acute Malnutrition (MAM):**
+   - Weight-for-height/BMI-for-age -2 to -3 SD z-score
+3. **Stunting (Chronic):**
+   - Height-for-age < -2 SD z-score
+4. **Supportive Indicators:**
+   ▸ Weight loss >5% in 30 days
+   ▸ Inadequate intake >5 days
+   ▸ Documented growth decline >2 percentiles
+<</CRITERIA>>
 
-### Clinical Note:
+[Assessment Protocol]
+1. Primary reliance on anthropometrics
+2. Differentiate acute vs chronic patterns
+3. Confirm with clinical correlates
+
+[Output Format]
+Strictly follow this structure:
+
+### Assessment:
+<yes/no>  # FIRST TOKEN MUST BE yes/no
+
+### Severity:
+<sam/mam/stunting/none>
+
+### Basis:
+- Maximum 3 bullet points
+- Cite specific z-scores
+- Note key clinical findings
+
+Clinical note for analysis:
 """
 
-    # If tokenizer and max_tokens are provided, truncate the note if needed
+    # Token-aware note truncation
     if tokenizer and max_tokens:
-        # Calculate approximate token count for the base prompt and ending
+        # Calculate token budgets
         base_tokens = len(tokenizer.encode(base_prompt))
-        ending_tokens = len(tokenizer.encode("\n\n### Assessment:\n"))
+        safety_margin = 128  # For generation space
+        max_note_tokens = max_tokens - base_tokens - safety_margin
         
-        # Calculate how many tokens we can allocate to the note
-        available_tokens = max_tokens - base_tokens - ending_tokens - 50  # 50 tokens buffer
-        
-        # Tokenize and truncate the note if needed
-        note_tokens = tokenizer.encode(note)
-        if len(note_tokens) > available_tokens:
-            truncated_note_tokens = note_tokens[:available_tokens]
-            note = tokenizer.decode(truncated_note_tokens)
-            print(f"Note truncated from {len(note_tokens)} to {available_tokens} tokens")
-    
-    # Complete the prompt
-    prompt = base_prompt + note + "\n\n### Assessment:\n"
-    return prompt
+        if max_note_tokens > 0:
+            note_tokens = tokenizer.encode(note)
+            if len(note_tokens) > max_note_tokens:
+                note = tokenizer.decode(note_tokens[:max_note_tokens])
+                print(f"Truncated note from {len(note_tokens)} to {max_note_tokens} tokens")
 
+    return base_prompt + note + "\n\n### Assessment:\n"
 
 def create_explanation_prompt(note, assessment, prompt_style="explain", tokenizer=None, max_tokens=None):
     """Create a prompt for generating explanations of the model's prediction with optional length control."""
