@@ -29,29 +29,24 @@ class YesNoLogitsProcessor(LogitsProcessor):
     """
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        self.step = 0  # Track generation step
-
-        # Find token IDs for yes and no, considering possible variations
+        # Find token IDs for yes and no (considering potential casing)
         self.yes_token_ids = []
         self.no_token_ids = []
-
-        # Check various possible encodings for "yes"
-        for text in ["yes", " yes", "Yes", " Yes", "YES", " YES"]:
-            tokens = tokenizer.encode(text, add_special_tokens=False)
-            if tokens:
-                self.yes_token_ids.extend(tokens)
         
-        # Check various possible encodings for "no"
-        for text in ["no", " no", "No", " No", "NO", " NO"]:
-            tokens = tokenizer.encode(text, add_special_tokens=False)
-            if tokens:
-                self.no_token_ids.extend(tokens)
-        
-        # Remove duplicates
-        self.yes_token_ids = list(set(self.yes_token_ids))
-        self.no_token_ids = list(set(self.no_token_ids))
+        # Encode all possible variations with and without leading space
+        for prefix in ['', ' ', '\n']:
+            for variant in ['yes', 'Yes', 'YES']:
+                tokens = tokenizer.encode(prefix + variant, add_special_tokens=False)
+                if tokens and tokens[0] not in self.yes_token_ids:
+                    self.yes_token_ids.append(tokens[0])
+            
+            for variant in ['no', 'No', 'NO']:
+                tokens = tokenizer.encode(prefix + variant, add_special_tokens=False)
+                if tokens and tokens[0] not in self.no_token_ids:
+                    self.no_token_ids.append(tokens[0])
         
         self.probabilities = {"yes": 0.0, "no": 0.0}
+        self.step = 0  # Track generation step
         
     def __call__(self, input_ids, scores):
         # Only process the first generation step
@@ -73,12 +68,11 @@ class YesNoLogitsProcessor(LogitsProcessor):
                 self.probabilities["yes"] = 0.0
                 self.probabilities["no"] = 0.0
         
-        self.step += 1  # Increment step counter
+        self.step += 1
         return scores
     
     def get_probabilities(self):
         return self.probabilities
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run inference for pediatric malnutrition classification")
