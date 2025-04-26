@@ -144,6 +144,7 @@ Clinical note for analysis:
             formatted_prompt = prompt.format(note=truncated_note, label_reasoning=label_reasoning)
     
     return formatted_prompt
+
 def get_severity_from_reasoning(reasoning):
     """Extract severity from reasoning text based on keywords."""
     reasoning_lower = reasoning.lower()
