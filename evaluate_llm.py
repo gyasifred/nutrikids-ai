@@ -137,11 +137,11 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create optimized malnutrition assessment prompt with strict output controls."""
+    """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
     base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
 
 [WHO Diagnostic Framework]
-<<CRITERIA>>
+<<CRITERIA FOR MALNUTRITION>>
 1. **Severe Acute Malnutrition (SAM):**
    - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
    - MUAC < 115 mm (6-59mo) **OR**
@@ -154,26 +154,42 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
    ▸ Weight loss >5% in 30 days
    ▸ Inadequate intake >5 days
    ▸ Documented growth decline >2 percentiles
-<</CRITERIA>>
+<</CRITERIA FOR MALNUTRITION>>
+
+<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+1. **Normal Growth Parameters:**
+   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
+   - Height-for-age ≥ -2 SD z-score
+   - MUAC ≥ 115 mm (for children 6-59mo)
+2. **Normal Clinical Assessment:**
+   - No bilateral pitting edema
+   - No significant recent weight loss (<5% in 30 days)
+   - Adequate dietary intake
+   - Stable or appropriate growth trajectory
+3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
+<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
 
 [Assessment Protocol]
-1. Primary reliance on anthropometrics
-2. Differentiate acute vs chronic patterns
+1. Primary reliance on anthropometrics and clinical data
+2. Differentiate acute vs chronic patterns when present
 3. Confirm with clinical correlates
+4. Determine "yes" ONLY when criteria for malnutrition are definitively met
+5. Determine "no" when criteria for normal nutritional status are met
 
 [Output Format]
 Strictly follow this structure:
 
 ### Assessment:
-<yes/no>  # FIRST TOKEN MUST BE yes/no
+<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
 
 ### Severity:
 <sam/mam/stunting/none>
 
 ### Basis:
 - Maximum 3 bullet points
-- Cite specific z-scores
+- Cite specific z-scores or measurements when available
 - Note key clinical findings
+- For "no" assessments, document normal growth parameters
 
 Clinical note for analysis:
 """
