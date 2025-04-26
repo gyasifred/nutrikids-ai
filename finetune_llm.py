@@ -114,16 +114,36 @@ Clinical note for analysis:
     
     # Apply token truncation if needed
     formatted_prompt = prompt.format(note=note, label_reasoning=label_reasoning)
+    
     if tokenizer and max_tokens:
         tokens = tokenizer.encode(formatted_prompt)
+        
+        # Check if tokens is too long
         if len(tokens) > max_tokens:
-            # Truncate the note portion while preserving prompt structure
-            available_tokens = max_tokens - (len(tokens) - tokenizer.encode(note)[0])
-            truncated_note = tokenizer.decode(tokenizer.encode(note)[0][:available_tokens])
+            # Get template without the note to determine available tokens
+            template = prompt.format(note="", label_reasoning=label_reasoning)
+            template_tokens = tokenizer.encode(template)
+            
+            # Calculate available tokens for the note
+            available_tokens = max_tokens - len(template_tokens)
+            
+            # Ensure at least some tokens are available
+            if available_tokens <= 0:
+                available_tokens = max_tokens // 2  # Fallback if template is too long
+            
+            # Tokenize the note separately
+            note_tokens = tokenizer.encode(note)
+            
+            # Truncate the note tokens
+            truncated_note_tokens = note_tokens[:available_tokens]
+            
+            # Decode the truncated tokens back to text
+            truncated_note = tokenizer.decode(truncated_note_tokens)
+            
+            # Recreate the prompt with the truncated note
             formatted_prompt = prompt.format(note=truncated_note, label_reasoning=label_reasoning)
     
     return formatted_prompt
-
 def get_severity_from_reasoning(reasoning):
     """Extract severity from reasoning text based on keywords."""
     reasoning_lower = reasoning.lower()
