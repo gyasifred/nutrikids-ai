@@ -47,39 +47,98 @@ def preprocess_clinical_note(note_text):
     
     return processed_text
 
-def create_malnutrition_prompt(note, label="", reasoning=""):
-    """Your exact prompt structure with added probability support markers"""
-    prompt = """[Role] Pediatric Nutrition Specialist
-[Task] Malnutrition assessment using WHO criteria
-
-[Critical Diagnostics]
-1. SEVERE: 
-   - WFH/BMI < -3 SD
-   - MUAC < 115mm (<5yrs)
-   - Edema
-2. MODERATE:
-   - WFH/BMI -2 to -3 SD
-3. CHRONIC:
-   - HFA < -2 SD + decline
-
+def create_malnutrition_prompt(note, label="", reasoning="", tokenizer=None, max_tokens=None):
+    """
+    Create balanced malnutrition assessment prompt with clear criteria and structured output.
+    Supports both training (with label/reasoning) and inference modes.
+    """
+    prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
+[WHO Diagnostic Framework]
+<<CRITERIA FOR MALNUTRITION>>
+1. **Severe Acute Malnutrition (SAM):**
+   - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
+   - MUAC < 115 mm (6-59mo) **OR**
+   - Bilateral pitting edema
+2. **Moderate Acute Malnutrition (MAM):**
+   - Weight-for-height/BMI-for-age -2 to -3 SD z-score
+3. **Stunting (Chronic):**
+   - Height-for-age < -2 SD z-score
+4. **Supportive Indicators:**
+   ▸ Weight loss >5% in 30 days
+   ▸ Inadequate intake >5 days
+   ▸ Documented growth decline >2 percentiles
+<</CRITERIA FOR MALNUTRITION>>
+<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+1. **Normal Growth Parameters:**
+   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
+   - Height-for-age ≥ -2 SD z-score
+   - MUAC ≥ 115 mm (for children 6-59mo)
+2. **Normal Clinical Assessment:**
+   - No bilateral pitting edema
+   - No significant recent weight loss (<5% in 30 days)
+   - Adequate dietary intake
+   - Stable or appropriate growth trajectory
+3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
+<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+[Assessment Protocol]
+1. Primary reliance on anthropometrics and clinical data
+2. Differentiate acute vs chronic patterns when present
+3. Confirm with clinical correlates
+4. Determine "yes" ONLY when criteria for malnutrition are definitively met
+5. Determine "no" when criteria for normal nutritional status are met
 [Output Format]
-### Assessment: <yes/no>  # MUST be first token
-### Evidence: <z-scores, MUAC, signs>
+Strictly follow this structure:
+### Assessment:
+<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
+### Severity:
+<sam/mam/stunting/none>
+### Basis:
+- Maximum 3 bullet points
+- Cite specific z-scores or measurements when available
+- Note key clinical findings
+- For "no" assessments, document normal growth parameters
 
-Clinical Note:
+Clinical note for analysis:
 {note}
 
-### Assessment: {label}
-### Evidence: {reasoning}"""
+{label_reasoning}"""
 
-    return prompt.format(
-        note=note,
-        label=label,
-        reasoning=reasoning
-    )
+    # Handle training vs. inference mode
+    if label and reasoning:
+        label_reasoning = f"""### Assessment: {label}
+### Severity: {get_severity_from_reasoning(reasoning)}
+### Basis:
+{reasoning}"""
+    else:
+        label_reasoning = ""
+    
+    # Apply token truncation if needed
+    formatted_prompt = prompt.format(note=note, label_reasoning=label_reasoning)
+    if tokenizer and max_tokens:
+        tokens = tokenizer.encode(formatted_prompt)
+        if len(tokens) > max_tokens:
+            # Truncate the note portion while preserving prompt structure
+            available_tokens = max_tokens - (len(tokens) - tokenizer.encode(note)[0])
+            truncated_note = tokenizer.decode(tokenizer.encode(note)[0][:available_tokens])
+            formatted_prompt = prompt.format(note=truncated_note, label_reasoning=label_reasoning)
+    
+    return formatted_prompt
 
+def get_severity_from_reasoning(reasoning):
+    """Extract severity from reasoning text based on keywords."""
+    reasoning_lower = reasoning.lower()
+    if any(term in reasoning_lower for term in ["severe", "sam", "< -3", "<-3", "< -3sd", "<-3sd", "muac < 115", "edema"]):
+        return "sam"
+    elif any(term in reasoning_lower for term in ["moderate", "mam", "-2 to -3", "-2sd to -3sd"]):
+        return "mam"
+    elif any(term in reasoning_lower for term in ["stunting", "chronic", "height-for-age < -2", "height for age < -2"]):
+        return "stunting"
+    else:
+        return "none"
+
+# In your prepare_dataset function:
 def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
-    """Your original dataset prep with enhanced validation"""
+    """Prepare dataset with enhanced prompt structure"""
     df = pd.read_csv(data_path)
     if not {"DEID", "txt", "label"}.issubset(df.columns):
         raise ValueError("CSV must include 'DEID', 'txt', and 'label' columns.")
@@ -92,10 +151,17 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         label_text = "yes" if str(row["label"]).lower() in {"1", "yes", "true"} else "no"
         reasoning_text = row.get("reasoning", "") if has_reasoning else ""
         
-        prompt = create_malnutrition_prompt(note_text, label_text, reasoning_text)
-        prompts.append(prompt + tokenizer.eos_token)  # Your EOS addition
+        prompt = create_malnutrition_prompt(
+            note=note_text, 
+            label=label_text, 
+            reasoning=reasoning_text,
+            tokenizer=tokenizer,
+            max_tokens=max_seq_length - 20  # Leave room for EOS token
+        )
+        prompts.append(prompt + tokenizer.eos_token)
 
     return Dataset.from_dict({"text": prompts})
+
 
 def get_model_max_length(model_name):
     """Your original max length detection"""
