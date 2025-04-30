@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Run inference on clinical notes using the trained malnutrition assessment model.
-Includes enhanced metrics tracking, classification reports, ROC curves with probability scores,
-model explanations, and preprocessing for special tokens like </s>.
+Run inference on clinical notes using the trained malnutrition assessment model
+with simplified prompt structure.
 """
 
 import os
@@ -17,8 +16,6 @@ import matplotlib.pyplot as plt
 from unsloth import FastLanguageModel
 from transformers import TextStreamer, LogitsProcessor, LogitsProcessorList
 from sklearn.metrics import classification_report, roc_curve, auc, confusion_matrix
-import shap
-import pickle
 import json
 import torch.nn.functional as F
 
@@ -100,8 +97,8 @@ def parse_arguments():
                         help="Column name for true labels (if available)")
     parser.add_argument("--generate_explanations", action="store_true", 
                         help="Generate explanations for each prediction")
-    parser.add_argument("--explanation_prompt", type=str, default="explain",
-                        help="Prompt style for explanations: 'explain', 'evidence', or 'detailed'")
+    parser.add_argument("--explanation_style", type=str, default="brief",
+                        help="Style for explanations: 'brief', 'evidence', or 'detailed'")
     parser.add_argument("--temperature", type=float, default=0.3,
                         help="Temperature for sampling during generation (default: 0.3)")
     parser.add_argument("--top_p", type=float, default=0.9,
@@ -110,94 +107,49 @@ def parse_arguments():
                         help="Preprocess </s> tokens in clinical notes")
     return parser.parse_args()
 
-
 def preprocess_clinical_note(note_text):
     """
-    Preprocess clinical notes to handle special tokens like </s> that might interfere with model training.
-    
-    Args:
-        note_text (str): The raw clinical note text
-        
-    Returns:
-        str: Processed clinical note text with special tokens handled
+    Preprocess clinical notes to handle special tokens.
     """
     if not note_text:
         return note_text
     
-    # Replace '</s>' tokens with a more appropriate separator that won't be interpreted as special
-    # Using double newlines to maintain document structure
+    # Replace '</s>' tokens with a more appropriate separator
     processed_text = note_text.replace('</s>', '\n\n')
     
     # Check for any remaining special tokens that might interfere
     special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
     for token in special_tokens:
         if token in processed_text:
-            processed_text = processed_text.replace(token, f"[{token}]")  # Escape them
+            processed_text = processed_text.replace(token, f"[{token}]")
     
     return processed_text
 
-def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
-    base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
+def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
+    """Create a simplified malnutrition assessment prompt."""
+    prompt = """[Task] Please analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
 
-[WHO Diagnostic Framework]
-<<CRITERIA FOR MALNUTRITION>>
-1. **Severe Acute Malnutrition (SAM):**
-   - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
-   - MUAC < 115 mm (6-59mo) **OR**
-   - Bilateral pitting edema
-2. **Moderate Acute Malnutrition (MAM):**
-   - Weight-for-height/BMI-for-age -2 to -3 SD z-score
-3. **Stunting (Chronic):**
-   - Height-for-age < -2 SD z-score
-4. **Supportive Indicators:**
-   ▸ Weight loss >5% in 30 days
-   ▸ Inadequate intake >5 days
-   ▸ Documented growth decline >2 percentiles
-<</CRITERIA FOR MALNUTRITION>>
+[Assessment Guidelines]
+Consider these factors when assessing malnutrition:
+- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC (Mid-Upper Arm Circumference)
+- Growth trajectory and percentile changes
+- Clinical signs like edema, muscle wasting, decreased energy
+- Nutritional intake pattern and history
+- Medical conditions affecting nutrition
+- Social or environmental factors impacting food security
+- Recent weight changes or growth concerns
 
-<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-1. **Normal Growth Parameters:**
-   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
-   - Height-for-age ≥ -2 SD z-score
-   - MUAC ≥ 115 mm (for children 6-59mo)
-2. **Normal Clinical Assessment:**
-   - No bilateral pitting edema
-   - No significant recent weight loss (<5% in 30 days)
-   - Adequate dietary intake
-   - Stable or appropriate growth trajectory
-3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
-<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-
-[Assessment Protocol]
-1. Primary reliance on anthropometrics and clinical data
-2. Differentiate acute vs chronic patterns when present
-3. Confirm with clinical correlates
-4. Determine "yes" ONLY when criteria for malnutrition are definitively met
-5. Determine "no" when criteria for normal nutritional status are met
-
-[Output Format]
-Strictly follow this structure:
-
-### Assessment:
-<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
-
-### Severity:
-<sam/mam/stunting/none>
-
-### Basis:
-- Maximum 3 bullet points
-- Cite specific z-scores or measurements when available
-- Note key clinical findings
-- For "no" assessments, document normal growth parameters
+Remember: Malnutrition can present in different ways and may not always have all classical indicators.
 
 Clinical note for analysis:
-"""
+{note}
+
+Assessment:"""
 
     # Token-aware note truncation
     if tokenizer and max_tokens:
         # Calculate token budgets
-        base_tokens = len(tokenizer.encode(base_prompt))
+        base_tokens = len(tokenizer.encode(prompt.format(note="")))
         safety_margin = 128  # For generation space
         max_note_tokens = max_tokens - base_tokens - safety_margin
         
@@ -207,80 +159,64 @@ Clinical note for analysis:
                 note = tokenizer.decode(note_tokens[:max_note_tokens])
                 print(f"Truncated note from {len(note_tokens)} to {max_note_tokens} tokens")
 
-    return base_prompt + note + "\n\n### Assessment:\n"
+    return prompt.format(note=note)
 
-def create_explanation_prompt(note, assessment, prompt_style="explain", tokenizer=None, max_tokens=None):
-    """Create a prompt for generating explanations of the model's prediction with optional length control."""
-    if prompt_style == "explain":
-        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
-Provide a brief explanation (2-3 sentences) for this assessment, focusing on the key factors that led to this conclusion.
+def create_explanation_prompt(note, assessment, style="brief", tokenizer=None, max_tokens=None):
+    """Create a prompt for generating explanations based on the selected style."""
+    if style == "brief":
+        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
+Provide a brief explanation (2-3 sentences) with key indicators that led to this conclusion.
 
-### Clinical Note:
+Clinical Note:
 """
         base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
+        ending = "\n\nBrief Explanation:"
     
-    elif prompt_style == "evidence":
-        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
-List the specific evidence from the clinical note that supports this assessment.
+    elif style == "evidence":
+        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
+List specific evidence from the clinical note that supports this assessment.
 
-### Clinical Note:
+Clinical Note:
 """
         base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
+        ending = "\n\nEvidence Points:"
     
-    elif prompt_style == "detailed":
-        base_prompt = """You are a pediatric dietitian who has assessed that a child is {}malnourished based on their clinical notes.
-Provide a detailed explanation of this assessment, addressing:
-1. Key anthropometric data that influenced the decision
-2. Growth trajectory indicators noted in the chart
-3. Physical signs or symptoms supporting the assessment
+    elif style == "detailed":
+        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
+Provide a detailed assessment addressing:
+1. Key anthropometric data
+2. Growth trajectory indicators
+3. Physical signs or symptoms
 4. Other relevant nutritional factors
 
-### Clinical Note:
+Clinical Note:
 """
         base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
+        ending = "\n\nDetailed Assessment:"
     
     else:
-        # Default to the simple explain prompt
-        return create_explanation_prompt(note, assessment, "explain", tokenizer, max_tokens)
+        # Default to brief style
+        return create_explanation_prompt(note, assessment, "brief", tokenizer, max_tokens)
     
-    # If tokenizer and max_tokens are provided, truncate the note if needed
+    # Token-aware truncation
     if tokenizer and max_tokens:
-        # Calculate approximate token count for the base prompt and ending
-        if prompt_style == "explain":
-            ending = "\n\n### Explanation:\n"
-        elif prompt_style == "evidence":
-            ending = "\n\n### Evidence:\n"
-        elif prompt_style == "detailed":
-            ending = "\n\n### Detailed Explanation:\n"
-            
         base_tokens = len(tokenizer.encode(base_prompt))
         ending_tokens = len(tokenizer.encode(ending))
         
-        # Calculate how many tokens we can allocate to the note
         available_tokens = max_tokens - base_tokens - ending_tokens - 50  # 50 tokens buffer
         
-        # Tokenize and truncate the note if needed
         note_tokens = tokenizer.encode(note)
         if len(note_tokens) > available_tokens:
             truncated_note_tokens = note_tokens[:available_tokens]
             note = tokenizer.decode(truncated_note_tokens)
             print(f"Note truncated from {len(note_tokens)} to {available_tokens} tokens for explanation")
     
-    # Complete the prompt
-    if prompt_style == "explain":
-        prompt = base_prompt + note + "\n\n### Explanation:\n"
-    elif prompt_style == "evidence":
-        prompt = base_prompt + note + "\n\n### Evidence:\n"
-    elif prompt_style == "detailed":
-        prompt = base_prompt + note + "\n\n### Detailed Explanation:\n"
-        
-    return prompt
-
+    return base_prompt + note + ending
 
 def load_model(model_path, load_in_4bit):
     """Load the fine-tuned model with native sequence length."""
     try:
-        # Try loading with Unsloth first - using model's native max_seq_length
+        # Try loading with Unsloth first
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
             dtype=None,  # Auto detect
@@ -306,12 +242,10 @@ def load_model(model_path, load_in_4bit):
         )
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
-        # Get model's native max sequence length
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
         print(f"Using model's native max sequence length: {max_seq_length}")
 
     return model, tokenizer, max_seq_length
-
 
 def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9):
     """Generate text and extract yes/no probabilities."""
@@ -356,18 +290,17 @@ def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=10
     
     return prediction, probabilities
 
-
 def generate_explanation(model, tokenizer, note, assessment, args, max_seq_length):
     """Generate an explanation for the model's prediction."""
     explanation_prompt = create_explanation_prompt(
         note, 
         assessment, 
-        args.explanation_prompt,
+        args.explanation_style,
         tokenizer=tokenizer,
         max_tokens=max_seq_length - 256  # Reserve tokens for the explanation
     )
     
-    # Generate a longer response for explanation
+    # Generate explanation
     streamer = None
     if args.stream_output:
         streamer = TextStreamer(tokenizer)
@@ -386,12 +319,12 @@ def generate_explanation(model, tokenizer, note, assessment, args, max_seq_lengt
     
     # Extract just the explanation part
     try:
-        if "### Explanation:" in explanation_text:
-            explanation = explanation_text.split("### Explanation:")[-1].strip()
-        elif "### Evidence:" in explanation_text:
-            explanation = explanation_text.split("### Evidence:")[-1].strip()
-        elif "### Detailed Explanation:" in explanation_text:
-            explanation = explanation_text.split("### Detailed Explanation:")[-1].strip()
+        if "Brief Explanation:" in explanation_text:
+            explanation = explanation_text.split("Brief Explanation:")[-1].strip()
+        elif "Evidence Points:" in explanation_text:
+            explanation = explanation_text.split("Evidence Points:")[-1].strip()
+        elif "Detailed Assessment:" in explanation_text:
+            explanation = explanation_text.split("Detailed Assessment:")[-1].strip()
         else:
             # Fallback - get everything after the prompt
             explanation = explanation_text.replace(explanation_prompt, "").strip()
@@ -399,7 +332,6 @@ def generate_explanation(model, tokenizer, note, assessment, args, max_seq_lengt
         explanation = "Error generating explanation."
     
     return explanation
-
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
@@ -419,7 +351,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 note = preprocess_clinical_note(note)
                 
             # Create prompt for the current note with length control
-            prompt = create_malnutrition_prompt(
+            prompt = create_simplified_malnutrition_prompt(
                 note, 
                 tokenizer=tokenizer, 
                 max_tokens=max_seq_length - args.max_new_tokens
@@ -453,13 +385,14 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             inference_time = time.time() - start_time
             
-            # Extract just the assessment (yes/no) from the prediction
+            # Extract the assessment (yes/no) from the prediction
             try:
-                assessment_part = prediction.split("### Assessment:")[-1].strip()
-                # Clean up to get just yes or no
+                # Extract the first word after "Assessment:"
+                assessment_part = prediction.split("Assessment:")[-1].strip()
+                # Get just yes or no
                 assessment = assessment_part.split()[0].lower()
                 if assessment not in ['yes', 'no']:
-                    # Handle case where model gives more than yes/no
+                    # Fallback for non-standard responses
                     assessment = 'yes' if 'yes' in assessment_part.lower() else 'no'
             except:
                 assessment = "error"
@@ -489,7 +422,6 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             results.append(result)
             
     return results
-
 
 def calculate_metrics(results, args):
     """Calculate and save performance metrics using probability scores for AUC."""
@@ -524,7 +456,6 @@ def calculate_metrics(results, args):
     y_pred = [1 if r["predicted_label"].lower() == "yes" else 0 for r in valid_results]
     
     # Extract probabilities for ROC curve calculation
-    # For positive class (probability of yes)
     probabilities = [r["positive_probability"] for r in valid_results]
     
     # Save raw prediction data for future analysis
@@ -536,8 +467,7 @@ def calculate_metrics(results, args):
         "pred_binary": y_pred,
         "positive_probability": probabilities
     })
-    metrics_df.to_csv(os.path.join(metrics_dir, "raw_predictions.csv"), index=False)
-    
+    metrics_df.to_csv(os.path.join(metrics_dir, "raw_predictions.csv"), index=False)    
     # Classification Report based on binary predictions
     report = classification_report(y_true, y_pred, output_dict=True, target_names=["Non-malnourished", "Malnourished"])
     report_df = pd.DataFrame(report).transpose()
