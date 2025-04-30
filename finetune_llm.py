@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment with reasoning.
+Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment
+with a simplified, more flexible prompt that allows better learning from data.
 """
 
 import os
@@ -16,7 +17,7 @@ from unsloth import is_bfloat16_supported
 from unsloth import FastLanguageModel 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification with reasoning")
+    parser = argparse.ArgumentParser(description="Fine-tune LLM for pediatric malnutrition classification")
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV data file")
     parser.add_argument("--model_name", type=str, default="unsloth/Meta-Llama-3.1-8B", help="Base model to use")
     parser.add_argument("--output_dir", type=str, default="./malnutrition_model", help="Where to save the model")
@@ -38,7 +39,7 @@ def preprocess_clinical_note(note_text):
     if not note_text:
         return note_text
     
-    # Your original replacement logic
+    # Replace problematic tokens
     processed_text = note_text.replace('</s>', '\n\n')
     special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
     for token in special_tokens:
@@ -47,73 +48,39 @@ def preprocess_clinical_note(note_text):
     
     return processed_text
 
-def create_malnutrition_prompt(note, label="", reasoning="", tokenizer=None, max_tokens=None):
+def create_simplified_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
     """
-    Create balanced malnutrition assessment prompt with clear criteria and structured output.
-    Supports both training (with label/reasoning) and inference modes.
+    Create a simplified malnutrition assessment prompt that's more flexible
+    and allows the model to learn broader patterns from data.
     """
-    prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
-[WHO Diagnostic Framework]
-<<CRITERIA FOR MALNUTRITION>>
-1. **Severe Acute Malnutrition (SAM):**
-   - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
-   - MUAC < 115 mm (6-59mo) **OR**
-   - Bilateral pitting edema
-2. **Moderate Acute Malnutrition (MAM):**
-   - Weight-for-height/BMI-for-age -2 to -3 SD z-score
-3. **Stunting (Chronic):**
-   - Height-for-age < -2 SD z-score
-4. **Supportive Indicators:**
-   ▸ Weight loss >5% in 30 days
-   ▸ Inadequate intake >5 days
-   ▸ Documented growth decline >2 percentiles
-<</CRITERIA FOR MALNUTRITION>>
-<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-1. **Normal Growth Parameters:**
-   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
-   - Height-for-age ≥ -2 SD z-score
-   - MUAC ≥ 115 mm (for children 6-59mo)
-2. **Normal Clinical Assessment:**
-   - No bilateral pitting edema
-   - No significant recent weight loss (<5% in 30 days)
-   - Adequate dietary intake
-   - Stable or appropriate growth trajectory
-3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
-<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-[Assessment Protocol]
-1. Primary reliance on anthropometrics and clinical data
-2. Differentiate acute vs chronic patterns when present
-3. Confirm with clinical correlates
-4. Determine "yes" ONLY when criteria for malnutrition are definitively met
-5. Determine "no" when criteria for normal nutritional status are met
-[Output Format]
-Strictly follow this structure:
-### Assessment:
-<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
-### Severity:
-<sam/mam/stunting/none>
-### Basis:
-- Maximum 3 bullet points
-- Cite specific z-scores or measurements when available
-- Note key clinical findings
-- For "no" assessments, document normal growth parameters
+    # Define a more concise framework that includes broader indicators
+    prompt = """[Task] Please analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
+
+[Assessment Guidelines]
+Consider these factors when assessing malnutrition:
+- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC (Mid-Upper Arm Circumference)
+- Growth trajectory and percentile changes
+- Clinical signs like edema, muscle wasting, decreased energy
+- Nutritional intake pattern and history
+- Medical conditions affecting nutrition
+- Social or environmental factors impacting food security
+- Recent weight changes or growth concerns
+
+Remember: Malnutrition can present in different ways and may not always have all classical indicators.
 
 Clinical note for analysis:
 {note}
 
-{label_reasoning}"""
+{label_part}"""
 
-    # Handle training vs. inference mode
-    if label and reasoning:
-        label_reasoning = f"""### Assessment: {label}
-### Severity: {get_severity_from_reasoning(reasoning)}
-### Basis:
-{reasoning}"""
+    # For training mode (with label)
+    if label:
+        label_part = f"Assessment: {label}"
     else:
-        label_reasoning = ""
+        label_part = "Assessment:"
     
     # Apply token truncation if needed
-    formatted_prompt = prompt.format(note=note, label_reasoning=label_reasoning)
+    formatted_prompt = prompt.format(note=note, label_part=label_part)
     
     if tokenizer and max_tokens:
         tokens = tokenizer.encode(formatted_prompt)
@@ -121,7 +88,7 @@ Clinical note for analysis:
         # Check if tokens is too long
         if len(tokens) > max_tokens:
             # Get template without the note to determine available tokens
-            template = prompt.format(note="", label_reasoning=label_reasoning)
+            template = prompt.format(note="", label_part=label_part)
             template_tokens = tokenizer.encode(template)
             
             # Calculate available tokens for the note
@@ -141,41 +108,24 @@ Clinical note for analysis:
             truncated_note = tokenizer.decode(truncated_note_tokens)
             
             # Recreate the prompt with the truncated note
-            formatted_prompt = prompt.format(note=truncated_note, label_reasoning=label_reasoning)
+            formatted_prompt = prompt.format(note=truncated_note, label_part=label_part)
     
     return formatted_prompt
 
-def get_severity_from_reasoning(reasoning):
-    """Extract severity from reasoning text based on keywords."""
-    reasoning_lower = reasoning.lower()
-    if any(term in reasoning_lower for term in ["severe", "sam", "< -3", "<-3", "< -3sd", "<-3sd", "muac < 115", "edema"]):
-        return "sam"
-    elif any(term in reasoning_lower for term in ["moderate", "mam", "-2 to -3", "-2sd to -3sd"]):
-        return "mam"
-    elif any(term in reasoning_lower for term in ["stunting", "chronic", "height-for-age < -2", "height for age < -2"]):
-        return "stunting"
-    else:
-        return "none"
-
-# In your prepare_dataset function:
 def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
-    """Prepare dataset with enhanced prompt structure"""
+    """Prepare dataset with simplified prompt structure"""
     df = pd.read_csv(data_path)
-    if not {"DEID", "txt", "label"}.issubset(df.columns):
-        raise ValueError("CSV must include 'DEID', 'txt', and 'label' columns.")
+    if not {"txt", "label"}.issubset(df.columns):
+        raise ValueError("CSV must include 'txt' and 'label' columns.")
 
-    # Your original processing flow
-    has_reasoning = "reasoning" in df.columns
     prompts = []
     for _, row in df.iterrows():
         note_text = preprocess_clinical_note(row["txt"]) if preprocess_tokens else row["txt"]
         label_text = "yes" if str(row["label"]).lower() in {"1", "yes", "true"} else "no"
-        reasoning_text = row.get("reasoning", "") if has_reasoning else ""
         
-        prompt = create_malnutrition_prompt(
+        prompt = create_simplified_malnutrition_prompt(
             note=note_text, 
-            label=label_text, 
-            reasoning=reasoning_text,
+            label=label_text,
             tokenizer=tokenizer,
             max_tokens=max_seq_length - 20  # Leave room for EOS token
         )
@@ -183,9 +133,8 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
 
     return Dataset.from_dict({"text": prompts})
 
-
 def get_model_max_length(model_name):
-    """Your original max length detection"""
+    """Get the model's maximum sequence length."""
     try:
         from unsloth.models.llama import auto_get_max_seq_length
         return auto_get_max_seq_length(model_name)
@@ -201,14 +150,14 @@ def get_model_max_length(model_name):
 def main():
     args = parse_arguments()
 
-    # Your original max length logic
+    # Determine max sequence length
     if args.use_native_max_len or args.max_seq_length is None:
         max_seq_length = get_model_max_length(args.model_name)
-        print(f"Using model's max length: {max_seq_length}")
+        print(f"Using model's native max length: {max_seq_length}")
     else:
         max_seq_length = args.max_seq_length
 
-    # Your original model loading
+    # Load the model
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
         max_seq_length=max_seq_length,
@@ -216,7 +165,7 @@ def main():
         load_in_4bit=args.load_in_4bit,
     )
 
-    # Your original LoRA config
+    # Configure LoRA
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -229,10 +178,10 @@ def main():
         use_rslora=False,
     )
 
-    # Your dataset prep
+    # Prepare dataset
     dataset = prepare_dataset(args.data_path, tokenizer, max_seq_length, args.preprocess_tokens)
 
-    # Your original trainer setup
+    # Set up trainer
     def formatting_prompts_func(examples):
         return examples["text"]
 
@@ -259,11 +208,11 @@ def main():
         )
     )
 
-    # Your training execution
+    # Train the model
     print("Starting training...")
     trainer_stats = trainer.train()
 
-    # Your model saving
+    # Save the model
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
     print("Training complete!")
