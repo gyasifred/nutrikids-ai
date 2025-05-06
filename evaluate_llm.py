@@ -6,7 +6,6 @@ with detailed criteria for malnutrition classification.
 """
 
 import os
-#os.environ['UNSLOTH_RETURN_LOGITS'] = '1' 
 import pandas as pd
 import numpy as np
 import torch
@@ -15,62 +14,10 @@ import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from unsloth import FastLanguageModel
-from transformers import TextStreamer, LogitsProcessor, LogitsProcessorList
+from transformers import TextStreamer
 from sklearn.metrics import classification_report, roc_curve, auc, confusion_matrix
 import json
-import torch.nn.functional as F
 
-
-class YesNoLogitsProcessor(LogitsProcessor):
-    """
-    Custom logits processor to extract probability scores for yes/no classification.
-    """
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-        # Find token IDs for yes and no (considering potential casing)
-        self.yes_token_ids = []
-        self.no_token_ids = []
-        
-        # Encode all possible variations with and without leading space
-        for prefix in ['', ' ', '\n']:
-            for variant in ['yes', 'Yes', 'YES']:
-                tokens = tokenizer.encode(prefix + variant, add_special_tokens=False)
-                if tokens and tokens[0] not in self.yes_token_ids:
-                    self.yes_token_ids.append(tokens[0])
-            
-            for variant in ['no', 'No', 'NO']:
-                tokens = tokenizer.encode(prefix + variant, add_special_tokens=False)
-                if tokens and tokens[0] not in self.no_token_ids:
-                    self.no_token_ids.append(tokens[0])
-        
-        self.probabilities = {"yes": 0.0, "no": 0.0}
-        self.step = 0  # Track generation step
-        
-    def __call__(self, input_ids, scores):
-        # Only process the first generation step
-        if self.step == 0:
-            # Apply softmax to convert logits to probabilities
-            probs = F.softmax(scores, dim=-1)
-            
-            # Extract yes/no probabilities
-            yes_prob = sum(probs[0, yes_id].item() for yes_id in self.yes_token_ids)
-            no_prob = sum(probs[0, no_id].item() for no_id in self.no_token_ids)
-            
-            # Normalize to sum to 1
-            total = yes_prob + no_prob
-            if total > 0:
-                self.probabilities["yes"] = yes_prob / total
-                self.probabilities["no"] = no_prob / total
-            else:
-                # Handle case where neither token was found
-                self.probabilities["yes"] = 0.0
-                self.probabilities["no"] = 0.0
-        
-        self.step += 1
-        return scores
-    
-    def get_probabilities(self):
-        return self.probabilities
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run inference for pediatric malnutrition classification")
@@ -96,8 +43,8 @@ def parse_arguments():
                         help="Column name for patient IDs")
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
-    parser.add_argument("--temperature", type=float, default=0.3,
-                        help="Temperature for sampling during generation (default: 0.3)")
+    parser.add_argument("--temperature", type=float, default=0.1,
+                        help="Temperature for sampling during generation (default: 0.1)")
     parser.add_argument("--top_p", type=float, default=0.9,
                         help="Top-p (nucleus) sampling parameter (default: 0.9)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
@@ -173,9 +120,9 @@ Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
 
-Follow this format:
+Follow this format exactly:
 1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
-2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
+2) Then provide your final assessment on its own line in exactly this format: malnutrition=yes or malnutrition=no
 
 Clinical note for analysis:
 {note}
@@ -231,12 +178,8 @@ def load_model(model_path, load_in_4bit):
 
     return model, tokenizer, max_seq_length
 
-def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9):
-    """Generate text and extract yes/no probabilities."""
-    # Create logits processor for probability extraction
-    yes_no_processor = YesNoLogitsProcessor(tokenizer)
-    logits_processors = LogitsProcessorList([yes_no_processor])
-    
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.1, top_p=0.9):
+    """Generate text without probability extraction."""
     # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
     
@@ -259,7 +202,6 @@ def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=10
         "use_cache": True,
         "temperature": temperature,
         "top_p": top_p,
-        "logits_processor": logits_processors
     }
     
     if streamer:
@@ -269,14 +211,58 @@ def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=10
     
     prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
     
-    # Get the probabilities from the logits processor
-    probabilities = yes_no_processor.get_probabilities()
+    return prediction
+
+def extract_assessment(prediction):
+    """Improved assessment extraction from model output."""
+    # Normalize the prediction text
+    normalized = prediction.lower().replace('\n', ' ').replace('\r', ' ')
     
-    return prediction, probabilities
+    # First look for explicit malnutrition= pattern
+    if "malnutrition=" in normalized:
+        mal_part = normalized.split("malnutrition=")[-1].strip()
+        if mal_part.startswith("yes"):
+            return "yes"
+        elif mal_part.startswith("no"):
+            return "no"
+    
+    # Then look for affirmative/negative phrases
+    affirmative_phrases = [
+        "patient has malnutrition",
+        "malnutrition is present",
+        "findings consistent with malnutrition",
+        "diagnosed with malnutrition",
+        "malnutrition: yes"
+    ]
+    
+    negative_phrases = [
+        "no evidence of malnutrition",
+        "malnutrition is not present",
+        "no signs of malnutrition",
+        "malnutrition: no",
+        "does not have malnutrition"
+    ]
+    
+    for phrase in affirmative_phrases:
+        if phrase in normalized:
+            return "yes"
+    
+    for phrase in negative_phrases:
+        if phrase in normalized:
+            return "no"
+    
+    # Fallback to checking for yes/no in the last 50 characters
+    last_part = normalized[-50:]
+    if "yes" in last_part:
+        return "yes"
+    elif "no" in last_part:
+        return "no"
+    
+    # Final fallback
+    return "error"
 
 def extract_explanation_from_assessment(prediction):
     """Extract explanation from the main assessment output."""
-    # The explanation is the text before any "malnutrition=" pattern
     try:
         # Find the assessment section
         assessment_part = prediction.split("Assessment:")[-1].strip()
@@ -289,13 +275,26 @@ def extract_explanation_from_assessment(prediction):
             explanation = assessment_part[:malnutrition_pattern_index].strip()
         else:
             # If no pattern found, use the beginning of assessment section 
-            # (but avoid using the decision part)
             lines = assessment_part.split('\n')
-            explanation = '\n'.join(lines[:-1]) if len(lines) > 1 else ''
+            explanation = '\n'.join(lines[:-1]) if len(lines) > 1 else assessment_part
             
         return explanation
     except:
         return "Error extracting explanation from assessment."
+
+def validate_assessment(explanation, assessment):
+    """Check if explanation and assessment are consistent."""
+    if not explanation or assessment == "error":
+        return False
+    
+    explanation_text = explanation.lower()
+    if assessment == "yes":
+        if "no malnutrition" in explanation_text or "not malnourished" in explanation_text:
+            return False
+    elif assessment == "no":
+        if "malnutrition" in explanation_text and "no" not in explanation_text and "not" not in explanation_text:
+            return False
+    return True
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
@@ -321,12 +320,12 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 max_tokens=max_seq_length - args.max_new_tokens
             )
             
-            # Generate prediction with probabilities
+            # Generate prediction
             start_time = time.time()
             
             if args.stream_output:
                 print(f"\nGenerating assessment for patient {patient_id}...")
-                prediction, probabilities = generate_text_with_probabilities(
+                prediction = generate_text(
                     model, 
                     tokenizer, 
                     prompt, 
@@ -337,7 +336,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                     top_p=args.top_p
                 )
             else:
-                prediction, probabilities = generate_text_with_probabilities(
+                prediction = generate_text(
                     model, 
                     tokenizer, 
                     prompt, 
@@ -349,36 +348,27 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             inference_time = time.time() - start_time
             
-            # Extract the assessment (yes/no) from the prediction
-            try:
-                # Extract the assessment part
-                assessment_part = prediction.split("Assessment:")[-1].strip()
-                
-                # Look for "malnutrition=" pattern
-                if "malnutrition=" in assessment_part.lower():
-                    # Extract yes/no from the pattern
-                    malnutrition_value = assessment_part.lower().split("malnutrition=")[-1].strip().split()[0]
-                    assessment = malnutrition_value if malnutrition_value in ['yes', 'no'] else (
-                        'yes' if 'yes' in assessment_part.lower()[:30] else 'no'
-                    )
-                else:
-                    # Fallback: check for yes/no in the first few words
-                    first_words = assessment_part.lower().split()[:5]
-                    assessment = 'yes' if 'yes' in first_words else 'no'
-                    
-            except:
-                assessment = "error"
+            # Extract the assessment
+            assessment = extract_assessment(prediction)
             
-            # Get the probability for the positive class (yes)
-            positive_prob = probabilities.get("yes", 0.0)
+            # Get the probability for the positive class (simple binary for now)
+            positive_prob = 1.0 if assessment == "yes" else 0.0
             
             # Extract explanation directly from the main prediction
             explanation = None
             if args.generate_explanations and assessment in ['yes', 'no']:
                 explanation = extract_explanation_from_assessment(prediction)
                 
+                # Validate consistency between explanation and assessment
+                is_consistent = validate_assessment(explanation, assessment)
+                if not is_consistent:
+                    print(f"\nWARNING: Inconsistent assessment for patient {patient_id}")
+                    print(f"Assessment: {assessment}")
+                    print(f"Explanation: {explanation}")
+                    print("-" * 80)
+                
                 # Print explanation to terminal whether streaming is enabled or not
-                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}, Prob: {positive_prob:.2f}) -----")
+                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}) -----")
                 print(explanation)
                 print("-" * 80)
             
@@ -389,7 +379,8 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 "positive_probability": positive_prob,
                 "explanation": explanation if explanation else "",
                 "original_note": note,
-                "inference_time": inference_time
+                "inference_time": inference_time,
+                "raw_prediction": prediction if args.test_mode else ""  # Save full output in test mode
             }
             
             results.append(result)
@@ -397,7 +388,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
     return results
 
 def calculate_metrics(results, args):
-    """Calculate and save performance metrics using probability scores for AUC."""
+    """Calculate and save performance metrics."""
     # Create metrics directory if it doesn't exist
     metrics_dir = os.path.join(args.output_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
@@ -441,6 +432,7 @@ def calculate_metrics(results, args):
         "positive_probability": probabilities
     })
     metrics_df.to_csv(os.path.join(metrics_dir, "raw_predictions.csv"), index=False)    
+    
     # Classification Report based on binary predictions
     report = classification_report(y_true, y_pred, output_dict=True, target_names=["Non-malnourished", "Malnourished"])
     report_df = pd.DataFrame(report).transpose()
@@ -484,26 +476,9 @@ def calculate_metrics(results, args):
     plt.ylim([0.0, 1.05])
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("Receiver Operating Characteristic (Using Probabilities)")
+    plt.title("Receiver Operating Characteristic")
     plt.legend(loc="lower right")
-    plt.savefig(os.path.join(metrics_dir, "roc_curve_probabilities.png"), dpi=300, bbox_inches="tight")
-    
-    # For comparison, also calculate the ROC using binary predictions
-    fpr_binary, tpr_binary, _ = roc_curve(y_true, y_pred)
-    roc_auc_binary = auc(fpr_binary, tpr_binary)
-    
-    # Plot comparative ROC curves
-    plt.figure(figsize=(8, 6))
-    plt.plot(fpr, tpr, color="darkorange", lw=2, label=f"Probability-based (AUC = {roc_auc:.2f})")
-    plt.plot(fpr_binary, tpr_binary, color="green", lw=2, label=f"Binary-based (AUC = {roc_auc_binary:.2f})")
-    plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Comparison: Probability vs Binary Classification")
-    plt.legend(loc="lower right")
-    plt.savefig(os.path.join(metrics_dir, "roc_curves_comparison.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(metrics_dir, "roc_curve.png"), dpi=300, bbox_inches="tight")
     
     # Save metrics summary
     metrics_summary = {
@@ -514,8 +489,7 @@ def calculate_metrics(results, args):
         "precision_nonmalnourished": report["Non-malnourished"]["precision"],
         "recall_nonmalnourished": report["Non-malnourished"]["recall"],
         "f1_nonmalnourished": report["Non-malnourished"]["f1-score"],
-        "auc_probability": roc_auc,
-        "auc_binary": roc_auc_binary,
+        "auc": roc_auc,
         "total_samples": len(valid_results),
         "malnourished_count": sum(y_true),
         "nonmalnourished_count": len(y_true) - sum(y_true)
@@ -525,7 +499,6 @@ def calculate_metrics(results, args):
         json.dump(metrics_summary, f, indent=2)
     
     return metrics_summary
-
 
 def main():
     args = parse_arguments()
@@ -592,8 +565,7 @@ def main():
             print(f"Accuracy: {metrics['accuracy']:.4f}")
             print(f"Malnourished cases - Precision: {metrics['precision_malnourished']:.4f}, Recall: {metrics['recall_malnourished']:.4f}, F1: {metrics['f1_malnourished']:.4f}")
             print(f"Non-malnourished cases - Precision: {metrics['precision_nonmalnourished']:.4f}, Recall: {metrics['recall_nonmalnourished']:.4f}, F1: {metrics['f1_nonmalnourished']:.4f}")
-            print(f"AUC-ROC (using probabilities): {metrics['auc_probability']:.4f}")
-            print(f"AUC-ROC (using binary decisions): {metrics['auc_binary']:.4f}")
+            print(f"AUC-ROC: {metrics['auc']:.4f}")
             print(f"Metrics saved to: {args.metrics_dir}/")
     
     # Show summary statistics
@@ -616,6 +588,15 @@ def main():
     if args.generate_explanations:
         print(f"Explanations generated and saved to: {output_file}")
 
+    if args.test_mode:
+        # Print full outputs in test mode
+        print("\nTest Mode - Full Outputs:")
+        for result in results:
+            print(f"\nPatient ID: {result['DEID']}")
+            print(f"Assessment: {result['predicted_label']}")
+            print("Full Output:")
+            print(result['raw_prediction'])
+            print("-" * 80)
 
 if __name__ == "__main__":
     main()
