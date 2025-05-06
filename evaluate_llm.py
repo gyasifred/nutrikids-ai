@@ -96,10 +96,6 @@ def parse_arguments():
                         help="Column name for patient IDs")
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
-    parser.add_argument("--generate_explanations", action="store_true", 
-                        help="Generate explanations for each prediction")
-    parser.add_argument("--explanation_style", type=str, default="brief",
-                        help="Style for explanations: 'brief', 'evidence', or 'detailed'")
     parser.add_argument("--temperature", type=float, default=0.3,
                         help="Temperature for sampling during generation (default: 0.3)")
     parser.add_argument("--top_p", type=float, default=0.9,
@@ -199,58 +195,6 @@ Assessment:"""
 
     return prompt.format(note=note)
 
-def create_explanation_prompt(note, assessment, style="brief", tokenizer=None, max_tokens=None):
-    """Create a prompt for generating explanations based on the selected style."""
-    if style == "brief":
-        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
-Provide a brief explanation (2-3 sentences) with key indicators that led to this conclusion.
-
-Clinical Note:
-"""
-        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
-        ending = "\n\nBrief Explanation:"
-    
-    elif style == "evidence":
-        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
-List specific evidence from the clinical note that supports this assessment.
-
-Clinical Note:
-"""
-        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
-        ending = "\n\nEvidence Points:"
-    
-    elif style == "detailed":
-        base_prompt = """You are a pediatric nutrition specialist who has analyzed a clinical note and determined that a child is {}malnourished.
-Provide a detailed assessment addressing:
-1. Key anthropometric data
-2. Growth trajectory indicators
-3. Physical signs or symptoms
-4. Other relevant nutritional factors
-
-Clinical Note:
-"""
-        base_prompt = base_prompt.format("" if assessment.lower() == "yes" else "not ")
-        ending = "\n\nDetailed Assessment:"
-    
-    else:
-        # Default to brief style
-        return create_explanation_prompt(note, assessment, "brief", tokenizer, max_tokens)
-    
-    # Token-aware truncation
-    if tokenizer and max_tokens:
-        base_tokens = len(tokenizer.encode(base_prompt))
-        ending_tokens = len(tokenizer.encode(ending))
-        
-        available_tokens = max_tokens - base_tokens - ending_tokens - 50  # 50 tokens buffer
-        
-        note_tokens = tokenizer.encode(note)
-        if len(note_tokens) > available_tokens:
-            truncated_note_tokens = note_tokens[:available_tokens]
-            note = tokenizer.decode(truncated_note_tokens)
-            print(f"Note truncated from {len(note_tokens)} to {available_tokens} tokens for explanation")
-    
-    return base_prompt + note + ending
-
 def load_model(model_path, load_in_4bit):
     """Load the fine-tuned model with native sequence length."""
     try:
@@ -328,48 +272,28 @@ def generate_text_with_probabilities(model, tokenizer, prompt, max_new_tokens=10
     
     return prediction, probabilities
 
-def generate_explanation(model, tokenizer, note, assessment, args, max_seq_length):
-    """Generate an explanation for the model's prediction."""
-    explanation_prompt = create_explanation_prompt(
-        note, 
-        assessment, 
-        args.explanation_style,
-        tokenizer=tokenizer,
-        max_tokens=max_seq_length - 256  # Reserve tokens for the explanation
-    )
-    
-    # Generate explanation
-    streamer = None
-    if args.stream_output:
-        streamer = TextStreamer(tokenizer)
-        print("\nGenerating explanation...")
-    
-    explanation_text, _ = generate_text_with_probabilities(
-        model, 
-        tokenizer, 
-        explanation_prompt, 
-        max_new_tokens=256,
-        streamer=streamer,
-        max_seq_length=max_seq_length,
-        temperature=args.temperature,
-        top_p=args.top_p
-    )
-    
-    # Extract just the explanation part
+def extract_explanation_from_assessment(prediction):
+    """Extract explanation from the main assessment output."""
+    # The explanation is the text before any "malnutrition=" pattern
     try:
-        if "Brief Explanation:" in explanation_text:
-            explanation = explanation_text.split("Brief Explanation:")[-1].strip()
-        elif "Evidence Points:" in explanation_text:
-            explanation = explanation_text.split("Evidence Points:")[-1].strip()
-        elif "Detailed Assessment:" in explanation_text:
-            explanation = explanation_text.split("Detailed Assessment:")[-1].strip()
+        # Find the assessment section
+        assessment_part = prediction.split("Assessment:")[-1].strip()
+        
+        # Look for the "malnutrition=" pattern
+        malnutrition_pattern_index = assessment_part.lower().find("malnutrition=")
+        
+        if malnutrition_pattern_index != -1:
+            # Get everything before the pattern - this is the explanation
+            explanation = assessment_part[:malnutrition_pattern_index].strip()
         else:
-            # Fallback - get everything after the prompt
-            explanation = explanation_text.replace(explanation_prompt, "").strip()
+            # If no pattern found, use the beginning of assessment section 
+            # (but avoid using the decision part)
+            lines = assessment_part.split('\n')
+            explanation = '\n'.join(lines[:-1]) if len(lines) > 1 else ''
+            
+        return explanation
     except:
-        explanation = "Error generating explanation."
-    
-    return explanation
+        return "Error extracting explanation from assessment."
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
@@ -425,27 +349,37 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             # Extract the assessment (yes/no) from the prediction
             try:
-                # Extract the first word after "Assessment:"
+                # Extract the assessment part
                 assessment_part = prediction.split("Assessment:")[-1].strip()
-                # Get just yes or no - take only the first word
-                first_word = assessment_part.split()[0].lower()
-                assessment = first_word if first_word in ['yes', 'no'] else (
-                    'yes' if 'yes' in assessment_part.lower()[:20] else 'no'
-                )
+                
+                # Look for "malnutrition=" pattern
+                if "malnutrition=" in assessment_part.lower():
+                    # Extract yes/no from the pattern
+                    malnutrition_value = assessment_part.lower().split("malnutrition=")[-1].strip().split()[0]
+                    assessment = malnutrition_value if malnutrition_value in ['yes', 'no'] else (
+                        'yes' if 'yes' in assessment_part.lower()[:30] else 'no'
+                    )
+                else:
+                    # Fallback: check for yes/no in the first few words
+                    first_words = assessment_part.lower().split()[:5]
+                    assessment = 'yes' if 'yes' in first_words else 'no'
+                    
             except:
                 assessment = "error"
             
             # Get the probability for the positive class (yes)
             positive_prob = probabilities.get("yes", 0.0)
             
-            # Generate explanation if requested
+            # Extract explanation directly from the main prediction
             explanation = None
             if args.generate_explanations and assessment in ['yes', 'no']:
-                explanation = generate_explanation(model, tokenizer, note, assessment, args, max_seq_length)
-                # Print explanation to terminal
-                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}, Prob: {positive_prob:.2f}) -----")
-                print(explanation)
-                print("-" * 80)
+                explanation = extract_explanation_from_assessment(prediction)
+                
+                # Print explanation to terminal if streaming is enabled
+                if args.stream_output:
+                    print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}, Prob: {positive_prob:.2f}) -----")
+                    print(explanation)
+                    print("-" * 80)
             
             result = {
                 "DEID": patient_id,
@@ -665,7 +599,7 @@ def main():
     yes_count = sum(1 for r in results if r["predicted_label"] == "yes")
     no_count = sum(1 for r in results if r["predicted_label"] == "no")
     error_count = sum(1 for r in results if r["predicted_label"] == "error")
-    
+
     print("\nInference Summary:")
     print(f"Total cases processed: {len(results)}")
     print(f"Malnourished cases: {yes_count} ({yes_count/len(results)*100:.1f}%)")
