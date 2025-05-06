@@ -193,13 +193,16 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     pred_labels = []
     deids = []
     
-    for _, row in df.iterrows():
+    print("\nStarting inference...")
+    print("-" * 50)
+    
+    for idx, row in df.iterrows():
         # Preprocess exactly like training
         note_text = preprocess_clinical_note(row["txt"])
         prompt = create_simplified_malnutrition_prompt(
             note=note_text,
             tokenizer=tokenizer,
-            max_tokens=max_seq_length - 20  # Same buffer as training
+            max_tokens=max_seq_length - 20
         )
         
         # Generate with same parameters as training
@@ -209,12 +212,18 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 **inputs,
                 max_new_tokens=50,
                 pad_token_id=tokenizer.eos_token_id,
-                do_sample=False  # Match training's deterministic generation
+                do_sample=False
             )
         
         output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         pred = parse_model_output(output_text)
         true_label = int(row["label"])
+        
+        # Print prediction for this case
+        print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
+        print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
+        print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+        print("-" * 30)
         
         results.append({
             "DEID": row["DEID"],
@@ -225,41 +234,68 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
             "PROMPT": prompt
         })
         
-        if pred != -1:  # Only include determinate predictions
+        if pred != -1:
             true_labels.append(true_label)
             pred_labels.append(pred)
             deids.append(row["DEID"])
     
-    # Calculate comprehensive metrics
-    metrics = {
-        "accuracy": accuracy_score(true_labels, pred_labels),
-        "f1": f1_score(true_labels, pred_labels),
-        "recall": recall_score(true_labels, pred_labels),
-        "roc_auc": roc_auc_score(true_labels, pred_labels),
-        "classification_report": classification_report(true_labels, pred_labels, output_dict=True),
-        "confusion_matrix": confusion_matrix(true_labels, pred_labels).tolist(),
-        "n_samples": len(true_labels),
-        "n_indeterminate": len(df) - len(true_labels),
-        "class_distribution": {
-            "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1),
-            "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0),
-            "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1),
-            "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0),
-        }
-    }
+    # Print summary of predictions
+    print("\n" + "=" * 50)
+    print("PREDICTION SUMMARY:")
+    print(f"Total cases processed: {len(df)}")
+    print(f"Determinate predictions: {len(true_labels)}")
+    print(f"Indeterminate predictions: {len(df) - len(true_labels)}")
     
-    # Save all results with timestamp
+    if len(true_labels) > 0:
+        # Calculate metrics
+        metrics = {
+            "accuracy": accuracy_score(true_labels, pred_labels),
+            "f1": f1_score(true_labels, pred_labels),
+            "recall": recall_score(true_labels, pred_labels),
+            "roc_auc": roc_auc_score(true_labels, pred_labels),
+            "classification_report": classification_report(true_labels, pred_labels, output_dict=True),
+            "confusion_matrix": confusion_matrix(true_labels, pred_labels).tolist(),
+            "n_samples": len(true_labels),
+            "n_indeterminate": len(df) - len(true_labels),
+            "class_distribution": {
+                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1)),
+                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0)),
+                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1)),
+                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0)),
+            }
+        }
+        
+        # Print immediate results
+        print("\nCLASSIFICATION METRICS:")
+        print(f"Accuracy: {metrics['accuracy']:.4f}")
+        print(f"F1 Score: {metrics['f1']:.4f}")
+        print(f"Recall: {metrics['recall']:.4f}")
+        print(f"ROC AUC: {metrics['roc_auc']:.4f}")
+        
+        print("\nCONFUSION MATRIX:")
+        print(f"True Positives: {metrics['class_distribution']['true_positives']}")
+        print(f"True Negatives: {metrics['class_distribution']['true_negatives']}")
+        print(f"False Positives: {metrics['class_distribution']['false_positives']}")
+        print(f"False Negatives: {metrics['class_distribution']['false_negatives']}")
+    else:
+        metrics = {}
+        print("Warning: No determinate predictions to calculate metrics")
+    
+    # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Full predictions with all metadata
     full_results_path = os.path.join(output_dir, f"full_predictions_{timestamp}.csv")
     pd.DataFrame(results).to_csv(full_results_path, index=False)
+    print(f"\nSaved full predictions to: {full_results_path}")
     
     # 2. Metrics
-    metrics_path = os.path.join(output_dir, f"metrics_{timestamp}.json")
-    with open(metrics_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
+    if metrics:
+        metrics_path = os.path.join(output_dir, f"metrics_{timestamp}.json")
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Saved metrics to: {metrics_path}")
     
     # 3. Simplified DEID, TRUE, PREDICTED
     simplified_path = os.path.join(output_dir, f"predictions_{timestamp}.csv")
@@ -268,11 +304,12 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
         "TRUE_LABEL": true_labels,
         "PREDICTED_LABEL": pred_labels
     }).to_csv(simplified_path, index=False)
+    print(f"Saved simplified predictions to: {simplified_path}")
     
     return metrics, results
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference with identical preprocessing as training")
+    parser = argparse.ArgumentParser(description="Run inference with prediction printouts")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
     parser.add_argument("--data_path", type=str, required=True, help="Path to test data CSV")
     parser.add_argument("--output_dir", type=str, default="./inference_results", help="Output directory")
@@ -280,6 +317,7 @@ def main():
     args = parser.parse_args()
     
     # Load model
+    print("\nLoading model...")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
     
     # Generate predictions
@@ -291,18 +329,9 @@ def main():
         output_dir=args.output_dir
     )
     
-    # Print summary
-    print("\n=== Evaluation Summary ===")
-    print(f"Accuracy: {metrics['accuracy']:.4f}")
-    print(f"F1 Score: {metrics['f1']:.4f}")
-    print(f"Recall: {metrics['recall']:.4f}")
-    print(f"ROC AUC: {metrics['roc_auc']:.4f}")
-    print(f"\nClass Distribution:")
-    print(f"True Positives: {metrics['class_distribution']['true_positives']}")
-    print(f"True Negatives: {metrics['class_distribution']['true_negatives']}")
-    print(f"False Positives: {metrics['class_distribution']['false_positives']}")
-    print(f"False Negatives: {metrics['class_distribution']['false_negatives']}")
-    print(f"\nResults saved to {args.output_dir}")
+    # Final summary
+    print("\n=== Inference Complete ===")
+    print(f"Results saved to: {args.output_dir}")
 
 if __name__ == "__main__":
     main()
