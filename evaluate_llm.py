@@ -48,6 +48,7 @@ def load_model(model_path, load_in_4bit):
     print(f"Model loaded with max sequence length: {max_seq_length}")
     return model, tokenizer, max_seq_length
 
+
 def preprocess_clinical_note(note_text):
     """Preprocess clinical notes identically to training."""
     if not isinstance(note_text, str):
@@ -61,6 +62,8 @@ def preprocess_clinical_note(note_text):
     processed_text = processed_text.replace('\r\n', '\n').replace('\r', '\n')
     processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
+
+
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Complete malnutrition assessment prompt with all clinical criteria."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on these criteria:
@@ -134,7 +137,7 @@ CLINICAL NOTE FOR ANALYSIS:
             formatted_prompt = prompt.format(note=truncated_note)
     
     return formatted_prompt
-    
+
 
 def parse_model_output(output_text):
     """Robust output parsing with multiple fallbacks."""
@@ -164,6 +167,7 @@ def parse_model_output(output_text):
             return 0
     
     return -1  # Undetermined
+
 
 def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir):
     """Generate predictions with proper device handling."""
@@ -257,10 +261,10 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
             "n_samples": len(true_labels),
             "n_indeterminate": len(df) - len(true_labels),
             "class_distribution": {
-                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1),
-                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0),
-                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1),
-                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0),
+                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1)),
+                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0)),
+                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1)),
+                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0)),
             }
         }
     
@@ -304,6 +308,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     
     return metrics, results
 
+
 def main():
     parser = argparse.ArgumentParser(description="Run inference with proper device handling")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
@@ -323,6 +328,7 @@ def main():
         max_seq_length=max_seq_length,
         output_dir=args.output_dir
     )
+
 
 if __name__ == "__main__":
     main()
