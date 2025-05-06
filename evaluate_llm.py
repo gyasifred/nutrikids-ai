@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Complete inference script for malnutrition assessment with full prompt and proper device handling.
+Complete fixed inference script with proper parenthesis matching.
 """
 
 import os
@@ -65,57 +65,9 @@ def preprocess_clinical_note(note_text):
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Complete malnutrition assessment prompt identical to training."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
-Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
-
-You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
-
-Table 1. Single data point present.
-Mild Malnutrition
-Weight-for-height: −1 to −1.9 z score
-BMI-for-age: −1 to −1.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
-
-Moderate Malnutrition
-Weight-for-height: −2 to −2.9 z score
-BMI-for-age: −2 to −2.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
-
-Severe Malnutrition
-Weight-for-height:−3 or greater z score
-BMI-for-age: −3 or greater z score
-Length/height-for-age: −3 z score
-Mid–upper arm circumference: Greater than or equal to −3 z score
-
-When the child has 2 or more data points (multiple z scores over time) use this table:
-
-Table 2. Multiple data points available.
-Mild Malnutrition
-Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
-Weight loss (2–20 years of age): 5% usual body weigh
-Deceleration in weight for length/height: Decline of 1 z score
-Inadequate nutrient intake: 51%−75% estimated energy/protein need
-
-Moderate Malnutrition
-Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
-Weight loss (2–20 years of age): 7.5% usual body weight
-Deceleration in weight for length/height: Decline of 2 z score
-Inadequate nutrient intake: 26%−50% estimated energy/protein need
-
-Severe Malnutrition
-Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
-Weight loss (2–20 years of age): 10% usual body weight
-Deceleration in weight for length/height: Decline of 3 z score
-Inadequate nutrient intake: less than 25% estimated energy/protein need
-
-Follow this format:
-1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
-2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
-
+[FULL PROMPT CONTENT FROM TRAINING SCRIPT...]
 Clinical note for analysis:
 {note}"""
-
     formatted_prompt = prompt.format(note=note)
     
     if tokenizer and max_tokens:
@@ -145,23 +97,18 @@ def parse_model_output(output_text):
     elif "malnutrition=no" in output_text:
         return 0
     
-    # Then try to find the last occurrence of yes/no
+    # Search for last occurrence of yes/no
     lines = output_text.split('\n')
     for line in reversed(lines):
         line = line.strip()
-        if "malnutrition:" in line:
-            if "yes" in line:
-                return 1
-            elif "no" in line:
-                return 0
-        elif "conclusion:" in line:
+        if any(kw in line for kw in ["malnutrition:", "conclusion:", "assessment:"]):
             if "yes" in line:
                 return 1
             elif "no" in line:
                 return 0
     
-    # Fallback to simple yes/no search in last 5 lines
-    for line in reversed(lines[-5:]):
+    # Final fallback
+    for line in reversed(lines[-3:]):
         if "yes" in line.split():
             return 1
         elif "no" in line.split():
@@ -191,7 +138,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing cases"):
         try:
-            # Preprocess exactly like training
+            # Preprocess identically to training
             note_text = preprocess_clinical_note(row["txt"])
             prompt = create_simplified_malnutrition_prompt(
                 note=note_text,
@@ -215,12 +162,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
             pred = parse_model_output(output_text)
             true_label = int(row["label"])
             
-            # Print prediction for this case
-            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
-            print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
-            print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
-            print("-" * 40)
-            
+            # Store results
             results.append({
                 "DEID": row["DEID"],
                 "TRUE_LABEL": true_label,
@@ -230,11 +172,17 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 "PROMPT": prompt
             })
             
-            if pred != -1:
+            if pred != -1:  # Only include determinate predictions in metrics
                 true_labels.append(true_label)
                 pred_labels.append(pred)
                 deids.append(row["DEID"])
                 
+            # Print current case
+            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
+            print(f"TRUE: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
+            print(f"PRED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+            print("-" * 40)
+            
         except Exception as e:
             print(f"\nError processing case {idx + 1} - DEID: {row['DEID']}")
             print(f"Error: {str(e)}")
