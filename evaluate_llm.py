@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Comprehensive Malnutrition Assessment Tool
-- Maintains original clinical criteria tables
-- Enhanced decision explanation
-- Complete metrics reporting
-- Clear assessment printing
+Final Malnutrition Assessment Tool with Explanation Printing Control
 """
 
 import os
@@ -38,10 +34,11 @@ def parse_arguments():
     parser.add_argument("--temperature", type=float, default=0.1, help="Generation temperature")
     parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling parameter")
     parser.add_argument("--preprocess_tokens", action="store_true", help="Preprocess special tokens")
+    parser.add_argument("--print_explanation", action="store_true", help="Print each assessment and explanation")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
-    """Preprocess clinical notes (original implementation)."""
+    """Preprocess clinical notes."""
     if not note_text:
         return note_text
     
@@ -55,7 +52,7 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Original prompt with clinical criteria tables."""
+    """Create prompt with original criteria tables."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
@@ -248,8 +245,35 @@ def extract_decision(prediction):
     
     return result
 
+def print_single_assessment(result):
+    """Print a single patient's assessment and explanation."""
+    print("\n" + "-"*80)
+    print(f"Patient ID: {result['DEID']}")
+    print(f"True Label: {result['true_label']}")
+    print(f"Predicted Assessment: {result['predicted_label'].upper()}")
+    
+    if result['predicted_label'] != "error":
+        print(f"\nConfidence: {result['confidence'].title()}")
+        print(f"Severity: {result['severity'].title()}")
+        
+        print("\nCriteria Used from Tables:")
+        print(result['criteria_used'] if result['criteria_used'] != "None" else "No table criteria met")
+        
+        print("\nOther Relevant Factors:")
+        print(result['other_factors'] if result['other_factors'] != "None" else "No additional factors noted")
+        
+        print("\nClinical Explanation:")
+        print(result['explanation'])
+    else:
+        print("\n[Assessment Error - Needs Manual Review]")
+        print("Raw Prediction Excerpt:")
+        print(result['raw_prediction'][:500] + "...")
+    
+    print(f"\nInference Time: {result['inference_time']:.2f} seconds")
+    print("-"*80)
+
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
-    """Run inference with comprehensive decision extraction."""
+    """Run inference with explanation printing control."""
     results = []
     streamer = TextStreamer(tokenizer) if args.stream_output else None
     
@@ -278,7 +302,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             decision = extract_decision(prediction)
             
-            results.append({
+            result = {
                 "DEID": patient_id,
                 "true_label": true_label if true_label is not None else "unknown",
                 "predicted_label": decision['assessment'],
@@ -289,44 +313,18 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 "explanation": decision['explanation'],
                 "inference_time": inference_time,
                 "raw_prediction": prediction if args.test_mode else ""
-            })
+            }
+            
+            results.append(result)
+            
+            # Print assessment if flag is set
+            if args.print_explanation:
+                print_single_assessment(result)
     
     return results
 
-def print_assessments(results):
-    """Print assessments and explanations in a clear format."""
-    print("\n" + "="*80)
-    print("MALNUTRITION ASSESSMENT RESULTS")
-    print("="*80)
-    
-    for result in results:
-        print("\n" + "-"*80)
-        print(f"Patient ID: {result['DEID']}")
-        print(f"True Label: {result['true_label']}")
-        print(f"Predicted Assessment: {result['predicted_label'].upper()}")
-        
-        if result['predicted_label'] != "error":
-            print(f"\nConfidence: {result['confidence'].title()}")
-            print(f"Severity: {result['severity'].title()}")
-            
-            print("\nCriteria Used from Tables:")
-            print(result['criteria_used'] if result['criteria_used'] != "None" else "No table criteria met")
-            
-            print("\nOther Relevant Factors:")
-            print(result['other_factors'] if result['other_factors'] != "None" else "No additional factors noted")
-            
-            print("\nClinical Explanation:")
-            print(result['explanation'])
-        else:
-            print("\n[Assessment Error - Needs Manual Review]")
-            print("Raw Prediction Excerpt:")
-            print(result['raw_prediction'][:500] + "...")
-        
-        print(f"\nInference Time: {result['inference_time']:.2f} seconds")
-        print("-"*80)
-
 def calculate_metrics(results, args):
-    """Calculate comprehensive performance metrics including AUC."""
+    """Calculate comprehensive performance metrics."""
     metrics_dir = os.path.join(args.output_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
     
@@ -420,9 +418,6 @@ def main():
     
     print("Starting inference...")
     results = run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length)
-    
-    # Print assessments to console
-    print_assessments(results)
     
     # Save results
     results_df = pd.DataFrame(results)
