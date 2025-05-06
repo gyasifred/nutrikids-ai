@@ -61,18 +61,65 @@ def preprocess_clinical_note(note_text):
     processed_text = processed_text.replace('\r\n', '\n').replace('\r', '\n')
     processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
-
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Complete malnutrition assessment prompt identical to training."""
-    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
-[FULL PROMPT CONTENT FROM TRAINING SCRIPT...]
-Clinical note for analysis:
+    """Complete malnutrition assessment prompt with all clinical criteria."""
+    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on these criteria:
+
+MALNUTRITION CLASSIFICATION CRITERIA:
+
+1. SINGLE DATA POINT ASSESSMENT (Use when only one z-score is available):
+   - Mild Malnutrition:
+     * Weight-for-height: −1 to −1.9 z score
+     * BMI-for-age: −1 to −1.9 z score
+     * Mid-upper arm circumference: ≥−1 to −1.9 z score
+   
+   - Moderate Malnutrition:
+     * Weight-for-height: −2 to −2.9 z score
+     * BMI-for-age: −2 to −2.9 z score
+     * Mid-upper arm circumference: ≥−2 to −2.9 z score
+   
+   - Severe Malnutrition:
+     * Weight-for-height: ≤−3 z score
+     * BMI-for-age: ≤−3 z score
+     * Length/height-for-age: ≤−3 z score
+     * Mid-upper arm circumference: ≤−3 z score
+
+2. MULTIPLE DATA POINTS ASSESSMENT (Use when tracking growth over time):
+   - Mild Malnutrition:
+     * Weight gain velocity (<2yo): <75% of expected
+     * Weight loss (2-20yo): 5% of usual body weight
+     * Weight-for-height decline: 1 z score decrease
+     * Nutrient intake: 51-75% of estimated needs
+   
+   - Moderate Malnutrition:
+     * Weight gain velocity (<2yo): <50% of expected
+     * Weight loss (2-20yo): 7.5% of usual body weight
+     * Weight-for-height decline: 2 z score decrease
+     * Nutrient intake: 26-50% of estimated needs
+   
+   - Severe Malnutrition:
+     * Weight gain velocity (<2yo): <25% of expected
+     * Weight loss (2-20yo): 10% of usual body weight
+     * Weight-for-height decline: 3 z score decrease
+     * Nutrient intake: <25% of estimated needs
+
+REQUIRED OUTPUT FORMAT:
+1. First analyze which criteria apply (single/multiple data points)
+2. Explicitly state the z-scores or growth patterns used
+3. Conclude with exactly one of these formatted responses:
+   malnutrition=yes
+   OR
+   malnutrition=no
+
+CLINICAL NOTE FOR ANALYSIS:
 {note}"""
+
     formatted_prompt = prompt.format(note=note)
     
     if tokenizer and max_tokens:
         tokens = tokenizer.encode(formatted_prompt)
         if len(tokens) > max_tokens:
+            # Calculate available space for clinical note
             template = prompt.format(note="")
             template_tokens = tokenizer.encode(template)
             available_tokens = max_tokens - len(template_tokens)
@@ -80,12 +127,14 @@ Clinical note for analysis:
             if available_tokens <= 0:
                 available_tokens = max_tokens // 2
             
+            # Tokenize and truncate note
             note_tokens = tokenizer.encode(note)
             truncated_note_tokens = note_tokens[:available_tokens]
             truncated_note = tokenizer.decode(truncated_note_tokens, skip_special_tokens=True)
             formatted_prompt = prompt.format(note=truncated_note)
     
     return formatted_prompt
+    
 
 def parse_model_output(output_text):
     """Robust output parsing with multiple fallbacks."""
