@@ -377,11 +377,10 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             if args.generate_explanations and assessment in ['yes', 'no']:
                 explanation = extract_explanation_from_assessment(prediction)
                 
-                # Print explanation to terminal if streaming is enabled
-                if args.stream_output:
-                    print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}, Prob: {positive_prob:.2f}) -----")
-                    print(explanation)
-                    print("-" * 80)
+                # Print explanation to terminal whether streaming is enabled or not
+                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}, Prob: {positive_prob:.2f}) -----")
+                print(explanation)
+                print("-" * 80)
             
             result = {
                 "DEID": patient_id,
