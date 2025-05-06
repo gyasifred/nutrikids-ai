@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Run inference on clinical notes using the trained malnutrition assessment model
-with simplified prompt structure.
+with improved prompt structure to ensure consistent yes/no outputs.
 """
 
 import os
@@ -126,12 +126,15 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create a simplified malnutrition assessment prompt with clear output format specification."""
-    prompt = """[Task] Please analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
+    """
+    Create an improved malnutrition assessment prompt that explicitly instructs
+    the model to begin with yes/no.
+    """
+    prompt = """[Task] Analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
 
 [Assessment Guidelines]
 Consider these factors when assessing malnutrition:
-- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC (Mid-Upper Arm Circumference)
+- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC
 - Growth trajectory and percentile changes
 - Clinical signs like edema, muscle wasting, decreased energy
 - Nutritional intake pattern and history
@@ -139,13 +142,10 @@ Consider these factors when assessing malnutrition:
 - Social or environmental factors impacting food security
 - Recent weight changes or growth concerns
 
-Remember: Malnutrition can present in different ways and may not always have all classical indicators.
+[Output Format] Your assessment MUST begin with "yes" or "no" as the first word.
 
 Clinical note for analysis:
 {note}
-
-[Output Format]
-Begin your assessment with "yes" or "no" followed by your clinical reasoning.
 
 Assessment:"""
 
@@ -390,31 +390,15 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             # Extract the assessment (yes/no) from the prediction
             try:
-                # More robust extraction of yes/no from the assessment part
-                assessment_part = prediction.split("Assessment:")[-1].strip().lower()
-                first_word = assessment_part.split()[0].strip()
-                
-                # Direct match for yes/no as first word
-                if first_word == "yes" or first_word == "no":
-                    assessment = first_word
-                # Check for variations like "yes," or "no."
-                elif first_word.startswith("yes"):
-                    assessment = "yes"
-                elif first_word.startswith("no"):
-                    assessment = "no"
-                # If still not found, scan the first few words
-                else:
-                    first_few_words = ' '.join(assessment_part.split()[:5]).lower()
-                    if "yes" in first_few_words and "no" not in first_few_words:
-                        assessment = "yes"
-                    elif "no" in first_few_words and "yes" not in first_few_words:
-                        assessment = "no"
-                    else:
-                        # Use probability as fallback
-                        assessment = "yes" if probabilities.get("yes", 0.0) > 0.5 else "no"
+                # Extract the first word after "Assessment:"
+                assessment_part = prediction.split("Assessment:")[-1].strip()
+                # Get just yes or no - take only the first word
+                first_word = assessment_part.split()[0].lower()
+                assessment = first_word if first_word in ['yes', 'no'] else (
+                    'yes' if 'yes' in assessment_part.lower()[:20] else 'no'
+                )
             except:
-                # Fallback to probability-based decision
-                assessment = "yes" if probabilities.get("yes", 0.0) > 0.5 else "no"
+                assessment = "error"
             
             # Get the probability for the positive class (yes)
             positive_prob = probabilities.get("yes", 0.0)
