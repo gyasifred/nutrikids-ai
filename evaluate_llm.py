@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Final Malnutrition Assessment Tool with Explanation Printing Control
+Fixed Malnutrition Assessment Tool with Improved Result Extraction
 """
 
 import os
@@ -16,6 +16,7 @@ from unsloth import FastLanguageModel
 from transformers import TextStreamer
 from sklearn.metrics import classification_report, roc_curve, auc, confusion_matrix
 import json
+import re
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -35,12 +36,13 @@ def parse_arguments():
     parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling parameter")
     parser.add_argument("--preprocess_tokens", action="store_true", help="Preprocess special tokens")
     parser.add_argument("--print_explanation", action="store_true", help="Print each assessment and explanation")
+    parser.add_argument("--timeout", type=int, default=60, help="Timeout for generation in seconds")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
     """Preprocess clinical notes."""
-    if not note_text:
-        return note_text
+    if not note_text or not isinstance(note_text, str):
+        return "" if note_text is None else str(note_text)
     
     processed_text = note_text.replace('</s>', '\n\n')
     
@@ -157,8 +159,8 @@ def load_model(model_path, load_in_4bit):
     return model, tokenizer, max_seq_length
 
 def generate_assessment(model, tokenizer, prompt, max_new_tokens, streamer=None, 
-                      max_seq_length=None, temperature=0.1, top_p=0.9):
-    """Generate assessment from model."""
+                      max_seq_length=None, temperature=0.1, top_p=0.9, timeout=60):
+    """Generate assessment from model with timeout protection."""
     inputs = tokenizer([prompt], return_tensors="pt")
     
     if max_seq_length and inputs.input_ids.shape[1] > max_seq_length - max_new_tokens:
@@ -168,20 +170,33 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, streamer=None,
     
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        streamer=streamer,
-        pad_token_id=tokenizer.eos_token_id
-    )
-    
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Set a timer for generation
+    start_time = time.time()
+    try:
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            streamer=streamer,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    except Exception as e:
+        elapsed_time = time.time() - start_time
+        if elapsed_time > timeout:
+            print(f"Generation timed out after {elapsed_time:.2f} seconds")
+            return prompt + "\n[TIMEOUT: Generation took too long]"
+        else:
+            print(f"Generation error: {e}")
+            return prompt + f"\n[ERROR: {str(e)}]"
 
 def extract_decision(prediction):
-    """Extract decision components from model output."""
+    """Extract decision components from model output with improved regex pattern matching."""
+    # First, cleanup the text
     def clean_text(text):
+        if not isinstance(text, str):
+            return str(text)
         return text.replace('\r', '\n').strip()
     
     prediction = clean_text(prediction)
@@ -195,38 +210,38 @@ def extract_decision(prediction):
         'raw_prediction': prediction
     }
     
-    # Extract assessment components
-    assessment_part = prediction.split("Assessment:")[-1] if "Assessment:" in prediction else prediction
-    assessment_part_lower = assessment_part.lower()
+    # Extract the Assessment section
+    assessment_parts = prediction.split("Assessment:")
+    assessment_part = assessment_parts[-1] if len(assessment_parts) > 1 else prediction
     
-    # Extract final assessment
-    if "malnutrition=yes" in assessment_part_lower:
-        result['assessment'] = "yes"
-    elif "malnutrition=no" in assessment_part_lower:
-        result['assessment'] = "no"
+    # Use regex to extract the key values
+    malnutrition_match = re.search(r'malnutrition\s*=\s*(yes|no)', assessment_part, re.IGNORECASE)
+    if malnutrition_match:
+        result['assessment'] = malnutrition_match.group(1).lower()
     
-    # Extract confidence
-    for conf in ["high", "medium", "low"]:
-        if f"confidence={conf}" in assessment_part_lower:
-            result['confidence'] = conf
-            break
+    confidence_match = re.search(r'confidence\s*=\s*(high|medium|low)', assessment_part, re.IGNORECASE)
+    if confidence_match:
+        result['confidence'] = confidence_match.group(1).lower()
     
-    # Extract severity
-    for sev in ["severe", "moderate", "mild", "none"]:
-        if f"severity={sev}" in assessment_part_lower:
-            result['severity'] = sev
-            break
+    severity_match = re.search(r'severity\s*=\s*(none|mild|moderate|severe)', assessment_part, re.IGNORECASE)
+    if severity_match:
+        result['severity'] = severity_match.group(1).lower()
     
     # Extract explanation (everything before final assessment)
-    explanation_end = min(
-        assessment_part_lower.find("malnutrition=yes"),
-        assessment_part_lower.find("malnutrition=no"),
-        len(assessment_part)
-    )
-    if explanation_end == -1:
-        explanation_end = len(assessment_part)
-    
-    result['explanation'] = clean_text(assessment_part[:explanation_end])
+    explanation_pattern = re.compile(r'(.*?)(?:malnutrition\s*=\s*(?:yes|no)|$)', re.DOTALL | re.IGNORECASE)
+    explanation_match = explanation_pattern.search(assessment_part)
+    if explanation_match and explanation_match.group(1).strip():
+        result['explanation'] = clean_text(explanation_match.group(1))
+    else:
+        # If no clear explanation section, use everything before the formatted output
+        formatted_output_pattern = re.compile(r'malnutrition\s*=\s*(?:yes|no)', re.IGNORECASE)
+        formatted_match = formatted_output_pattern.search(assessment_part)
+        if formatted_match:
+            pos = formatted_match.start()
+            result['explanation'] = clean_text(assessment_part[:pos])
+        else:
+            # If no formatted output found, use the whole assessment part
+            result['explanation'] = clean_text(assessment_part)
     
     # Extract criteria used from tables
     table_criteria = [
@@ -236,17 +251,18 @@ def extract_decision(prediction):
     ]
     result['criteria_used'] = [
         crit for crit in table_criteria 
-        if crit in result['explanation'].lower()
+        if crit.lower() in assessment_part.lower()
     ]
     
     # Extract other relevant factors
     other_factors = [
         "edema", "muscle wasting", "fat loss", "albumin", "prealbumin",
-        "vitamin deficiency", "feeding difficulty", "chronic illness","Social or environmental factors"
+        "vitamin deficiency", "feeding difficulty", "chronic illness", 
+        "social or environmental factors"
     ]
     result['other_factors'] = [
         factor for factor in other_factors 
-        if factor in result['explanation'].lower()
+        if factor.lower() in assessment_part.lower()
     ]
     
     return result
@@ -263,69 +279,95 @@ def print_single_assessment(result):
         print(f"Severity: {result['severity'].title()}")
         
         print("\nCriteria Used from Tables:")
-        print(result['criteria_used'] if result['criteria_used'] != "None" else "No table criteria met")
+        if result['criteria_used'] and result['criteria_used'] != "None":
+            for criterion in result['criteria_used']:
+                print(f"- {criterion}")
+        else:
+            print("No table criteria met")
         
         print("\nOther Relevant Factors:")
-        print(result['other_factors'] if result['other_factors'] != "None" else "No additional factors noted")
+        if result['other_factors'] and result['other_factors'] != "None":
+            for factor in result['other_factors']:
+                print(f"- {factor}")
+        else:
+            print("No additional factors noted")
         
         print("\nClinical Explanation:")
         print(result['explanation'])
     else:
         print("\n[Assessment Error - Needs Manual Review]")
         print("Raw Prediction Excerpt:")
-        print(result['raw_prediction'][:500] + "...")
+        print(result['raw_prediction'][:300] + ("..." if len(result['raw_prediction']) > 300 else ""))
     
     print(f"\nInference Time: {result['inference_time']:.2f} seconds")
     print("-"*80)
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
-    """Run inference with explanation printing control."""
+    """Run inference with explanation printing control and improved error handling."""
     results = []
     streamer = TextStreamer(tokenizer) if args.stream_output else None
     
+    # Use tqdm for progress tracking
     for i in tqdm(range(0, len(notes), args.batch_size), desc="Assessing patients"):
         batch_notes = notes[i:i+args.batch_size]
         batch_ids = patient_ids[i:i+args.batch_size]
         batch_labels = true_labels[i:i+args.batch_size] if true_labels else [None]*len(batch_notes)
         
         for note, patient_id, true_label in zip(batch_notes, batch_ids, batch_labels):
-            if args.preprocess_tokens:
-                note = preprocess_clinical_note(note)
+            try:
+                if args.preprocess_tokens:
+                    note = preprocess_clinical_note(note)
+                    
+                prompt = create_malnutrition_prompt(
+                    note, 
+                    tokenizer=tokenizer, 
+                    max_tokens=max_seq_length - args.max_new_tokens
+                )
                 
-            prompt = create_malnutrition_prompt(
-                note, 
-                tokenizer=tokenizer, 
-                max_tokens=max_seq_length - args.max_new_tokens
-            )
-            
-            start_time = time.time()
-            prediction = generate_assessment(
-                model, tokenizer, prompt,
-                args.max_new_tokens, streamer,
-                max_seq_length, args.temperature, args.top_p
-            )
-            inference_time = time.time() - start_time
-            
-            decision = extract_decision(prediction)
-            
-            result = {
-                "DEID": patient_id,
-                "true_label": true_label if true_label is not None else "unknown",
-                "predicted_label": decision['assessment'],
-                "confidence": decision['confidence'],
-                "severity": decision['severity'],
-                "criteria_used": ", ".join(decision['criteria_used']) if decision['criteria_used'] else "None",
-                "other_factors": ", ".join(decision['other_factors']) if decision['other_factors'] else "None",
-                "explanation": decision['explanation'],
-                "inference_time": inference_time,
-                "raw_prediction": prediction if args.test_mode else ""
-            }
-            
-            results.append(result)
-            
-            # Print assessment if flag is set
-            if args.print_explanation:
-                print_single_assessment(result)
+                start_time = time.time()
+                prediction = generate_assessment(
+                    model, tokenizer, prompt,
+                    args.max_new_tokens, streamer,
+                    max_seq_length, args.temperature, args.top_p,
+                    args.timeout
+                )
+                inference_time = time.time() - start_time
+                
+                decision = extract_decision(prediction)
+                
+                result = {
+                    "DEID": patient_id,
+                    "true_label": true_label if true_label is not None else "unknown",
+                    "predicted_label": decision['assessment'],
+                    "confidence": decision['confidence'],
+                    "severity": decision['severity'],
+                    "criteria_used": decision['criteria_used'],
+                    "other_factors": decision['other_factors'],
+                    "explanation": decision['explanation'],
+                    "inference_time": inference_time,
+                    "raw_prediction": prediction if args.test_mode else ""
+                }
+                
+                results.append(result)
+                
+                # Print assessment if flag is set
+                if args.print_explanation:
+                    print_single_assessment(result)
+                    
+            except Exception as e:
+                print(f"Error processing patient {patient_id}: {str(e)}")
+                results.append({
+                    "DEID": patient_id,
+                    "true_label": true_label if true_label is not None else "unknown",
+                    "predicted_label": "error",
+                    "confidence": "unknown",
+                    "severity": "unknown",
+                    "criteria_used": [],
+                    "other_factors": [],
+                    "explanation": f"Processing error: {str(e)}",
+                    "inference_time": time.time() - start_time if 'start_time' in locals() else 0,
+                    "raw_prediction": f"ERROR: {str(e)}"
+                })
     
     return results
 
@@ -351,8 +393,12 @@ def calculate_metrics(results, args):
     
     # For AUC calculation - use confidence as proxy for probability
     conf_to_prob = {"low": 0.3, "medium": 0.6, "high": 0.9}
-    probas = [conf_to_prob.get(r["confidence"], 0.5) if r["predicted_label"] == "yes" 
-             else 1-conf_to_prob.get(r["confidence"], 0.5) for r in valid_results]
+    probas = []
+    for r in valid_results:
+        if r["predicted_label"].lower() == "yes":
+            probas.append(conf_to_prob.get(r["confidence"], 0.5))
+        else:
+            probas.append(1 - conf_to_prob.get(r["confidence"], 0.5))
     
     # Classification Report
     report = classification_report(y_true, y_pred, output_dict=True,
@@ -363,8 +409,8 @@ def calculate_metrics(results, args):
     cm = confusion_matrix(y_true, y_pred)
     cm_df = pd.DataFrame(cm, 
                         index=["Actual Non-malnourished", "Actual Malnourished"],
-                        columns=["Predicted Non-malnourished", "Predicted Malnourished"]
-    ).to_csv(os.path.join(metrics_dir, "confusion_matrix.csv"))
+                        columns=["Predicted Non-malnourished", "Predicted Malnourished"])
+    cm_df.to_csv(os.path.join(metrics_dir, "confusion_matrix.csv"))
     
     # ROC Curve and AUC
     fpr, tpr, _ = roc_curve(y_true, probas)
@@ -395,7 +441,8 @@ def calculate_metrics(results, args):
             "severe": sum(1 for r in results if r["severity"] == "severe"),
             "moderate": sum(1 for r in results if r["severity"] == "moderate"),
             "mild": sum(1 for r in results if r["severity"] == "mild"),
-            "none": sum(1 for r in results if r["severity"] == "none")
+            "none": sum(1 for r in results if r["severity"] == "none"),
+            "unknown": sum(1 for r in results if r["severity"] == "unknown")
         }
     }
     
@@ -410,14 +457,28 @@ def main():
     
     print(f"Loading data from {args.input_file}")
     df = pd.read_csv(args.input_file)
+    
+    # Handle missing columns gracefully
+    if args.note_column not in df.columns:
+        print(f"Error: Column '{args.note_column}' not found in input file")
+        print(f"Available columns: {', '.join(df.columns)}")
+        return
+    
+    if args.id_column not in df.columns:
+        print(f"Warning: Column '{args.id_column}' not found in input file. Using index as ID.")
+        patient_ids = df.index.astype(str).tolist()
+    else:
+        patient_ids = df[args.id_column].astype(str).tolist()
+    
     notes = df[args.note_column].tolist()
-    patient_ids = df[args.id_column].tolist()
     true_labels = df[args.label_column].tolist() if args.label_column in df.columns else None
     
     if args.test_mode:
-        notes = notes[:5]
-        patient_ids = patient_ids[:5]
-        true_labels = true_labels[:5] if true_labels else None
+        test_size = min(5, len(notes))
+        notes = notes[:test_size]
+        patient_ids = patient_ids[:test_size]
+        true_labels = true_labels[:test_size] if true_labels else None
+        print(f"Test mode: using first {test_size} records")
     
     print(f"Loading model from {args.model_path}")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
@@ -427,6 +488,11 @@ def main():
     
     # Save results
     results_df = pd.DataFrame(results)
+    # Convert lists to strings for CSV output
+    for col in ['criteria_used', 'other_factors']:
+        if col in results_df.columns:
+            results_df[col] = results_df[col].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
+    
     results_df.to_csv(os.path.join(args.output_dir, "assessment_results.csv"), index=False)
     
     if true_labels:
