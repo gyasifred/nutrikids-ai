@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Enhanced Malnutrition Assessment Tool
-- Maintains original prompt and criteria tables
-- Improved analysis steps with comprehensive explanation
-- Includes all original metrics (AUC, etc.)
+Comprehensive Malnutrition Assessment Tool
+- Maintains original clinical criteria tables
+- Enhanced decision explanation
+- Complete metrics reporting
+- Clear assessment printing
 """
 
 import os
@@ -54,7 +55,7 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Your original prompt with enhanced analysis steps."""
+    """Original prompt with clinical criteria tables."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
@@ -101,17 +102,9 @@ Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
 
 Analysis Steps:
-1) First determine malnutrition status using:
-   - The criteria tables above (primary)
-   - Any other relevant clinical factors (secondary)
-   - Overall clinical judgment (tertiary)
-
-2) Explain your decision by listing:
-   - Which specific criteria from tables were met (if any)
-   - Any other relevant clinical factors considered
-   - Your overall clinical reasoning
-
-3) Provide your final assessment in this exact format: 
+1) First determine malnutrition status using the criteria tables above
+2) Then explain your decision by listing which specific criteria were used
+3) Finally provide your assessment in this exact format: 
    malnutrition=[yes/no]
    confidence=[high/medium/low]
    severity=[none/mild/moderate/severe]
@@ -135,7 +128,7 @@ Assessment:"""
     return prompt.format(note=note)
 
 def load_model(model_path, load_in_4bit):
-    """Load model with native sequence length (original implementation)."""
+    """Load model with native sequence length."""
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
@@ -184,7 +177,7 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, streamer=None,
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def extract_decision(prediction):
-    """Enhanced decision extraction with comprehensive explanation."""
+    """Extract decision components from model output."""
     def clean_text(text):
         return text.replace('\r', '\n').strip()
     
@@ -297,15 +290,40 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 "inference_time": inference_time,
                 "raw_prediction": prediction if args.test_mode else ""
             })
-            
-            if args.stream_output:
-                print(f"\nPatient {patient_id}:")
-                print(f"Assessment: {decision['assessment']} (Confidence: {decision['confidence']}, Severity: {decision['severity']})")
-                print(f"Criteria Used: {decision['criteria_used']}")
-                print(f"Other Factors: {decision['other_factors']}")
-                print(f"Explanation: {decision['explanation'][:200]}...")
     
     return results
+
+def print_assessments(results):
+    """Print assessments and explanations in a clear format."""
+    print("\n" + "="*80)
+    print("MALNUTRITION ASSESSMENT RESULTS")
+    print("="*80)
+    
+    for result in results:
+        print("\n" + "-"*80)
+        print(f"Patient ID: {result['DEID']}")
+        print(f"True Label: {result['true_label']}")
+        print(f"Predicted Assessment: {result['predicted_label'].upper()}")
+        
+        if result['predicted_label'] != "error":
+            print(f"\nConfidence: {result['confidence'].title()}")
+            print(f"Severity: {result['severity'].title()}")
+            
+            print("\nCriteria Used from Tables:")
+            print(result['criteria_used'] if result['criteria_used'] != "None" else "No table criteria met")
+            
+            print("\nOther Relevant Factors:")
+            print(result['other_factors'] if result['other_factors'] != "None" else "No additional factors noted")
+            
+            print("\nClinical Explanation:")
+            print(result['explanation'])
+        else:
+            print("\n[Assessment Error - Needs Manual Review]")
+            print("Raw Prediction Excerpt:")
+            print(result['raw_prediction'][:500] + "...")
+        
+        print(f"\nInference Time: {result['inference_time']:.2f} seconds")
+        print("-"*80)
 
 def calculate_metrics(results, args):
     """Calculate comprehensive performance metrics including AUC."""
@@ -342,7 +360,7 @@ def calculate_metrics(results, args):
     cm_df = pd.DataFrame(cm, 
                         index=["Actual Non-malnourished", "Actual Malnourished"],
                         columns=["Predicted Non-malnourished", "Predicted Malnourished"]
-    ).to_csv(os.path.join(metrics_dir, "metrics/confusion_matrix.csv"))
+    ).to_csv(os.path.join(metrics_dir, "confusion_matrix.csv"))
     
     # ROC Curve and AUC
     fpr, tpr, _ = roc_curve(y_true, probas)
@@ -402,6 +420,9 @@ def main():
     
     print("Starting inference...")
     results = run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length)
+    
+    # Print assessments to console
+    print_assessments(results)
     
     # Save results
     results_df = pd.DataFrame(results)
