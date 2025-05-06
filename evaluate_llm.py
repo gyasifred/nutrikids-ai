@@ -102,6 +102,8 @@ def parse_arguments():
                         help="Top-p (nucleus) sampling parameter (default: 0.9)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
+    parser.add_argument("--generate_explanations", action="store_true",
+                        help="Generate explanations for malnutrition assessments")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
