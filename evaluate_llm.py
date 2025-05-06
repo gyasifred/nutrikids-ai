@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -7,7 +6,7 @@ with detailed criteria for malnutrition classification.
 """
 
 import os
-os.environ['UNSLOTH_RETURN_LOGITS'] = '1' 
+#os.environ['UNSLOTH_RETURN_LOGITS'] = '1' 
 import pandas as pd
 import numpy as np
 import torch
