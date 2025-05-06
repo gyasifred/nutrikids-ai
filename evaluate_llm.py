@@ -196,6 +196,10 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     print("\nStarting inference...")
     print("-" * 50)
     
+    # Ensure model is on the correct device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    
     for idx, row in df.iterrows():
         # Preprocess exactly like training
         note_text = preprocess_clinical_note(row["txt"])
@@ -206,34 +210,51 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
         )
         
         # Generate with same parameters as training
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_seq_length).to("cuda")
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=50,
-                pad_token_id=tokenizer.eos_token_id,
-                do_sample=False
-            )
-        
-        output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        pred = parse_model_output(output_text)
-        true_label = int(row["label"])
-        
-        # Print prediction for this case
-        print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
-        print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
-        print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
-        print("-" * 30)
-        
-        results.append({
-            "DEID": row["DEID"],
-            "TRUE_LABEL": true_label,
-            "PREDICTED_LABEL": pred,
-            "MODEL_OUTPUT": output_text,
-            "INPUT_TEXT": note_text,
-            "PROMPT": prompt
-        })
-        
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_seq_length).to(device)
+        try:
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    pad_token_id=tokenizer.eos_token_id,
+                    do_sample=False
+                )
+            
+            output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            pred = parse_model_output(output_text)
+            true_label = int(row["label"])
+            
+            # Print prediction for this case
+            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
+            print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
+            print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+            print("-" * 30)
+            
+            results.append({
+                "DEID": row["DEID"],
+                "TRUE_LABEL": true_label,
+                "PREDICTED_LABEL": pred,
+                "MODEL_OUTPUT": output_text,
+                "INPUT_TEXT": note_text,
+                "PROMPT": prompt
+            })
+            
+            if pred != -1:
+                true_labels.append(true_label)
+                pred_labels.append(pred)
+                deids.append(row["DEID"])
+                
+        except Exception as e:
+            print(f"\nError processing case {idx + 1} - DEID: {row['DEID']}")
+            print(f"Error: {str(e)}")
+            results.append({
+                "DEID": row["DEID"],
+                "TRUE_LABEL": int(row["label"]),
+                "PREDICTED_LABEL": -1,
+                "MODEL_OUTPUT": f"Error: {str(e)}",
+                "INPUT_TEXT": note_text,
+                "PROMPT": prompt
+            })
         if pred != -1:
             true_labels.append(true_label)
             pred_labels.append(pred)
