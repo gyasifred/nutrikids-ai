@@ -126,7 +126,7 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create a simplified malnutrition assessment prompt."""
+    """Create a simplified malnutrition assessment prompt with clear output format specification."""
     prompt = """[Task] Please analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
 
 [Assessment Guidelines]
@@ -143,6 +143,9 @@ Remember: Malnutrition can present in different ways and may not always have all
 
 Clinical note for analysis:
 {note}
+
+[Output Format]
+Begin your assessment with "yes" or "no" followed by your clinical reasoning.
 
 Assessment:"""
 
@@ -387,15 +390,31 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             
             # Extract the assessment (yes/no) from the prediction
             try:
-                # Extract the first word after "Assessment:"
-                assessment_part = prediction.split("Assessment:")[-1].strip()
-                # Get just yes or no
-                assessment = assessment_part.split()[0].lower()
-                if assessment not in ['yes', 'no']:
-                    # Fallback for non-standard responses
-                    assessment = 'yes' if 'yes' in assessment_part.lower() else 'no'
+                # More robust extraction of yes/no from the assessment part
+                assessment_part = prediction.split("Assessment:")[-1].strip().lower()
+                first_word = assessment_part.split()[0].strip()
+                
+                # Direct match for yes/no as first word
+                if first_word == "yes" or first_word == "no":
+                    assessment = first_word
+                # Check for variations like "yes," or "no."
+                elif first_word.startswith("yes"):
+                    assessment = "yes"
+                elif first_word.startswith("no"):
+                    assessment = "no"
+                # If still not found, scan the first few words
+                else:
+                    first_few_words = ' '.join(assessment_part.split()[:5]).lower()
+                    if "yes" in first_few_words and "no" not in first_few_words:
+                        assessment = "yes"
+                    elif "no" in first_few_words and "yes" not in first_few_words:
+                        assessment = "no"
+                    else:
+                        # Use probability as fallback
+                        assessment = "yes" if probabilities.get("yes", 0.0) > 0.5 else "no"
             except:
-                assessment = "error"
+                # Fallback to probability-based decision
+                assessment = "yes" if probabilities.get("yes", 0.0) > 0.5 else "no"
             
             # Get the probability for the positive class (yes)
             positive_prob = probabilities.get("yes", 0.0)
