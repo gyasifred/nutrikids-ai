@@ -50,15 +50,15 @@ def preprocess_clinical_note(note_text):
 
 def create_simplified_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
     """
-    Create a simplified malnutrition assessment prompt that's more flexible
-    and ensures consistent yes/no first output structure.
+    Create a simplified malnutrition assessment prompt with more consistent output formatting.
+    Ensures the model learns to begin the response with yes/no.
     """
-    # Define a more concise framework that includes broader indicators
-    prompt = """[Task] Please analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
+    # Define a structured prompt that emphasizes format consistency
+    prompt = """[Task] Analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
 
 [Assessment Guidelines]
 Consider these factors when assessing malnutrition:
-- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC (Mid-Upper Arm Circumference)
+- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC
 - Growth trajectory and percentile changes
 - Clinical signs like edema, muscle wasting, decreased energy
 - Nutritional intake pattern and history
@@ -66,23 +66,16 @@ Consider these factors when assessing malnutrition:
 - Social or environmental factors impacting food security
 - Recent weight changes or growth concerns
 
-Remember: Malnutrition can present in different ways and may not always have all classical indicators.
+[Important] Your assessment must begin with either "yes" or "no" as the first word.
 
 Clinical note for analysis:
 {note}
 
-[Output Format]
-Respond with a single word "yes" or "no" first, followed by your clinical reasoning.
-
 {label_part}"""
 
-    # For training mode (with label)
+    # For training mode (with label), ensure the format teaches the model to output yes/no first
     if label:
-        # Ensure the label comes first in training examples
-        label_part = f"Assessment: {label.strip().lower()}"
-        if label.strip().lower() not in ["yes", "no"]:
-            # Default to "no" if invalid label
-            label_part = "Assessment: no"
+        label_part = f"Assessment: {label}"
     else:
         label_part = "Assessment:"
     
