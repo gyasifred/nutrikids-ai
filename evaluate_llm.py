@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Complete fixed inference script for malnutrition assessment model.
-Handles device placement properly and includes all metrics tracking.
+Complete inference script for malnutrition assessment with full prompt and proper device handling.
 """
 
 import os
@@ -20,8 +19,8 @@ from sklearn.metrics import (
 import json
 from datetime import datetime
 import numpy as np
-from unsloth import FastLanguageModel
 from tqdm import tqdm
+from unsloth import FastLanguageModel
 
 def load_model(model_path, load_in_4bit):
     """Load model with proper device handling."""
@@ -63,10 +62,8 @@ def preprocess_clinical_note(note_text):
     processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
 
-def create_simplified_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
-    """
-    Complete malnutrition assessment prompt identical to training.
-    """
+def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
+    """Complete malnutrition assessment prompt identical to training."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
@@ -117,31 +114,24 @@ Follow this format:
 2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
 
 Clinical note for analysis:
-{note}
+{note}"""
 
-{label_part}"""
-
-    label_part = ""
-    formatted_prompt = prompt.format(note=note, label_part=label_part)
+    formatted_prompt = prompt.format(note=note)
     
     if tokenizer and max_tokens:
         tokens = tokenizer.encode(formatted_prompt)
         if len(tokens) > max_tokens:
-            # Calculate available space for note
-            template = prompt.format(note="", label_part=label_part)
+            template = prompt.format(note="")
             template_tokens = tokenizer.encode(template)
             available_tokens = max_tokens - len(template_tokens)
             
             if available_tokens <= 0:
                 available_tokens = max_tokens // 2
             
-            # Tokenize note separately and truncate
             note_tokens = tokenizer.encode(note)
             truncated_note_tokens = note_tokens[:available_tokens]
             truncated_note = tokenizer.decode(truncated_note_tokens, skip_special_tokens=True)
-            
-            # Rebuild prompt with truncated note
-            formatted_prompt = prompt.format(note=truncated_note, label_part=label_part)
+            formatted_prompt = prompt.format(note=truncated_note)
     
     return formatted_prompt
 
@@ -155,18 +145,23 @@ def parse_model_output(output_text):
     elif "malnutrition=no" in output_text:
         return 0
     
-    # Search for last occurrence of yes/no
+    # Then try to find the last occurrence of yes/no
     lines = output_text.split('\n')
     for line in reversed(lines):
         line = line.strip()
-        if any(kw in line for kw in ["malnutrition:", "conclusion:", "assessment:"]):
+        if "malnutrition:" in line:
+            if "yes" in line:
+                return 1
+            elif "no" in line:
+                return 0
+        elif "conclusion:" in line:
             if "yes" in line:
                 return 1
             elif "no" in line:
                 return 0
     
-    # Final fallback
-    for line in reversed(lines[-3:]):
+    # Fallback to simple yes/no search in last 5 lines
+    for line in reversed(lines[-5:]):
         if "yes" in line.split():
             return 1
         elif "no" in line.split():
@@ -196,7 +191,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing cases"):
         try:
-            # Preprocess identically to training
+            # Preprocess exactly like training
             note_text = preprocess_clinical_note(row["txt"])
             prompt = create_simplified_malnutrition_prompt(
                 note=note_text,
@@ -220,7 +215,12 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
             pred = parse_model_output(output_text)
             true_label = int(row["label"])
             
-            # Store results
+            # Print prediction for this case
+            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
+            print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
+            print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+            print("-" * 40)
+            
             results.append({
                 "DEID": row["DEID"],
                 "TRUE_LABEL": true_label,
@@ -230,17 +230,11 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 "PROMPT": prompt
             })
             
-            if pred != -1:  # Only include determinate predictions in metrics
+            if pred != -1:
                 true_labels.append(true_label)
                 pred_labels.append(pred)
                 deids.append(row["DEID"])
                 
-            # Print current case
-            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
-            print(f"TRUE: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
-            print(f"PRED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
-            print("-" * 40)
-            
         except Exception as e:
             print(f"\nError processing case {idx + 1} - DEID: {row['DEID']}")
             print(f"Error: {str(e)}")
