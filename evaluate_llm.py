@@ -22,46 +22,48 @@ import json
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run inference for pediatric malnutrition classification")
     parser.add_argument("--model_path", type=str, required=True, 
-                       help="Path to the trained model")
+                        help="Path to the trained model")
     parser.add_argument("--input_file", type=str, required=True, 
-                       help="Path to the CSV file with clinical notes")
+                        help="Path to the CSV file with clinical notes")
     parser.add_argument("--output_dir", type=str, required=True, 
-                       help="Directory to save all results and metrics")
+                        help="Directory to save all results and metrics")
     parser.add_argument("--batch_size", type=int, default=8, 
-                       help="Batch size for inference")
+                        help="Batch size for inference")
     parser.add_argument("--max_new_tokens", type=int, default=512, 
-                       help="Maximum number of new tokens to generate")
+                        help="Maximum number of new tokens to generate")
     parser.add_argument("--load_in_4bit", action="store_true", 
-                       help="Load model in 4-bit quantization")
+                        help="Load model in 4-bit quantization")
     parser.add_argument("--stream_output", action="store_true", 
-                       help="Stream output tokens during inference")
+                        help="Stream output tokens during inference")
     parser.add_argument("--test_mode", action="store_true", 
-                       help="Test mode: infer on a small subset of data")
+                        help="Test mode: infer on a small subset of data")
     parser.add_argument("--note_column", type=str, default="txt", 
-                       help="Column name for clinical notes")
+                        help="Column name for clinical notes")
     parser.add_argument("--id_column", type=str, default="DEID", 
-                       help="Column name for patient IDs")
+                        help="Column name for patient IDs")
     parser.add_argument("--label_column", type=str, default="label", 
-                       help="Column name for true labels (if available)")
-    parser.add_argument("--temperature", type=float, default=0.1,
-                       help="Temperature for sampling during generation (default: 0.1)")
+                        help="Column name for true labels (if available)")
+    parser.add_argument("--temperature", type=float, default=0.3,
+                        help="Temperature for sampling during generation (default: 0.3)")
     parser.add_argument("--top_p", type=float, default=0.9,
-                       help="Top-p (nucleus) sampling parameter (default: 0.9)")
+                        help="Top-p (nucleus) sampling parameter (default: 0.9)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
-                       help="Preprocess </s> tokens in clinical notes")
+                        help="Preprocess </s> tokens in clinical notes")
     parser.add_argument("--generate_explanations", action="store_true",
-                       help="Generate explanations for malnutrition assessments")
-    parser.add_argument("--retry_errors", action="store_true",
-                       help="Retry cases with error or inconsistent assessments")
+                        help="Generate explanations for malnutrition assessments")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
-    """Preprocess clinical notes to handle special tokens."""
+    """
+    Preprocess clinical notes to handle special tokens.
+    """
     if not note_text:
         return note_text
     
+    # Replace '</s>' tokens with a more appropriate separator
     processed_text = note_text.replace('</s>', '\n\n')
     
+    # Check for any remaining special tokens that might interfere
     special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
     for token in special_tokens:
         if token in processed_text:
@@ -69,45 +71,69 @@ def preprocess_clinical_note(note_text):
     
     return processed_text
 
-def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create detailed malnutrition assessment prompt with strict output format."""
-    prompt = """Analyze this clinical note for malnutrition using these criteria:
+def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
+    """
+    Create a detailed malnutrition assessment prompt with comprehensive clinical criteria.
+    """
+    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
+Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
-1. Weight Patterns:
-   - Significant weight loss (>5% in 1 month, >10% in 6 months)
-   - BMI/weight-for-height z-scores <-2
-   - Documented growth failure
+You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
 
-2. Nutritional Intake:
-   - Inadequate caloric/protein intake
-   - Prolonged NPO status
-   - Frequent vomiting/diarrhea
+Table 1. Single data point present.
+Mild Malnutrition
+Weight-for-height: −1 to −1.9 z score
+BMI-for-age: −1 to −1.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
 
-3. Clinical Signs:
-   - Muscle wasting
-   - Subcutaneous fat loss
-   - Edema (in severe cases)
+Moderate Malnutrition
+Weight-for-height: −2 to −2.9 z score
+BMI-for-age: −2 to −2.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
 
-Assessment Guidelines:
-- Mild: 1-2 criteria present
-- Moderate: 3-4 criteria present
-- Severe: 5+ criteria or life-threatening
+Severe Malnutrition
+Weight-for-height:−3 or greater z score
+BMI-for-age: −3 or greater z score
+Length/height-for-age: −3 z score
+Mid–upper arm circumference: Greater than or equal to −3 z score
 
-Output Format STRICTLY:
-1) Criteria Analysis: [List which criteria are met with evidence from note]
-2) Explanation: [Detailed rationale connecting findings to assessment]
-3) Final Assessment: malnutrition=[yes/no] 
-   Severity: [none/mild/moderate/severe]
-   Confidence: [low/medium/high]
+When the child has 2 or more data points (multiple z scores over time) use this table:
 
-Clinical Note:
+Table 2. Multiple data points available.
+Mild Malnutrition
+Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
+Weight loss (2–20 years of age): 5% usual body weigh
+Deceleration in weight for length/height: Decline of 1 z score
+Inadequate nutrient intake: 51%−75% estimated energy/protein need
+
+Moderate Malnutrition
+Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
+Weight loss (2–20 years of age): 7.5% usual body weight
+Deceleration in weight for length/height: Decline of 2 z score
+Inadequate nutrient intake: 26%−50% estimated energy/protein need
+
+Severe Malnutrition
+Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
+Weight loss (2–20 years of age): 10% usual body weight
+Deceleration in weight for length/height: Decline of 3 z score
+Inadequate nutrient intake: less than 25% estimated energy/protein need
+
+Follow this format:
+1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
+2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
+
+Clinical note for analysis:
 {note}
 
 Assessment:"""
-    
+
+    # Token-aware note truncation
     if tokenizer and max_tokens:
+        # Calculate token budgets
         base_tokens = len(tokenizer.encode(prompt.format(note="")))
-        safety_margin = 128
+        safety_margin = 128  # For generation space
         max_note_tokens = max_tokens - base_tokens - safety_margin
         
         if max_note_tokens > 0:
@@ -119,17 +145,24 @@ Assessment:"""
     return prompt.format(note=note)
 
 def load_model(model_path, load_in_4bit):
-    """Load the fine-tuned model."""
+    """Load the fine-tuned model with native sequence length."""
     try:
+        # Try loading with Unsloth first
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
-            dtype=None,
+            dtype=None,  # Auto detect
             load_in_4bit=load_in_4bit,
         )
-        FastLanguageModel.for_inference(model)
+        FastLanguageModel.for_inference(model)  # Enable faster inference
+        
+        # Get model's native max sequence length
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
+        print(f"Using model's native max sequence length: {max_seq_length}")
+        
     except Exception as e:
         print(f"Error loading with Unsloth: {e}")
+        print("Trying to load with Hugging Face PEFT...")
+        # Fallback to Hugging Face PEFT
         from peft import AutoPeftModelForCausalLM
         from transformers import AutoTokenizer
         
@@ -139,258 +172,271 @@ def load_model(model_path, load_in_4bit):
             device_map="auto",
         )
         tokenizer = AutoTokenizer.from_pretrained(model_path)
+        
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
+        print(f"Using model's native max sequence length: {max_seq_length}")
 
-    print(f"Model loaded with max sequence length: {max_seq_length}")
     return model, tokenizer, max_seq_length
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, 
-                 max_seq_length=None, temperature=0.1, top_p=0.9):
-    """Generate text with strict output format."""
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9):
+    """Generate text without probability extraction."""
+    # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
     
+    # Check if the input is too long
     if max_seq_length and inputs.input_ids.shape[1] > max_seq_length - max_new_tokens:
+        print(f"Warning: Input length {inputs.input_ids.shape[1]} exceeds maximum allowed when combined with max_new_tokens.")
+        # Truncate to leave room for generated tokens
         inputs.input_ids = inputs.input_ids[:, -(max_seq_length - max_new_tokens):]
         if hasattr(inputs, 'attention_mask'):
             inputs.attention_mask = inputs.attention_mask[:, -(max_seq_length - max_new_tokens):]
-        print(f"Input truncated to {inputs.input_ids.shape[1]} tokens")
+        print(f"Input was truncated to {inputs.input_ids.shape[1]} tokens to fit within model context")
     
+    # Move input to model device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     
-    outputs = model.generate(
+    # Generate output with temperature and top_p parameters
+    generation_kwargs = {
         **inputs,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        streamer=streamer,
-        pad_token_id=tokenizer.eos_token_id
-    )
-    
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-def extract_assessment(prediction):
-    """Robust assessment extraction with severity detection."""
-    prediction = prediction.lower()
-    
-    # First check for strict format
-    if "final assessment:" in prediction:
-        assessment_part = prediction.split("final assessment:")[-1].strip()
-        if "malnutrition=yes" in assessment_part:
-            return "yes"
-        elif "malnutrition=no" in assessment_part:
-            return "no"
-    
-    # Check for severity indicators
-    severity_map = {
-        "severe": "yes",
-        "moderate": "yes",
-        "mild": "yes",
-        "none": "no"
+        "max_new_tokens": max_new_tokens,
+        "use_cache": True,
+        "temperature": temperature,
+        "top_p": top_p,
     }
     
-    for severity, assessment in severity_map.items():
-        if f"severity: {severity}" in prediction:
-            return assessment
+    if streamer:
+        generation_kwargs["streamer"] = streamer
     
-    # Check for weight/nutrition indicators
-    positive_indicators = [
-        "weight loss", "underweight", "failure to thrive",
-        "z-score <-2", "growth faltering", "malnourished"
+    outputs = model.generate(**generation_kwargs)
+    
+    prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    return prediction
+
+def extract_assessment(prediction):
+    """Improved assessment extraction from model output."""
+    # Normalize the prediction text
+    normalized = prediction.lower().replace('\n', ' ').replace('\r', ' ')
+    
+    # First look for explicit malnutrition= pattern
+    if "malnutrition=" in normalized:
+        mal_part = normalized.split("malnutrition=")[-1].strip()
+        if mal_part.startswith("yes"):
+            return "yes"
+        elif mal_part.startswith("no"):
+            return "no"
+    
+    # Then look for affirmative/negative phrases
+    affirmative_phrases = [
+        "patient has malnutrition",
+        "malnutrition is present",
+        "findings consistent with malnutrition",
+        "diagnosed with malnutrition",
+        "malnutrition: yes"
     ]
     
-    if any(indicator in prediction for indicator in positive_indicators):
-        return "yes"
+    negative_phrases = [
+        "no evidence of malnutrition",
+        "malnutrition is not present",
+        "no signs of malnutrition",
+        "malnutrition: no",
+        "does not have malnutrition"
+    ]
     
+    for phrase in affirmative_phrases:
+        if phrase in normalized:
+            return "yes"
+    
+    for phrase in negative_phrases:
+        if phrase in normalized:
+            return "no"
+    
+    # Fallback to checking for yes/no in the last 50 characters
+    last_part = normalized[-50:]
+    if "yes" in last_part:
+        return "yes"
+    elif "no" in last_part:
+        return "no"
+    
+    # Final fallback
     return "error"
 
-def extract_severity(prediction):
-    """Extract severity level from prediction."""
-    prediction = prediction.lower()
-    for severity in ["severe", "moderate", "mild"]:
-        if f"severity: {severity}" in prediction:
-            return severity
-    return "none"
-
 def extract_explanation(prediction):
-    """Extract detailed explanation from prediction."""
+    """Extract explanation from the model output while keeping original prompt structure."""
     try:
-        if "criteria analysis:" in prediction.lower() and "explanation:" in prediction.lower():
-            analysis_part = prediction.lower().split("criteria analysis:")[-1]
-            explanation_part = analysis_part.split("explanation:")[-1]
-            return explanation_part.split("final assessment:")[0].strip()
-        return prediction.split("Assessment:")[-1].strip()
-    except:
-        return "Unable to extract explanation"
-
-def validate_assessment(explanation, assessment):
-    """Thorough validation of explanation-assessment consistency."""
-    if not explanation or explanation.strip() == "":
-        return False
+        # Find the assessment section
+        if "Assessment:" in prediction:
+            assessment_part = prediction.split("Assessment:")[-1].strip()
+        else:
+            assessment_part = prediction
         
-    explanation = explanation.lower()
-    
-    positive_terms = [
-        "weight loss", "underweight", "failure to thrive",
-        "z-score", "growth delay", "malnutrition", "nutritional deficiency"
-    ]
-    
-    negative_terms = [
-        "no malnutrition", "well-nourished", "adequate growth",
-        "normal nutrition", "no evidence of malnutrition"
-    ]
-    
-    if assessment == "yes":
-        if any(term in explanation for term in negative_terms):
-            return False
-        if not any(term in explanation for term in positive_terms):
-            return False
-    elif assessment == "no":
-        if any(term in explanation for term in positive_terms):
-            if not any(term in explanation for term in negative_terms):
-                return False
-                
-    return True
+        # The explanation is everything before the final assessment
+        explanation = assessment_part
+        
+        # Try to remove the final assessment part if present
+        if "malnutrition=" in explanation.lower():
+            explanation = explanation[:explanation.lower().find("malnutrition=")].strip()
+        
+        # Clean up any remaining assessment fragments
+        for phrase in ["malnutrition: yes", "malnutrition: no", "malnutrition=yes", "malnutrition=no"]:
+            if phrase in explanation.lower():
+                explanation = explanation[:explanation.lower().find(phrase)].strip()
+        
+        # If we have multiple lines, take everything before the last line
+        lines = explanation.split('\n')
+        if len(lines) > 1:
+            explanation = '\n'.join(lines[:-1]).strip()
+        
+        return explanation if explanation else "No explanation extracted"
+    except Exception as e:
+        print(f"Error extracting explanation: {e}")
+        return "Error extracting explanation"
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
-    """Run inference with enhanced validation."""
+    """Run inference on the provided clinical notes."""
     results = []
+
+    # Create a text streamer if streaming is enabled
     streamer = TextStreamer(tokenizer) if args.stream_output else None
     
-    for i in tqdm(range(0, len(notes), args.batch_size), desc="Processing notes"):
+    for i in tqdm(range(0, len(notes), args.batch_size), desc="Running inference"):
         batch_notes = notes[i:i+args.batch_size]
         batch_ids = patient_ids[i:i+args.batch_size]
-        batch_labels = true_labels[i:i+args.batch_size] if true_labels else [None]*len(batch_notes)
+        batch_labels = true_labels[i:i+args.batch_size] if true_labels else [None] * len(batch_notes)
         
         for note, patient_id, true_label in zip(batch_notes, batch_ids, batch_labels):
+            # Preprocess the clinical note if enabled
             if args.preprocess_tokens:
                 note = preprocess_clinical_note(note)
                 
-            prompt = create_malnutrition_prompt(
+            # Create prompt for the current note with length control
+            prompt = create_simplified_malnutrition_prompt(
                 note, 
                 tokenizer=tokenizer, 
                 max_tokens=max_seq_length - args.max_new_tokens
             )
             
+            # Generate prediction
             start_time = time.time()
             
             if args.stream_output:
-                print(f"\nAssessing patient {patient_id}...")
+                print(f"\nGenerating assessment for patient {patient_id}...")
                 prediction = generate_text(
-                    model, tokenizer, prompt, 
-                    args.max_new_tokens, streamer,
-                    max_seq_length, args.temperature, args.top_p
+                    model, 
+                    tokenizer, 
+                    prompt, 
+                    args.max_new_tokens, 
+                    streamer,
+                    max_seq_length=max_seq_length,
+                    temperature=args.temperature,
+                    top_p=args.top_p
                 )
             else:
                 prediction = generate_text(
-                    model, tokenizer, prompt,
-                    args.max_new_tokens, None,
-                    max_seq_length, args.temperature, args.top_p
+                    model, 
+                    tokenizer, 
+                    prompt, 
+                    args.max_new_tokens,
+                    max_seq_length=max_seq_length,
+                    temperature=args.temperature,
+                    top_p=args.top_p
                 )
             
             inference_time = time.time() - start_time
             
+            # Extract the assessment
             assessment = extract_assessment(prediction)
-            severity = extract_severity(prediction)
-            explanation = extract_explanation(prediction)
-            is_consistent = validate_assessment(explanation, assessment)
             
-            # Retry logic for errors/inconsistencies
-            if args.retry_errors and (assessment == "error" or not is_consistent):
-                print(f"\nRetrying patient {patient_id} due to {'inconsistency' if not is_consistent else 'error'}")
-                prediction = generate_text(
-                    model, tokenizer, prompt + "\nPlease reformat your answer strictly using the specified format.",
-                    args.max_new_tokens, None, max_seq_length, 0.1, 0.9
-                )
-                assessment = extract_assessment(prediction)
-                severity = extract_severity(prediction)
+            # Extract explanation
+            explanation = ""
+            if args.generate_explanations:
                 explanation = extract_explanation(prediction)
-                is_consistent = validate_assessment(explanation, assessment)
+                print(f"\n----- Explanation for patient {patient_id} (Assessment: {assessment}) -----")
+                print(explanation)
+                print("-" * 80)
             
             result = {
                 "DEID": patient_id,
                 "true_label": true_label if true_label is not None else "unknown",
                 "predicted_label": assessment,
-                "severity": severity,
                 "explanation": explanation,
-                "is_consistent": is_consistent,
+                "original_note": note,
                 "inference_time": inference_time,
-                "raw_prediction": prediction if args.test_mode else ""
+                "raw_prediction": prediction if args.test_mode else ""  # Save full output in test mode
             }
-            
-            if not is_consistent and assessment != "error":
-                print(f"\nWARNING: Inconsistent assessment for {patient_id}")
-                print(f"Assessment: {assessment}")
-                print(f"Explanation: {explanation[:200]}...")
-                print("-" * 80)
             
             results.append(result)
             
     return results
 
 def calculate_metrics(results, args):
-    """Calculate performance metrics with enhanced reporting."""
+    """Calculate and save performance metrics."""
+    # Create metrics directory if it doesn't exist
     metrics_dir = os.path.join(args.output_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
     
+    # Update args to include metrics_dir for use elsewhere
+    args.metrics_dir = metrics_dir
+    
+    # Check if we have true labels to calculate metrics
     if all(r["true_label"] == "unknown" for r in results):
-        print("No true labels available - skipping metrics")
+        print("No true labels available - skipping metrics calculation")
         return None
     
+    # Filter out results with unknown true labels or error predictions
     valid_results = [r for r in results if r["true_label"] != "unknown" and r["predicted_label"] != "error"]
     
     if not valid_results:
-        print("No valid results for metrics calculation")
+        print("No valid results with true labels for metrics calculation")
         return None
     
-    # Convert labels to binary
-    y_true = []
-    for r in valid_results:
-        if isinstance(r["true_label"], (int, float)):
-            y_true.append(int(r["true_label"]))
-        else:
-            y_true.append(1 if str(r["true_label"]).lower() == "yes" else 0)
+    # Convert labels to binary format for metrics calculation
+    if all(isinstance(r["true_label"], (int, float)) for r in valid_results):
+        y_true = [int(r["true_label"]) for r in valid_results]
+    else:
+        y_true = [1 if str(r["true_label"]).lower() == "yes" else 0 for r in valid_results]
     
     y_pred = [1 if r["predicted_label"].lower() == "yes" else 0 for r in valid_results]
     
-    # Classification Report
-    report = classification_report(y_true, y_pred, output_dict=True, 
-                                 target_names=["Non-malnourished", "Malnourished"])
-    pd.DataFrame(report).transpose().to_csv(os.path.join(metrics_dir, "classification_report.csv"))
+    # Classification Report based on binary predictions
+    report = classification_report(y_true, y_pred, output_dict=True, target_names=["Non-malnourished", "Malnourished"])
+    report_df = pd.DataFrame(report).transpose()
+    report_df.to_csv(os.path.join(metrics_dir, "classification_report.csv"))
     
+    # Save classification report as text
     with open(os.path.join(metrics_dir, "classification_report.txt"), "w") as f:
         f.write(classification_report(y_true, y_pred, target_names=["Non-malnourished", "Malnourished"]))
     
     # Confusion Matrix
     cm = confusion_matrix(y_true, y_pred)
-    cm_df = pd.DataFrame(cm, 
-                        index=["Actual Non-malnourished", "Actual Malnourished"],
-                        columns=["Predicted Non-malnourished", "Predicted Malnourished"])
+    cm_df = pd.DataFrame(
+        cm, 
+        index=["Actual Non-malnourished", "Actual Malnourished"],
+        columns=["Predicted Non-malnourished", "Predicted Malnourished"]
+    )
     cm_df.to_csv(os.path.join(metrics_dir, "confusion_matrix.csv"))
     
+    # Plot and save confusion matrix
     plt.figure(figsize=(8, 6))
     plt.matshow(cm, cmap=plt.cm.Blues, fignum=1)
     plt.colorbar()
+    plt.ylabel("True Label")
+    plt.xlabel("Predicted Label")
     plt.title("Confusion Matrix")
     plt.savefig(os.path.join(metrics_dir, "confusion_matrix.png"), dpi=300, bbox_inches="tight")
     
-    # Save full results with severity
-    results_df = pd.DataFrame(results)
-    results_df.to_csv(os.path.join(args.output_dir, "detailed_results.csv"), index=False)
-    
-    # Metrics summary
+    # Save metrics summary
     metrics_summary = {
         "accuracy": report["accuracy"],
         "precision_malnourished": report["Malnourished"]["precision"],
         "recall_malnourished": report["Malnourished"]["recall"],
         "f1_malnourished": report["Malnourished"]["f1-score"],
-        "inconsistent_assessments": sum(1 for r in results if not r["is_consistent"] and r["predicted_label"] != "error"),
-        "error_assessments": sum(1 for r in results if r["predicted_label"] == "error"),
-        "severity_distribution": {
-            "severe": sum(1 for r in results if r["severity"] == "severe"),
-            "moderate": sum(1 for r in results if r["severity"] == "moderate"),
-            "mild": sum(1 for r in results if r["severity"] == "mild"),
-            "none": sum(1 for r in results if r["severity"] == "none")
-        }
+        "precision_nonmalnourished": report["Non-malnourished"]["precision"],
+        "recall_nonmalnourished": report["Non-malnourished"]["recall"],
+        "f1_nonmalnourished": report["Non-malnourished"]["f1-score"],
+        "total_samples": len(valid_results),
+        "malnourished_count": sum(y_true),
+        "nonmalnourished_count": len(y_true) - sum(y_true)
     }
     
     with open(os.path.join(metrics_dir, "metrics_summary.json"), "w") as f:
@@ -400,49 +446,98 @@ def calculate_metrics(results, args):
 
 def main():
     args = parse_arguments()
-    os.makedirs(args.output_dir, exist_ok=True)
     
-    print(f"Loading data from {args.input_file}")
+    # Create output directory and subdirectories
+    os.makedirs(args.output_dir, exist_ok=True)
+    output_file = os.path.join(args.output_dir, "inference_results.csv")
+    
+    # Load the data
+    print(f"Loading data from: {args.input_file}")
     df = pd.read_csv(args.input_file)
     
+    # Check for required columns
+    if args.note_column not in df.columns:
+        raise ValueError(f"Note column '{args.note_column}' not found in the input file")
+    if args.id_column not in df.columns:
+        raise ValueError(f"ID column '{args.id_column}' not found in the input file")
+    
+    # Extract notes and patient IDs
     notes = df[args.note_column].tolist()
     patient_ids = df[args.id_column].tolist()
-    true_labels = df[args.label_column].tolist() if args.label_column in df.columns else None
     
+    # Extract true labels if available
+    true_labels = None
+    if args.label_column and args.label_column in df.columns:
+        print(f"Found label column '{args.label_column}' - metrics will be calculated")
+        true_labels = df[args.label_column].tolist()
+        print(f"First 5 labels (type: {type(true_labels[0]).__name__}): {true_labels[:5]}")
+    else:
+        print("No label column specified or not found - metrics will not be calculated")
+    
+    # For test mode, use only a small subset
     if args.test_mode:
+        print("Running in test mode with 5 samples")
         test_size = min(5, len(notes))
         notes = notes[:test_size]
         patient_ids = patient_ids[:test_size]
         if true_labels:
             true_labels = true_labels[:test_size]
     
-    print(f"Loading model from {args.model_path}")
+    # Load the model with native sequence length
+    print(f"Loading model from: {args.model_path}")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
+    print(f"Model loaded with native max sequence length: {max_seq_length}")
     
+    # Run inference
     print("Starting inference...")
+    if args.preprocess_tokens:
+        print("Note preprocessing enabled - </s> tokens will be handled appropriately")
     results = run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length)
     
-    pd.DataFrame(results).to_csv(os.path.join(args.output_dir, "inference_results.csv"), index=False)
+    # Save results to CSV
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(output_file, index=False)
+    print(f"Results saved to: {output_file}")
     
+    # Calculate and save metrics if true labels are available
     if true_labels:
+        print("Calculating performance metrics...")
         metrics = calculate_metrics(results, args)
         if metrics:
-            print("\nMetrics Summary:")
-            print(f"Accuracy: {metrics['accuracy']:.3f}")
-            print(f"Malnourished Precision/Recall: {metrics['precision_malnourished']:.3f}/{metrics['recall_malnourished']:.3f}")
-            print(f"Inconsistent Assessments: {metrics['inconsistent_assessments']}")
-            print(f"Error Assessments: {metrics['error_assessments']}")
-            print("Severity Distribution:")
-            for severity, count in metrics['severity_distribution'].items():
-                print(f"  {severity.title()}: {count}")
+            print("\nPerformance Metrics Summary:")
+            print(f"Accuracy: {metrics['accuracy']:.4f}")
+            print(f"Malnourished cases - Precision: {metrics['precision_malnourished']:.4f}, Recall: {metrics['recall_malnourished']:.4f}, F1: {metrics['f1_malnourished']:.4f}")
+            print(f"Non-malnourished cases - Precision: {metrics['precision_nonmalnourished']:.4f}, Recall: {metrics['recall_nonmalnourished']:.4f}, F1: {metrics['f1_nonmalnourished']:.4f}")
+            print(f"Metrics saved to: {args.metrics_dir}/")
     
-    print("\nInference Complete")
+    # Show summary statistics
+    yes_count = sum(1 for r in results if r["predicted_label"] == "yes")
+    no_count = sum(1 for r in results if r["predicted_label"] == "no")
+    error_count = sum(1 for r in results if r["predicted_label"] == "error")
+
+    print("\nInference Summary:")
+    print(f"Total cases processed: {len(results)}")
+    print(f"Malnourished cases: {yes_count} ({yes_count/len(results)*100:.1f}%)")
+    print(f"Non-malnourished cases: {no_count} ({no_count/len(results)*100:.1f}%)")
+    if error_count > 0:
+        print(f"Error cases: {error_count} ({error_count/len(results)*100:.1f}%)")
+    
+    # Calculate average inference time
+    avg_time = sum(r["inference_time"] for r in results) / len(results)
+    print(f"Average inference time per note: {avg_time:.3f} seconds")
+    print(f"Sampling parameters: temperature={args.temperature}, top_p={args.top_p}")
+    
+    if args.generate_explanations:
+        print(f"Explanations generated and saved to: {output_file}")
+
     if args.test_mode:
-        print("\nTest Mode Samples:")
-        for r in results[:3]:
-            print(f"\nPatient {r['DEID']}:")
-            print(f"Assessment: {r['predicted_label']} (Severity: {r['severity']})")
-            print(f"Explanation: {r['explanation'][:200]}...")
+        print("\nTest Mode - Sample Outputs:")
+        for result in results[:3]:
+            print(f"\nPatient ID: {result['DEID']}")
+            print(f"Assessment: {result['predicted_label']}")
+            print("Explanation:")
+            print(result['explanation'])
+            print("-" * 80)
 
 if __name__ == "__main__":
     main()
