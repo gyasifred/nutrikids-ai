@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Complete inference script for malnutrition assessment model with full prompt and preprocessing.
+Complete fixed inference script for malnutrition assessment model.
+Handles device placement properly and includes all metrics tracking.
 """
 
 import os
@@ -20,9 +21,10 @@ import json
 from datetime import datetime
 import numpy as np
 from unsloth import FastLanguageModel
+from tqdm import tqdm
 
 def load_model(model_path, load_in_4bit):
-    """Load model with native sequence length."""
+    """Load model with proper device handling."""
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
@@ -48,20 +50,17 @@ def load_model(model_path, load_in_4bit):
     return model, tokenizer, max_seq_length
 
 def preprocess_clinical_note(note_text):
-    """Preprocess clinical notes to handle special tokens exactly like in training."""
+    """Preprocess clinical notes identically to training."""
     if not isinstance(note_text, str):
         return ""
     
-    # Replace problematic tokens
     processed_text = note_text.replace('</s>', '\n\n')
     special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
     for token in special_tokens:
         processed_text = processed_text.replace(token, f"[{token}]")
     
-    # Additional cleaning from training
     processed_text = processed_text.replace('\r\n', '\n').replace('\r', '\n')
-    processed_text = ' '.join(processed_text.split())  # Remove extra whitespace
-    
+    processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
 
 def create_simplified_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
@@ -147,7 +146,7 @@ Clinical note for analysis:
     return formatted_prompt
 
 def parse_model_output(output_text):
-    """Parse model output to extract prediction with robust handling."""
+    """Robust output parsing with multiple fallbacks."""
     output_text = output_text.lower().strip()
     
     # First try exact matches
@@ -156,23 +155,18 @@ def parse_model_output(output_text):
     elif "malnutrition=no" in output_text:
         return 0
     
-    # Then try to find the last occurrence of yes/no
+    # Search for last occurrence of yes/no
     lines = output_text.split('\n')
     for line in reversed(lines):
         line = line.strip()
-        if "malnutrition:" in line:
-            if "yes" in line:
-                return 1
-            elif "no" in line:
-                return 0
-        elif "conclusion:" in line:
+        if any(kw in line for kw in ["malnutrition:", "conclusion:", "assessment:"]):
             if "yes" in line:
                 return 1
             elif "no" in line:
                 return 0
     
-    # Fallback to simple yes/no search in last 5 lines
-    for line in reversed(lines[-5:]):
+    # Final fallback
+    for line in reversed(lines[-3:]):
         if "yes" in line.split():
             return 1
         elif "no" in line.split():
@@ -181,7 +175,7 @@ def parse_model_output(output_text):
     return -1  # Undetermined
 
 def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir):
-    """Generate predictions with identical preprocessing to training."""
+    """Generate predictions with proper device handling."""
     df = pd.read_csv(data_path)
     required_columns = {"txt", "label", "DEID"}
     if not required_columns.issubset(df.columns):
@@ -196,40 +190,37 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     print("\nStarting inference...")
     print("-" * 50)
     
-    # Ensure model is on the correct device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
+    # Get device from model (respects accelerate offloading)
+    device = next(model.parameters()).device
+    print(f"Using device: {device}")
     
-    for idx, row in df.iterrows():
-        # Preprocess exactly like training
-        note_text = preprocess_clinical_note(row["txt"])
-        prompt = create_simplified_malnutrition_prompt(
-            note=note_text,
-            tokenizer=tokenizer,
-            max_tokens=max_seq_length - 20
-        )
-        
-        # Generate with same parameters as training
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_seq_length).to(device)
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing cases"):
         try:
+            # Preprocess identically to training
+            note_text = preprocess_clinical_note(row["txt"])
+            prompt = create_simplified_malnutrition_prompt(
+                note=note_text,
+                tokenizer=tokenizer,
+                max_tokens=max_seq_length - 20
+            )
+            
+            # Move inputs to model's device
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_seq_length).to(device)
+            
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=50,
                     pad_token_id=tokenizer.eos_token_id,
-                    do_sample=False
+                    do_sample=False,
+                    temperature=0.0
                 )
             
             output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
             pred = parse_model_output(output_text)
             true_label = int(row["label"])
             
-            # Print prediction for this case
-            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
-            print(f"TRUE LABEL: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
-            print(f"PREDICTED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
-            print("-" * 30)
-            
+            # Store results
             results.append({
                 "DEID": row["DEID"],
                 "TRUE_LABEL": true_label,
@@ -239,11 +230,17 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 "PROMPT": prompt
             })
             
-            if pred != -1:
+            if pred != -1:  # Only include determinate predictions in metrics
                 true_labels.append(true_label)
                 pred_labels.append(pred)
                 deids.append(row["DEID"])
                 
+            # Print current case
+            print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
+            print(f"TRUE: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
+            print(f"PRED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+            print("-" * 40)
+            
         except Exception as e:
             print(f"\nError processing case {idx + 1} - DEID: {row['DEID']}")
             print(f"Error: {str(e)}")
@@ -255,20 +252,10 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 "INPUT_TEXT": note_text,
                 "PROMPT": prompt
             })
-        if pred != -1:
-            true_labels.append(true_label)
-            pred_labels.append(pred)
-            deids.append(row["DEID"])
     
-    # Print summary of predictions
-    print("\n" + "=" * 50)
-    print("PREDICTION SUMMARY:")
-    print(f"Total cases processed: {len(df)}")
-    print(f"Determinate predictions: {len(true_labels)}")
-    print(f"Indeterminate predictions: {len(df) - len(true_labels)}")
-    
-    if len(true_labels) > 0:
-        # Calculate metrics
+    # Calculate metrics
+    metrics = {}
+    if true_labels:
         metrics = {
             "accuracy": accuracy_score(true_labels, pred_labels),
             "f1": f1_score(true_labels, pred_labels),
@@ -279,69 +266,65 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
             "n_samples": len(true_labels),
             "n_indeterminate": len(df) - len(true_labels),
             "class_distribution": {
-                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1)),
-                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0)),
-                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1)),
-                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0)),
+                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1),
+                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0),
+                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1),
+                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0),
             }
         }
-        
-        # Print immediate results
-        print("\nCLASSIFICATION METRICS:")
-        print(f"Accuracy: {metrics['accuracy']:.4f}")
-        print(f"F1 Score: {metrics['f1']:.4f}")
-        print(f"Recall: {metrics['recall']:.4f}")
-        print(f"ROC AUC: {metrics['roc_auc']:.4f}")
-        
-        print("\nCONFUSION MATRIX:")
-        print(f"True Positives: {metrics['class_distribution']['true_positives']}")
-        print(f"True Negatives: {metrics['class_distribution']['true_negatives']}")
-        print(f"False Positives: {metrics['class_distribution']['false_positives']}")
-        print(f"False Negatives: {metrics['class_distribution']['false_negatives']}")
-    else:
-        metrics = {}
-        print("Warning: No determinate predictions to calculate metrics")
     
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs(output_dir, exist_ok=True)
     
-    # 1. Full predictions with all metadata
-    full_results_path = os.path.join(output_dir, f"full_predictions_{timestamp}.csv")
-    pd.DataFrame(results).to_csv(full_results_path, index=False)
-    print(f"\nSaved full predictions to: {full_results_path}")
+    # 1. Full predictions
+    full_path = os.path.join(output_dir, f"full_results_{timestamp}.csv")
+    pd.DataFrame(results).to_csv(full_path, index=False)
     
     # 2. Metrics
-    if metrics:
-        metrics_path = os.path.join(output_dir, f"metrics_{timestamp}.json")
-        with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Saved metrics to: {metrics_path}")
+    metrics_path = os.path.join(output_dir, f"metrics_{timestamp}.json")
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
     
-    # 3. Simplified DEID, TRUE, PREDICTED
-    simplified_path = os.path.join(output_dir, f"predictions_{timestamp}.csv")
+    # 3. Simplified (DEID, TRUE, PREDICTED)
+    simple_path = os.path.join(output_dir, f"predictions_{timestamp}.csv")
     pd.DataFrame({
         "DEID": deids,
         "TRUE_LABEL": true_labels,
         "PREDICTED_LABEL": pred_labels
-    }).to_csv(simplified_path, index=False)
-    print(f"Saved simplified predictions to: {simplified_path}")
+    }).to_csv(simple_path, index=False)
+    
+    # Print summary
+    print("\n" + "="*50)
+    print("Inference Complete")
+    print(f"Processed {len(df)} cases")
+    if true_labels:
+        print(f"\nMetrics (on {len(true_labels)} determinate predictions):")
+        print(f"Accuracy: {metrics['accuracy']:.4f}")
+        print(f"F1 Score: {metrics['f1']:.4f}")
+        print(f"Recall: {metrics['recall']:.4f}")
+        print(f"AUC: {metrics['roc_auc']:.4f}")
+        print("\nConfusion Matrix:")
+        print(f"TP: {metrics['class_distribution']['true_positives']}")
+        print(f"TN: {metrics['class_distribution']['true_negatives']}")
+        print(f"FP: {metrics['class_distribution']['false_positives']}")
+        print(f"FN: {metrics['class_distribution']['false_negatives']}")
+    print(f"\nResults saved to {output_dir}")
     
     return metrics, results
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference with prediction printouts")
+    parser = argparse.ArgumentParser(description="Run inference with proper device handling")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
     parser.add_argument("--data_path", type=str, required=True, help="Path to test data CSV")
     parser.add_argument("--output_dir", type=str, default="./inference_results", help="Output directory")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
     args = parser.parse_args()
     
-    # Load model
     print("\nLoading model...")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
     
-    # Generate predictions
+    print("\nGenerating predictions...")
     metrics, predictions = generate_predictions(
         model=model,
         tokenizer=tokenizer,
@@ -349,10 +332,6 @@ def main():
         max_seq_length=max_seq_length,
         output_dir=args.output_dir
     )
-    
-    # Final summary
-    print("\n=== Inference Complete ===")
-    print(f"Results saved to: {args.output_dir}")
 
 if __name__ == "__main__":
     main()
