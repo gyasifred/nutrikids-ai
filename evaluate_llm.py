@@ -97,11 +97,17 @@ Weight gain velocity (<2 years of age): Less than 25% of the normb for expected 
 Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
+Other factors
+Clinical signs like edema, muscle wasting, decreased energy
+Nutritional intake pattern and history
+Medical conditions affecting nutrition
+Social or environmental factors impacting food security
+Recent weight changes or growth concerns
 
 Analysis Steps:
 1) First determine malnutrition status using the criteria tables above
 2) Then explain your decision by listing which specific criteria were used
-3) Finally provide your assessment in this exact format: 
+3) Finally provide your assessment by strictly following this format: 
    malnutrition=[yes/no]
    confidence=[high/medium/low]
    severity=[none/mild/moderate/severe]
@@ -236,7 +242,7 @@ def extract_decision(prediction):
     # Extract other relevant factors
     other_factors = [
         "edema", "muscle wasting", "fat loss", "albumin", "prealbumin",
-        "vitamin deficiency", "feeding difficulty", "chronic illness"
+        "vitamin deficiency", "feeding difficulty", "chronic illness","Social or environmental factors"
     ]
     result['other_factors'] = [
         factor for factor in other_factors 
