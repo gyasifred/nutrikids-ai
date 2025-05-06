@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fixed Malnutrition Assessment Tool with Improved Result Extraction
+Simplified Malnutrition Assessment Tool with Binary Classification Focus
 """
 
 import os
@@ -35,7 +35,6 @@ def parse_arguments():
     parser.add_argument("--temperature", type=float, default=0.1, help="Generation temperature")
     parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling parameter")
     parser.add_argument("--preprocess_tokens", action="store_true", help="Preprocess special tokens")
-    parser.add_argument("--print_explanation", action="store_true", help="Print each assessment and explanation")
     parser.add_argument("--timeout", type=int, default=60, help="Timeout for generation in seconds")
     return parser.parse_args()
 
@@ -54,65 +53,17 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create prompt with original criteria tables."""
+    """Create simplified prompt focused on binary classification."""
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
-Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
+Malnutrition related to undernutrition is characterized by:
+- Unintentional weight loss
+- Weight-for-height or BMI-for-age values below normal
+- Inadequate nutrient intake
+- Decline in z-scores
+- Clinical signs like edema, muscle wasting, decreased energy
 
-You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
-
-Table 1. Single data point present.
-Mild Malnutrition
-Weight-for-height: −1 to −1.9 z score
-BMI-for-age: −1 to −1.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
-
-Moderate Malnutrition
-Weight-for-height: −2 to −2.9 z score
-BMI-for-age: −2 to −2.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
-
-Severe Malnutrition
-Weight-for-height:−3 or greater z score
-BMI-for-age: −3 or greater z score
-Length/height-for-age: −3 z score
-Mid–upper arm circumference: Greater than or equal to −3 z score
-
-When the child has 2 or more data points (multiple z scores over time) use this table:
-
-Table 2. Multiple data points available.
-Mild Malnutrition
-Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
-Weight loss (2–20 years of age): 5% usual body weigh
-Deceleration in weight for length/height: Decline of 1 z score
-Inadequate nutrient intake: 51%−75% estimated energy/protein need
-
-Moderate Malnutrition
-Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
-Weight loss (2–20 years of age): 7.5% usual body weight
-Deceleration in weight for length/height: Decline of 2 z score
-Inadequate nutrient intake: 26%−50% estimated energy/protein need
-
-Severe Malnutrition
-Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
-Weight loss (2–20 years of age): 10% usual body weight
-Deceleration in weight for length/height: Decline of 3 z score
-Inadequate nutrient intake: less than 25% estimated energy/protein need
-Other factors
-Clinical signs like edema, muscle wasting, decreased energy
-Nutritional intake pattern and history
-Medical conditions affecting nutrition
-Social or environmental factors impacting food security
-Recent weight changes or growth concerns
-
-Analysis Steps:
-1) First determine malnutrition status using the criteria tables above
-2) Then explain your decision by listing which specific criteria were used
-3) Finally provide your assessment by strictly following this format: 
-   malnutrition=[yes/no]
-   confidence=[high/medium/low]
-   severity=[none/mild/moderate/severe]
+Analyze the patient's note and provide ONLY the binary classification result in this exact format:
+malnutrition=[yes/no]
 
 Clinical note for analysis:
 {note}
@@ -192,118 +143,24 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, streamer=None,
             return prompt + f"\n[ERROR: {str(e)}]"
 
 def extract_decision(prediction):
-    """Extract decision components from model output with improved regex pattern matching."""
-    # First, cleanup the text
-    def clean_text(text):
-        if not isinstance(text, str):
-            return str(text)
-        return text.replace('\r', '\n').strip()
+    """Extract binary decision from model output."""
+    prediction = prediction.replace('\r', '\n').strip()
     
-    prediction = clean_text(prediction)
-    result = {
-        'assessment': 'error',
-        'confidence': 'unknown',
-        'severity': 'unknown',
-        'criteria_used': [],
-        'other_factors': [],
-        'explanation': '',
-        'raw_prediction': prediction
-    }
-    
-    # Extract the Assessment section
-    assessment_parts = prediction.split("Assessment:")
-    assessment_part = assessment_parts[-1] if len(assessment_parts) > 1 else prediction
-    
-    # Use regex to extract the key values
-    malnutrition_match = re.search(r'malnutrition\s*=\s*(yes|no)', assessment_part, re.IGNORECASE)
+    # Simple regex to extract yes/no classification
+    malnutrition_match = re.search(r'malnutrition\s*=\s*(yes|no)', prediction, re.IGNORECASE)
     if malnutrition_match:
-        result['assessment'] = malnutrition_match.group(1).lower()
-    
-    confidence_match = re.search(r'confidence\s*=\s*(high|medium|low)', assessment_part, re.IGNORECASE)
-    if confidence_match:
-        result['confidence'] = confidence_match.group(1).lower()
-    
-    severity_match = re.search(r'severity\s*=\s*(none|mild|moderate|severe)', assessment_part, re.IGNORECASE)
-    if severity_match:
-        result['severity'] = severity_match.group(1).lower()
-    
-    # Extract explanation (everything before final assessment)
-    explanation_pattern = re.compile(r'(.*?)(?:malnutrition\s*=\s*(?:yes|no)|$)', re.DOTALL | re.IGNORECASE)
-    explanation_match = explanation_pattern.search(assessment_part)
-    if explanation_match and explanation_match.group(1).strip():
-        result['explanation'] = clean_text(explanation_match.group(1))
+        return malnutrition_match.group(1).lower()
     else:
-        # If no clear explanation section, use everything before the formatted output
-        formatted_output_pattern = re.compile(r'malnutrition\s*=\s*(?:yes|no)', re.IGNORECASE)
-        formatted_match = formatted_output_pattern.search(assessment_part)
-        if formatted_match:
-            pos = formatted_match.start()
-            result['explanation'] = clean_text(assessment_part[:pos])
+        # Fallback - look for yes/no in the text
+        if "yes" in prediction.lower() and "no" not in prediction.lower():
+            return "yes"
+        elif "no" in prediction.lower() and "yes" not in prediction.lower():
+            return "no"
         else:
-            # If no formatted output found, use the whole assessment part
-            result['explanation'] = clean_text(assessment_part)
-    
-    # Extract criteria used from tables
-    table_criteria = [
-        "weight-for-height", "bmi-for-age", "length/height-for-age",
-        "mid-upper arm circumference", "weight gain velocity",
-        "weight loss", "deceleration in weight", "inadequate nutrient intake"
-    ]
-    result['criteria_used'] = [
-        crit for crit in table_criteria 
-        if crit.lower() in assessment_part.lower()
-    ]
-    
-    # Extract other relevant factors
-    other_factors = [
-        "edema", "muscle wasting", "fat loss", "albumin", "prealbumin",
-        "vitamin deficiency", "feeding difficulty", "chronic illness", 
-        "social or environmental factors"
-    ]
-    result['other_factors'] = [
-        factor for factor in other_factors 
-        if factor.lower() in assessment_part.lower()
-    ]
-    
-    return result
-
-def print_single_assessment(result):
-    """Print a single patient's assessment and explanation."""
-    print("\n" + "-"*80)
-    print(f"Patient ID: {result['DEID']}")
-    print(f"True Label: {result['true_label']}")
-    print(f"Predicted Assessment: {result['predicted_label'].upper()}")
-    
-    if result['predicted_label'] != "error":
-        print(f"\nConfidence: {result['confidence'].title()}")
-        print(f"Severity: {result['severity'].title()}")
-        
-        print("\nCriteria Used from Tables:")
-        if result['criteria_used'] and result['criteria_used'] != "None":
-            for criterion in result['criteria_used']:
-                print(f"- {criterion}")
-        else:
-            print("No table criteria met")
-        
-        print("\nOther Relevant Factors:")
-        if result['other_factors'] and result['other_factors'] != "None":
-            for factor in result['other_factors']:
-                print(f"- {factor}")
-        else:
-            print("No additional factors noted")
-        
-        print("\nClinical Explanation:")
-        print(result['explanation'])
-    else:
-        print("\n[Assessment Error - Needs Manual Review]")
-        print("Raw Prediction Excerpt:")
-        print(result['raw_prediction'][:300] + ("..." if len(result['raw_prediction']) > 300 else ""))
-    
-    print(f"\nInference Time: {result['inference_time']:.2f} seconds")
-    print("-"*80)
+            return "error"  # Cannot determine
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
-    """Run inference with explanation printing control and improved error handling."""
+    """Run inference with simplified output focused on binary classification."""
     results = []
     streamer = TextStreamer(tokenizer) if args.stream_output else None
     
@@ -333,26 +190,20 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 )
                 inference_time = time.time() - start_time
                 
-                decision = extract_decision(prediction)
+                predicted_label = extract_decision(prediction)
                 
                 result = {
                     "DEID": patient_id,
                     "true_label": true_label if true_label is not None else "unknown",
-                    "predicted_label": decision['assessment'],
-                    "confidence": decision['confidence'],
-                    "severity": decision['severity'],
-                    "criteria_used": decision['criteria_used'],
-                    "other_factors": decision['other_factors'],
-                    "explanation": decision['explanation'],
+                    "predicted_label": predicted_label,
                     "inference_time": inference_time,
                     "raw_prediction": prediction if args.test_mode else ""
                 }
                 
                 results.append(result)
                 
-                # Print assessment if flag is set
-                if args.print_explanation:
-                    print_single_assessment(result)
+                # Print true and predicted labels for every input
+                print(f"Patient ID: {patient_id} | True: {true_label} | Pred: {predicted_label} | Time: {inference_time:.2f}s")
                     
             except Exception as e:
                 print(f"Error processing patient {patient_id}: {str(e)}")
@@ -360,11 +211,6 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                     "DEID": patient_id,
                     "true_label": true_label if true_label is not None else "unknown",
                     "predicted_label": "error",
-                    "confidence": "unknown",
-                    "severity": "unknown",
-                    "criteria_used": [],
-                    "other_factors": [],
-                    "explanation": f"Processing error: {str(e)}",
                     "inference_time": time.time() - start_time if 'start_time' in locals() else 0,
                     "raw_prediction": f"ERROR: {str(e)}"
                 })
@@ -372,7 +218,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
     return results
 
 def calculate_metrics(results, args):
-    """Calculate comprehensive performance metrics."""
+    """Calculate comprehensive performance metrics with focus on AUC."""
     metrics_dir = os.path.join(args.output_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
     
@@ -391,18 +237,14 @@ def calculate_metrics(results, args):
     
     y_pred = [1 if r["predicted_label"].lower() == "yes" else 0 for r in valid_results]
     
-    # For AUC calculation - use confidence as proxy for probability
-    conf_to_prob = {"low": 0.3, "medium": 0.6, "high": 0.9}
-    probas = []
-    for r in valid_results:
-        if r["predicted_label"].lower() == "yes":
-            probas.append(conf_to_prob.get(r["confidence"], 0.5))
-        else:
-            probas.append(1 - conf_to_prob.get(r["confidence"], 0.5))
+    # For AUC calculation, create a simple probability score
+    # Since we're focusing only on binary classification, use a fixed probability
+    # 0.9 for predicted yes, 0.1 for predicted no
+    y_prob = [0.9 if pred == 1 else 0.1 for pred in y_pred]
     
     # Classification Report
     report = classification_report(y_true, y_pred, output_dict=True,
-                                 target_names=["Non-malnourished", "Malnourished"])
+                                  target_names=["Non-malnourished", "Malnourished"])
     pd.DataFrame(report).transpose().to_csv(os.path.join(metrics_dir, "classification_report.csv"))
     
     # Confusion Matrix
@@ -413,7 +255,7 @@ def calculate_metrics(results, args):
     cm_df.to_csv(os.path.join(metrics_dir, "confusion_matrix.csv"))
     
     # ROC Curve and AUC
-    fpr, tpr, _ = roc_curve(y_true, probas)
+    fpr, tpr, _ = roc_curve(y_true, y_prob)
     roc_auc = auc(fpr, tpr)
     
     # Plot ROC curve
@@ -424,7 +266,7 @@ def calculate_metrics(results, args):
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
+    plt.title('Receiver Operating Characteristic (Binary Classification)')
     plt.legend(loc="lower right")
     plt.savefig(os.path.join(metrics_dir, "roc_curve.png"), dpi=300, bbox_inches='tight')
     plt.close()
@@ -437,17 +279,19 @@ def calculate_metrics(results, args):
         "f1": report["Malnourished"]["f1-score"],
         "auc": roc_auc,
         "error_rate": sum(1 for r in results if r["predicted_label"] == "error") / len(results),
-        "severity_distribution": {
-            "severe": sum(1 for r in results if r["severity"] == "severe"),
-            "moderate": sum(1 for r in results if r["severity"] == "moderate"),
-            "mild": sum(1 for r in results if r["severity"] == "mild"),
-            "none": sum(1 for r in results if r["severity"] == "none"),
-            "unknown": sum(1 for r in results if r["severity"] == "unknown")
-        }
     }
     
     with open(os.path.join(metrics_dir, "metrics_summary.json"), "w") as f:
         json.dump(metrics_summary, f, indent=2)
+    
+    print("\n==== METRICS SUMMARY ====")
+    print(f"Accuracy: {metrics_summary['accuracy']:.3f}")
+    print(f"Precision: {metrics_summary['precision']:.3f}")
+    print(f"Recall: {metrics_summary['recall']:.3f}")
+    print(f"F1 Score: {metrics_summary['f1']:.3f}")
+    print(f"AUC: {metrics_summary['auc']:.3f}")
+    print(f"Error Rate: {metrics_summary['error_rate']:.3f}")
+    print("=========================\n")
     
     return metrics_summary
 
@@ -488,26 +332,12 @@ def main():
     
     # Save results
     results_df = pd.DataFrame(results)
-    # Convert lists to strings for CSV output
-    for col in ['criteria_used', 'other_factors']:
-        if col in results_df.columns:
-            results_df[col] = results_df[col].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
-    
     results_df.to_csv(os.path.join(args.output_dir, "assessment_results.csv"), index=False)
     
     if true_labels:
         metrics = calculate_metrics(results, args)
         if metrics:
-            print("\nPerformance Metrics:")
-            print(f"Accuracy: {metrics['accuracy']:.3f}")
-            print(f"Precision: {metrics['precision']:.3f}")
-            print(f"Recall: {metrics['recall']:.3f}")
-            print(f"F1 Score: {metrics['f1']:.3f}")
-            print(f"AUC: {metrics['auc']:.3f}")
-            print(f"Error Rate: {metrics['error_rate']:.3f}")
-            print("\nSeverity Distribution:")
-            for sev, count in metrics['severity_distribution'].items():
-                print(f"{sev.title()}: {count}")
+            print("\nAUC Value:", metrics['auc'])
     
     print("\nInference completed successfully")
 
