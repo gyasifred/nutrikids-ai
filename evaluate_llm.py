@@ -1,11 +1,13 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Run inference on clinical notes using the trained malnutrition assessment model
-with improved prompt structure to ensure consistent yes/no outputs.
+with detailed criteria for malnutrition classification.
 """
 
 import os
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1' 
 import pandas as pd
 import numpy as np
 import torch
@@ -127,22 +129,56 @@ def preprocess_clinical_note(note_text):
 
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """
-    Create an improved malnutrition assessment prompt that explicitly instructs
-    the model to begin with yes/no.
+    Create a detailed malnutrition assessment prompt with comprehensive clinical criteria.
     """
-    prompt = """[Task] Analyze this pediatric clinical note and determine if the patient shows signs of malnutrition.
+    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
+Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
-[Assessment Guidelines]
-Consider these factors when assessing malnutrition:
-- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC
-- Growth trajectory and percentile changes
-- Clinical signs like edema, muscle wasting, decreased energy
-- Nutritional intake pattern and history
-- Medical conditions affecting nutrition
-- Social or environmental factors impacting food security
-- Recent weight changes or growth concerns
+You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
 
-[Output Format] Your assessment MUST begin with "yes" or "no" as the first word.
+Table 1. Single data point present.
+Mild Malnutrition
+Weight-for-height: −1 to −1.9 z score
+BMI-for-age: −1 to −1.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
+
+Moderate Malnutrition
+Weight-for-height: −2 to −2.9 z score
+BMI-for-age: −2 to −2.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
+
+Severe Malnutrition
+Weight-for-height:−3 or greater z score
+BMI-for-age: −3 or greater z score
+Length/height-for-age: −3 z score
+Mid–upper arm circumference: Greater than or equal to −3 z score
+
+When the child has 2 or more data points (multiple z scores over time) use this table:
+
+Table 2. Multiple data points available.
+Mild Malnutrition
+Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
+Weight loss (2–20 years of age): 5% usual body weigh
+Deceleration in weight for length/height: Decline of 1 z score
+Inadequate nutrient intake: 51%−75% estimated energy/protein need
+
+Moderate Malnutrition
+Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
+Weight loss (2–20 years of age): 7.5% usual body weight
+Deceleration in weight for length/height: Decline of 2 z score
+Inadequate nutrient intake: 26%−50% estimated energy/protein need
+
+Severe Malnutrition
+Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
+Weight loss (2–20 years of age): 10% usual body weight
+Deceleration in weight for length/height: Decline of 3 z score
+Inadequate nutrient intake: less than 25% estimated energy/protein need
+
+Follow this format:
+1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
+2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
 
 Clinical note for analysis:
 {note}
