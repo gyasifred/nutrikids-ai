@@ -297,7 +297,7 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, max_
         model=model,
         tokenizer=tokenizer,
         torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        device=0 if torch.cuda.is_available() else -1,
+        # Remove the device parameter as it's not compatible with accelerate
     )
     
     # Run inference
@@ -413,7 +413,6 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, max_
                     print(f"Confidence: N/A")
     
     return outputs, decisions, probabilities
-
 def evaluate_classification(true_labels, predicted_labels, predicted_probs, output_dir="./metrics"):
     """Evaluate classification performance with multiple metrics"""
     # Filter out None values (cases where prediction couldn't be determined)
