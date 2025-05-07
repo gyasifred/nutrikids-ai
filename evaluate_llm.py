@@ -71,12 +71,21 @@ def preprocess_clinical_note(note_text):
 def create_improved_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """
     Create a specialized malnutrition assessment prompt with detailed clinical criteria.
-    IMPORTANT: Decision first, then explanation (reversed from original)
+    Designed to force the model to provide prediction first, then explanation.
     """
     # Define a structured prompt with comprehensive malnutrition criteria
     prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on the following criteria.
 
-IMPORTANT: First provide your assessment as "malnutrition=yes" or "malnutrition=no", then provide your explanation.
+YOUR RESPONSE MUST BEGIN WITH EITHER "malnutrition=yes" OR "malnutrition=no" ON THE FIRST LINE.
+
+EXAMPLE RESPONSE FORMAT:
+malnutrition=yes
+Based on the patient's notes, I identified evidence of malnutrition because...
+
+OR
+
+malnutrition=no
+Based on the patient's notes, there is no evidence of malnutrition because...
 
 Malnutrition Criteria:
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
@@ -123,8 +132,7 @@ Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
 
-To be clear, your response should begin with either "malnutrition=yes" or "malnutrition=no" on the first line.
-Then provide your explanation, mentioning whether you used single or multiple data points, and list z scores you used.
+REMINDER: Your response MUST begin with either "malnutrition=yes" or "malnutrition=no" on the first line.
 
 Clinical note for analysis:
 {note}"""
@@ -162,7 +170,7 @@ Clinical note for analysis:
     
     return formatted_prompt
 
-def extract_malnutrition_decision_improved(text):
+def extract_malnutrition_decision(text):
     """Extract the malnutrition classification from the model output with balanced yes/no detection."""
     # First, check if the text is empty or None
     if not text or len(text.strip()) == 0:
@@ -600,30 +608,6 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_
     
     return outputs, token_outputs, decisions, probabilities
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Run inference with fine-tuned LLM for malnutrition classification")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the fine-tuned model")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV test data file")
-    parser.add_argument("--output_path", type=str, default="./inference_results.csv", 
-                        help="Path to save inference results")
-    parser.add_argument("--max_seq_length", type=int, default=8192, 
-                        help="Max sequence length (default: 8192)")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
-    parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
-    parser.add_argument("--preprocess_tokens", action="store_true", 
-                        help="Preprocess </s> tokens in clinical notes")
-    parser.add_argument("--plot_metrics", action="store_true", 
-                        help="Generate and save performance metric plots")
-    parser.add_argument("--temperature", type=float, default=0.1, 
-                        help="Temperature for generation (lower = more deterministic)")
-    parser.add_argument("--max_new_tokens", type=int, default=256, 
-                        help="Maximum number of new tokens to generate")
-    parser.add_argument("--top_p", type=float, default=0.9, 
-                        help="Top-p sampling value for generation")
-    parser.add_argument("--stream", action="store_true", 
-                        help="Enable text streaming during generation")
-    return parser.parse_args()
-
 def main():
     args = parse_arguments()
     
@@ -649,7 +633,7 @@ def main():
         max_seq_length, 
         args.preprocess_tokens
     )
-    
+
     # Run inference
     print("Running inference...")
     outputs, token_outputs, decisions, probabilities = run_inference(
