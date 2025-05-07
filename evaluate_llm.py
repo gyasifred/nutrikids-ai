@@ -413,7 +413,7 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         
         # Calculate max tokens available for input
         # Reserve space for output tokens
-        available_tokens = max_seq_length - 512  # Reserve space for output tokens
+        available_tokens = max_seq_length - 256  # Reserve space for output tokens
         
         prompt = create_improved_malnutrition_prompt(
             note=note_text,
@@ -479,7 +479,7 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.
         )
 
     # Decode output
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    generated_text = tokenizer.decode(outputs)
     
     # Extract the generated part (not the prompt)
     if prompt in generated_text:
