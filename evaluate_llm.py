@@ -537,7 +537,7 @@ def main():
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
-    # FastLanguageModel.for_inference(model)
+    FastLanguageModel.for_inference(model)
     
     # Prepare dataset
     print(f"Preparing dataset from {args.data_path}...")
