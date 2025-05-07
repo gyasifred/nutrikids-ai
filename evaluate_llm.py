@@ -7,7 +7,7 @@ using Unsloth + LoRA. Includes comprehensive evaluation metrics for classificati
 This script handles:
 1. Clinical notes preprocessing using the same approach as training
 2. Native max sequence length for model consistency
-3. Truncation for inputs exceeding max sequence length
+3. Proper truncation for inputs exceeding max sequence length
 4. Classification metrics including AUC and AUC-ROC
 5. Enhanced malnutrition detection from model outputs
 """
@@ -36,12 +36,10 @@ def parse_arguments():
     parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV test data file")
     parser.add_argument("--output_path", type=str, default="./inference_results.csv", 
                         help="Path to save inference results")
-    parser.add_argument("--max_seq_length", type=int, default=None, 
-                        help="Max sequence length (if None, uses model's native max length)")
+    parser.add_argument("--max_seq_length", type=int, default=8192, 
+                        help="Max sequence length (default: 8192)")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
-    parser.add_argument("--use_native_max_len", action="store_true", 
-                        help="Use the model's native maximum sequence length")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
     parser.add_argument("--plot_metrics", action="store_true", 
@@ -50,6 +48,8 @@ def parse_arguments():
                         help="Temperature for generation (lower = more deterministic)")
     parser.add_argument("--max_new_tokens", type=int, default=256, 
                         help="Maximum number of new tokens to generate")
+    parser.add_argument("--top_p", type=float, default=0.9, 
+                        help="Top-p sampling value for generation")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
@@ -163,7 +163,7 @@ def get_model_max_length(model_path):
         from transformers import AutoConfig
         try:
             config = AutoConfig.from_pretrained(model_path)
-            return getattr(config, "max_position_embeddings", 4096)
+            return getattr(config, "max_position_embeddings", 8192)  # Default to 8192 if not found
         except Exception as e:
             print(f"Failed to get model's max length from config: {e}")
             
@@ -175,10 +175,10 @@ def get_model_max_length(model_path):
             print(f"Failed to get model's max length from unsloth: {e}")
             
         # Default fallback
-        return 4096
+        return 8192  # Increased default from 4096 to 8192
     except Exception as e:
         print(f"Failed to get model's max length: {e}")
-        return 4096
+        return 8192  # Increased default from 4096 to 8192
 
 def extract_malnutrition_decision(text):
     """Extract the malnutrition classification from the model output."""
@@ -272,10 +272,14 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
                 label = None
             true_labels.append(label)
         
+        # Calculate max tokens available for input
+        # Reserve space for output tokens
+        available_tokens = max_seq_length - 512  # Reserve space for output tokens
+        
         prompt = create_simplified_malnutrition_prompt(
             note=note_text,
             tokenizer=tokenizer,
-            max_tokens=max_seq_length - 20  # Leave room for EOS token
+            max_tokens=available_tokens
         )
         prompts.append(prompt)
     
@@ -289,22 +293,57 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         
     return Dataset.from_dict(result)
 
-def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, max_new_tokens=256):
-    """Run inference on the dataset and return predictions"""
-    # Create text generation pipeline
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        # Remove the device parameter as it's not compatible with accelerate
-    )
+def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.1, top_p=0.9, max_seq_length=None):
+    """Generate assessment from model."""
+    # Ensure model is in inference mode
+    FastLanguageModel.for_inference(model)
     
-    # Run inference
+    # Prepare input
+    inputs = tokenizer([prompt], return_tensors="pt")
+    
+    # Check if input length exceeds max_seq_length
+    input_length = inputs.input_ids.shape[1]
+    if max_seq_length and input_length > max_seq_length - max_new_tokens:
+        print(f"Warning: Input length {input_length} exceeds max available length. Truncating...")
+        # Truncate from the left side of the input to preserve the most recent/relevant information
+        inputs.input_ids = inputs.input_ids[:, -(max_seq_length - max_new_tokens):]
+        if hasattr(inputs, 'attention_mask'):
+            inputs.attention_mask = inputs.attention_mask[:, -(max_seq_length - max_new_tokens):]
+    
+    # Move inputs to device
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
+    # Generate text
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    
+    # Decode output
+    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    # Extract the generated part (not the prompt)
+    if prompt in generated_text:
+        response = generated_text[len(prompt):]
+    else:
+        response = generated_text  # Return full text if we can't find the prompt
+    
+    return response
+
+def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_p=0.9, max_new_tokens=256, max_seq_length=None):
+    """Run inference on the dataset and return predictions"""
     outputs = []
     probabilities = []
     decisions = []
     
+    # Enable inference mode
+    FastLanguageModel.for_inference(model)
+    
+    # Process samples
     for i in range(0, len(dataset), batch_size):
         batch = dataset[i:min(i+batch_size, len(dataset))]
         prompts = batch["prompt"]
@@ -312,107 +351,101 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, max_
         # Log progress
         print(f"Processing batch {i//batch_size + 1}/{(len(dataset) + batch_size - 1) // batch_size}")
         
-        # Generate predictions
-        with torch.no_grad():
+        # Process each prompt in the batch
+        for j, prompt in enumerate(prompts):
+            idx = i + j  # Calculate actual index in the dataset
+            
+            # Get true label if available
+            true_label = dataset[idx].get("label") if "label" in dataset.column_names else None
+            
             try:
-                results = pipe(
-                    prompts,
+                # Generate text
+                generated_text = generate_assessment(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=prompt,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
-                    do_sample=temperature > 0,
-                    return_full_text=False,
-                    pad_token_id=tokenizer.eos_token_id,
+                    top_p=top_p,
+                    max_seq_length=max_seq_length
                 )
                 
-                for j, result in enumerate(results):
-                    idx = i + j  # Calculate actual index in the dataset
-                    generated_text = result[0]["generated_text"]
-                    outputs.append(generated_text)
-                    
-                    # Extract malnutrition decision
-                    decision = extract_malnutrition_decision(generated_text)
-                    decisions.append(decision)
-                    
-                    # Get true label if available
-                    true_label = dataset[idx].get("label") if "label" in dataset.column_names else None
-                    
-                    # Print true label and predicted label for each input
-                    print(f"\n--- Sample {idx + 1} ---")
-                    print(f"True label: {true_label if true_label is not None else 'N/A'}")
-                    print(f"Predicted label: {decision if decision is not None else 'UNKNOWN'}")
-                    
-                    # Try to extract probability from the content (better heuristic)
-                    # For malnutrition=yes/no format, use a confidence value
-                    confidence = None
-                    
-                    # Look for explicit confidence mentions
-                    confidence_pattern = r'(with|at)?\s*(\d+)%\s*confidence'
-                    conf_match = re.search(confidence_pattern, generated_text.lower())
-                    if conf_match:
-                        try:
-                            confidence = float(conf_match.group(2)) / 100
-                        except:
-                            confidence = None
-                    
-                    # Look for confidence words
-                    confidence_words = {
-                        'certain': 0.95, 'definite': 0.95, 'definitive': 0.95,
-                        'clear': 0.9, 'strong': 0.9, 'evident': 0.9,
-                        'likely': 0.8, 'probable': 0.8, 'appears': 0.7,
-                        'possible': 0.6, 'suggests': 0.6, 'may': 0.5,
-                        'uncertain': 0.4, 'unclear': 0.3, 'unlikely': 0.2
-                    }
-                    
-                    if not confidence:
-                        for word, value in confidence_words.items():
-                            if word in generated_text.lower():
-                                distance_to_decision = 100  # Large initial value
-                                for match in re.finditer(word, generated_text.lower()):
-                                    # Find closest occurrence to the malnutrition decision
-                                    mal_pos = generated_text.lower().find('malnutrition')
-                                    if mal_pos >= 0:
-                                        curr_distance = abs(match.start() - mal_pos)
-                                        if curr_distance < distance_to_decision:
-                                            distance_to_decision = curr_distance
-                                            confidence = value
-                    
-                    # Set probability based on decision + confidence
-                    if decision is not None:
-                        if confidence:
-                            if decision == 1:
-                                prob = confidence
-                            else:
-                                prob = 1 - confidence
+                # Store generated text
+                outputs.append(generated_text)
+                
+                # Extract malnutrition decision
+                decision = extract_malnutrition_decision(generated_text)
+                decisions.append(decision)
+                
+                # Print true label and predicted label
+                print(f"\n--- Sample {idx + 1} ---")
+                print(f"True label: {true_label if true_label is not None else 'N/A'}")
+                print(f"Predicted label: {decision if decision is not None else 'UNKNOWN'}")
+                
+                # Try to extract probability
+                confidence = None
+                
+                # Look for explicit confidence mentions
+                confidence_pattern = r'(with|at)?\s*(\d+)%\s*confidence'
+                conf_match = re.search(confidence_pattern, generated_text.lower())
+                if conf_match:
+                    try:
+                        confidence = float(conf_match.group(2)) / 100
+                    except:
+                        confidence = None
+                
+                # Look for confidence words
+                confidence_words = {
+                    'certain': 0.95, 'definite': 0.95, 'definitive': 0.95,
+                    'clear': 0.9, 'strong': 0.9, 'evident': 0.9,
+                    'likely': 0.8, 'probable': 0.8, 'appears': 0.7,
+                    'possible': 0.6, 'suggests': 0.6, 'may': 0.5,
+                    'uncertain': 0.4, 'unclear': 0.3, 'unlikely': 0.2
+                }
+                
+                if not confidence:
+                    for word, value in confidence_words.items():
+                        if word in generated_text.lower():
+                            distance_to_decision = 100  # Large initial value
+                            for match in re.finditer(word, generated_text.lower()):
+                                # Find closest occurrence to the malnutrition decision
+                                mal_pos = generated_text.lower().find('malnutrition')
+                                if mal_pos >= 0:
+                                    curr_distance = abs(match.start() - mal_pos)
+                                    if curr_distance < distance_to_decision:
+                                        distance_to_decision = curr_distance
+                                        confidence = value
+                
+                # Set probability based on decision + confidence
+                if decision is not None:
+                    if confidence:
+                        if decision == 1:
+                            prob = confidence
                         else:
-                            # Without explicit confidence, use default confidence based on decision
-                            prob = 0.9 if decision == 1 else 0.1
+                            prob = 1 - confidence
                     else:
-                        prob = 0.5  # Uncertain
-                    
-                    # Print probability for better tracking
-                    print(f"Confidence: {prob:.2f}")
-                    
-                    probabilities.append(prob)
-            
+                        # Without explicit confidence, use default confidence based on decision
+                        prob = 0.9 if decision == 1 else 0.1
+                else:
+                    prob = 0.5  # Uncertain
+                
+                # Print probability
+                print(f"Confidence: {prob:.2f}")
+                probabilities.append(prob)
+                
             except Exception as e:
-                print(f"Error in batch processing: {e}")
-                # Handle the error by adding placeholders
-                for j in range(len(batch)):
-                    idx = i + j
-                    outputs.append("Error during generation")
-                    decisions.append(None)
-                    probabilities.append(0.5)
-                    
-                    # Get true label if available
-                    true_label = dataset[idx].get("label") if "label" in dataset.column_names else None
-                    
-                    # Print error for this sample
-                    print(f"\n--- Sample {idx + 1} ---")
-                    print(f"True label: {true_label if true_label is not None else 'N/A'}")
-                    print(f"Predicted label: ERROR")
-                    print(f"Confidence: N/A")
+                print(f"Error processing sample {idx+1}: {e}")
+                outputs.append("Error during generation")
+                decisions.append(None)
+                probabilities.append(0.5)
+                
+                print(f"\n--- Sample {idx + 1} ---")
+                print(f"True label: {true_label if true_label is not None else 'N/A'}")
+                print(f"Predicted label: ERROR")
+                print(f"Confidence: N/A")
     
     return outputs, decisions, probabilities
+
 def evaluate_classification(true_labels, predicted_labels, predicted_probs, output_dir="./metrics"):
     """Evaluate classification performance with multiple metrics"""
     # Filter out None values (cases where prediction couldn't be determined)
@@ -523,11 +556,8 @@ def main():
     args = parse_arguments()
     
     # Determine max sequence length
-    if args.use_native_max_len or args.max_seq_length is None:
-        max_seq_length = get_model_max_length(args.model_path)
-        print(f"Using model's native max length: {max_seq_length}")
-    else:
-        max_seq_length = args.max_seq_length
+    max_seq_length = args.max_seq_length
+    print(f"Using max sequence length: {max_seq_length}")
     
     # Load model and tokenizer
     print(f"Loading model from {args.model_path}...")
@@ -556,7 +586,9 @@ def main():
         dataset,
         batch_size=args.batch_size,
         temperature=args.temperature,
-        max_new_tokens=args.max_new_tokens
+        top_p=args.top_p,
+        max_new_tokens=args.max_new_tokens,
+        max_seq_length=max_seq_length
     )
     
     # Create results dataframe
@@ -605,55 +637,6 @@ def main():
     results_df = pd.DataFrame(results)
     results_df.to_csv(args.output_path, index=False)
     print(f"Results saved to {args.output_path}")
-
-def try_extract_prediction_probabilities(model, tokenizer, text, malnutrition_token_ids=None):
-    """
-    Advanced function to try extracting actual prediction probabilities from the model's logits.
-    This is an experimental feature that might provide better probability estimates than heuristics.
-    
-    Args:
-        model: The loaded model
-        tokenizer: The tokenizer
-        text: Input text (prompt)
-        malnutrition_token_ids: Dictionary mapping token IDs to yes/no tokens
-        
-    Returns:
-        float: Probability between 0-1 for malnutrition=yes
-    """
-    # This is placeholder code that could be expanded to extract actual probabilities
-    # from the model's logits if UNSLOTH_RETURN_LOGITS is enabled
-    try:
-        # Encode the input
-        inputs = tokenizer(text, return_tensors="pt")
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-            
-        # Get logits from model (requires UNSLOTH_RETURN_LOGITS=1)
-        with torch.no_grad():
-            outputs = model(**inputs)
-            
-        if hasattr(outputs, "logits"):
-            # If we have token IDs for yes/no tokens
-            if malnutrition_token_ids:
-                yes_id = malnutrition_token_ids.get("yes")
-                no_id = malnutrition_token_ids.get("no")
-                
-                if yes_id is not None and no_id is not None:
-                    logits = outputs.logits[0, -1]  # Last token prediction
-                    yes_logit = logits[yes_id].item()
-                    no_logit = logits[no_id].item()
-                    
-                    # Convert to probability with softmax
-                    total = torch.exp(torch.tensor(yes_logit)) + torch.exp(torch.tensor(no_logit))
-                    yes_prob = torch.exp(torch.tensor(yes_logit)) / total
-                    
-                    return yes_prob.item()
-    
-    except Exception as e:
-        print(f"Failed to extract prediction probabilities: {e}")
-    
-    # Default fallback
-    return None
 
 if __name__ == "__main__":
     main()
