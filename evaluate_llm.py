@@ -44,9 +44,13 @@ def parse_arguments():
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
     parser.add_argument("--temperature", type=float, default=0.1,
-                        help="Temperature for sampling during generation (default: 0.3)")
+                        help="Temperature for sampling during generation (default: 0.1)")
     parser.add_argument("--top_p", type=float, default=0.9,
                         help="Top-p (nucleus) sampling parameter (default: 0.9)")
+    parser.add_argument("--repetition_penalty", type=float, default=1.2,
+                        help="Penalty for token repetition (default: 1.2, higher = less repetition)")
+    parser.add_argument("--no_repeat_ngram_size", type=int, default=3,
+                        help="Size of n-grams that shouldn't be repeated (default: 3)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
     return parser.parse_args()
@@ -150,7 +154,9 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     Strictly follow this structure:
     
     ### Assessment:
-    <yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
+    ### Assessment:
+    <yes/no>  # yes = patient IS malnourished, no = patient is NOT malnourished
+    # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
     
     ### Severity:
     <sam/mam/stunting/none>
@@ -217,8 +223,24 @@ def load_model(model_path, load_in_4bit):
     return model, tokenizer, max_seq_length
 
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9):
-    """Generate text from the model."""
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=3):
+    """Generate text from the model with repetition control.
+    
+    Args:
+        model: The model to generate text with
+        tokenizer: The tokenizer to use
+        prompt: The input prompt
+        max_new_tokens: Maximum number of tokens to generate
+        streamer: Optional text streamer for streaming output
+        max_seq_length: Maximum sequence length for the model
+        temperature: Temperature for sampling (higher = more random)
+        top_p: Top-p (nucleus) sampling parameter
+        repetition_penalty: Penalty for repetition (higher = less repetition)
+        no_repeat_ngram_size: Size of n-grams that shouldn't be repeated
+        
+    Returns:
+        The generated text
+    """
     # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
 
@@ -234,13 +256,15 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     # Move input to model device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-    # Generate output with temperature and top_p parameters
+    # Generate output with temperature, top_p, and repetition control parameters
     generation_kwargs = {
         **inputs,
         "max_new_tokens": max_new_tokens,
         "use_cache": True,
         "temperature": temperature,
-        "top_p": top_p
+        "top_p": top_p,
+        "repetition_penalty": repetition_penalty,        # Penalize repetition
+        "no_repeat_ngram_size": no_repeat_ngram_size,    # Avoid repeating n-grams
     }
 
     if streamer:
@@ -290,7 +314,9 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                     streamer,
                     max_seq_length=max_seq_length,
                     temperature=args.temperature,
-                    top_p=args.top_p
+                    top_p=args.top_p,
+                    repetition_penalty=args.repetition_penalty,
+                    no_repeat_ngram_size=args.no_repeat_ngram_size
                 )
             else:
                 prediction = generate_text(
@@ -300,7 +326,9 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                     args.max_new_tokens,
                     max_seq_length=max_seq_length,
                     temperature=args.temperature,
-                    top_p=args.top_p
+                    top_p=args.top_p,
+                    repetition_penalty=args.repetition_penalty,
+                    no_repeat_ngram_size=args.no_repeat_ngram_size
                 )
 
             inference_time = time.time() - start_time
@@ -504,7 +532,11 @@ def main():
     # Calculate average inference time
     avg_time = sum(r["inference_time"] for r in results) / len(results)
     print(f"Average inference time per note: {avg_time:.3f} seconds")
-    print(f"Sampling parameters: temperature={args.temperature}, top_p={args.top_p}")
+    print(f"Generation parameters:")
+    print(f"  - Temperature: {args.temperature}")
+    print(f"  - Top_p: {args.top_p}")
+    print(f"  - Repetition penalty: {args.repetition_penalty}")
+    print(f"  - No repeat ngram size: {args.no_repeat_ngram_size}")
 
 
 if __name__ == "__main__":
