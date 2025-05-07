@@ -293,8 +293,8 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         
     return Dataset.from_dict(result)
 
-def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.1, top_p=0.9, max_seq_length=None):
-    """Generate assessment from model."""
+def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.1, top_p=0.9, max_seq_length=None, stream=False):
+    """Generate assessment from model with optional streaming support."""
     # Ensure model is in inference mode
     FastLanguageModel.for_inference(model)
     
@@ -313,15 +313,33 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.
     # Move inputs to device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     
-    # Generate text
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            pad_token_id=tokenizer.eos_token_id
-        )
+    # Handle streaming if requested
+    if stream:
+        from transformers import TextStreamer
+        text_streamer = TextStreamer(tokenizer)
+        
+        # Generate text with streaming
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                pad_token_id=tokenizer.eos_token_id,
+                streamer=text_streamer,
+                use_cache=True
+            )
+    else:
+        # Generate text without streaming
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                pad_token_id=tokenizer.eos_token_id,
+                use_cache=True
+            )
     
     # Decode output
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -332,11 +350,12 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.
     else:
         response = generated_text  # Return full text if we can't find the prompt
     
-    return response
+    return response, outputs  # Return both text and token IDs
 
-def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_p=0.9, max_new_tokens=256, max_seq_length=None):
-    """Run inference on the dataset and return predictions"""
+def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_p=0.9, max_new_tokens=256, max_seq_length=None, stream=False):
+    """Run inference on the dataset and return predictions, with optional streaming support"""
     outputs = []
+    token_outputs = []
     probabilities = []
     decisions = []
     
@@ -360,18 +379,20 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_
             
             try:
                 # Generate text
-                generated_text = generate_assessment(
+                generated_text, token_ids = generate_assessment(
                     model=model,
                     tokenizer=tokenizer,
                     prompt=prompt,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     top_p=top_p,
-                    max_seq_length=max_seq_length
+                    max_seq_length=max_seq_length,
+                    stream=stream  # Pass streaming option
                 )
                 
-                # Store generated text
+                # Store generated text and token IDs
                 outputs.append(generated_text)
+                token_outputs.append(token_ids)
                 
                 # Extract malnutrition decision
                 decision = extract_malnutrition_decision(generated_text)
@@ -379,6 +400,8 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_
                 
                 # Print true label and predicted label
                 print(f"\n--- Sample {idx + 1} ---")
+                if not stream:  # Only print result if not already streamed
+                    print(f"Generated text: {generated_text[:100]}...")  # Print first 100 chars
                 print(f"True label: {true_label if true_label is not None else 'N/A'}")
                 print(f"Predicted label: {decision if decision is not None else 'UNKNOWN'}")
                 
@@ -436,6 +459,7 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_
             except Exception as e:
                 print(f"Error processing sample {idx+1}: {e}")
                 outputs.append("Error during generation")
+                token_outputs.append(None)
                 decisions.append(None)
                 probabilities.append(0.5)
                 
@@ -444,113 +468,31 @@ def run_inference(model, tokenizer, dataset, batch_size=4, temperature=0.1, top_
                 print(f"Predicted label: ERROR")
                 print(f"Confidence: N/A")
     
-    return outputs, decisions, probabilities
+    return outputs, token_outputs, decisions, probabilities
 
-def evaluate_classification(true_labels, predicted_labels, predicted_probs, output_dir="./metrics"):
-    """Evaluate classification performance with multiple metrics"""
-    # Filter out None values (cases where prediction couldn't be determined)
-    valid_indices = [i for i, pred in enumerate(predicted_labels) if pred is not None]
-    
-    if not valid_indices:
-        print("No valid predictions to evaluate")
-        return {}
-    
-    # Count and report how many predictions couldn't be determined
-    invalid_count = len(predicted_labels) - len(valid_indices)
-    if invalid_count > 0:
-        print(f"Warning: {invalid_count} out of {len(predicted_labels)} predictions ({(invalid_count/len(predicted_labels))*100:.1f}%) couldn't be determined.")
-    
-    true_filtered = [true_labels[i] for i in valid_indices]
-    pred_filtered = [predicted_labels[i] for i in valid_indices]
-    prob_filtered = [predicted_probs[i] for i in valid_indices]
-    
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Calculate metrics
-    metrics = {}
-    metrics["accuracy"] = accuracy_score(true_filtered, pred_filtered)
-    metrics["precision"] = precision_score(true_filtered, pred_filtered, zero_division=0)
-    metrics["recall"] = recall_score(true_filtered, pred_filtered, zero_division=0)
-    metrics["f1"] = f1_score(true_filtered, pred_filtered, zero_division=0)
-    
-    # Calculate AUC and ROC curve if we have probabilities
-    try:
-        metrics["roc_auc"] = roc_auc_score(true_filtered, prob_filtered)
-        fpr, tpr, _ = roc_curve(true_filtered, prob_filtered)
-        metrics["roc_curve"] = {"fpr": fpr.tolist(), "tpr": tpr.tolist()}
-        
-        # Precision-Recall curve and AUPRC
-        precision, recall, _ = precision_recall_curve(true_filtered, prob_filtered)
-        metrics["pr_curve"] = {"precision": precision.tolist(), "recall": recall.tolist()}
-        metrics["average_precision"] = average_precision_score(true_filtered, prob_filtered)
-        
-        # Plot ROC curve
-        plt.figure(figsize=(10, 8))
-        plt.plot(fpr, tpr, color='darkorange', lw=2, 
-                 label=f'ROC curve (area = {metrics["roc_auc"]:.2f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic')
-        plt.legend(loc="lower right")
-        plt.savefig(os.path.join(output_dir, "roc_curve.png"))
-        
-        # Plot Precision-Recall curve
-        plt.figure(figsize=(10, 8))
-        plt.plot(recall, precision, color='blue', lw=2, 
-                 label=f'PR curve (AP = {metrics["average_precision"]:.2f})')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.title('Precision-Recall Curve')
-        plt.legend(loc="lower left")
-        plt.savefig(os.path.join(output_dir, "pr_curve.png"))
-    except Exception as e:
-        print(f"Warning: Could not calculate ROC AUC - {e}")
-    
-    # Get confusion matrix
-    cm = confusion_matrix(true_filtered, pred_filtered)
-    metrics["confusion_matrix"] = cm.tolist()
-    
-    # Plot confusion matrix
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=['No Malnutrition', 'Malnutrition'],
-                yticklabels=['No Malnutrition', 'Malnutrition'])
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.title('Confusion Matrix')
-    plt.savefig(os.path.join(output_dir, "confusion_matrix.png"))
-    
-    # Get detailed classification report
-    class_report = classification_report(true_filtered, pred_filtered, output_dict=True)
-    metrics["classification_report"] = class_report
-    
-    # Print metrics summary
-    print("\n===== Classification Metrics =====")
-    print(f"Accuracy: {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall: {metrics['recall']:.4f}")
-    print(f"F1 Score: {metrics['f1']:.4f}")
-    if "roc_auc" in metrics:
-        print(f"ROC AUC: {metrics['roc_auc']:.4f}")
-    if "average_precision" in metrics:
-        print(f"Average Precision (AUPRC): {metrics['average_precision']:.4f}")
-    print("==================================\n")
-    
-    # Print confusion matrix
-    print("Confusion Matrix:")
-    print("                  Predicted")
-    print("                  No    Yes")
-    print(f"True No Malnutrition:  {cm[0][0]}    {cm[0][1]}")
-    print(f"True Malnutrition:     {cm[1][0]}    {cm[1][1]}")
-    print("\n")
-    
-    return metrics
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Run inference with fine-tuned LLM for malnutrition classification")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the fine-tuned model")
+    parser.add_argument("--data_path", type=str, required=True, help="Path to the CSV test data file")
+    parser.add_argument("--output_path", type=str, default="./inference_results.csv", 
+                        help="Path to save inference results")
+    parser.add_argument("--max_seq_length", type=int, default=8192, 
+                        help="Max sequence length (default: 8192)")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
+    parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
+    parser.add_argument("--preprocess_tokens", action="store_true", 
+                        help="Preprocess </s> tokens in clinical notes")
+    parser.add_argument("--plot_metrics", action="store_true", 
+                        help="Generate and save performance metric plots")
+    parser.add_argument("--temperature", type=float, default=0.1, 
+                        help="Temperature for generation (lower = more deterministic)")
+    parser.add_argument("--max_new_tokens", type=int, default=256, 
+                        help="Maximum number of new tokens to generate")
+    parser.add_argument("--top_p", type=float, default=0.9, 
+                        help="Top-p sampling value for generation")
+    parser.add_argument("--stream", action="store_true", 
+                        help="Enable text streaming during generation")
+    return parser.parse_args()
 
 def main():
     args = parse_arguments()
@@ -580,7 +522,7 @@ def main():
     
     # Run inference
     print("Running inference...")
-    outputs, decisions, probabilities = run_inference(
+    outputs, token_outputs, decisions, probabilities = run_inference(
         model, 
         tokenizer, 
         dataset,
@@ -588,7 +530,8 @@ def main():
         temperature=args.temperature,
         top_p=args.top_p,
         max_new_tokens=args.max_new_tokens,
-        max_seq_length=max_seq_length
+        max_seq_length=max_seq_length,
+        stream=args.stream  # Pass streaming option
     )
     
     # Create results dataframe
