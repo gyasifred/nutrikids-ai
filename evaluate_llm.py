@@ -98,7 +98,7 @@ def smart_truncate_text(text, tokenizer, max_tokens):
     truncation_marker = "\n[...Note truncated due to length...]\n"
     return result[:first_part*4] + truncation_marker + result[-last_part*4:]
 
-def generate_assessment(model, tokenizer, prompt, max_new_tokens=50, 
+def generate_assessment(model, tokenizer, prompt, max_new_tokens=120, 
                       max_seq_length=None, temperature=0.0):
     """Generate assessment from model with optimal settings."""
     inputs = tokenizer([prompt], return_tensors="pt")
@@ -116,14 +116,23 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens=50,
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=max_new_tokens,
+            max_new_tokens=max_new_tokens,  # Increased max tokens for fuller reasoning
             temperature=temperature,
             top_p=0.9,
             pad_token_id=tokenizer.eos_token_id,
             do_sample=(temperature > 0),  # Only sample if temperature > 0
+            repetition_penalty=1.2,  # Prevent repetition
+            no_repeat_ngram_size=3,  # Prevent repetitive phrases
         )
     
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Extract full response but trim prompt portion
+    full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    # If the prompt is found in the response, return only the part after the prompt
+    if prompt in full_response:
+        return full_response[len(prompt):].strip()
+    
+    return full_response
 
 def preprocess_clinical_note(note_text):
     """Clean clinical notes for consistent processing."""
@@ -151,13 +160,18 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     - Social or environmental factors impacting food security
     - Recent weight changes or growth concerns
 
+IMPORTANT: You must first analyze the evidence for AND against malnutrition before deciding.
+
 REQUIRED OUTPUT FORMAT:
-1. First analyze which criteria apply (single/multiple data points)
-2. Explicitly state the z-scores or growth patterns used
-3. Conclude with exactly one of these formatted responses:
+1. First analyze what evidence exists for BOTH possibilities
+2. Explicitly state any relevant measurements, z-scores, or growth patterns
+3. Weigh the evidence for malnutrition against evidence for normal nutritional status
+4. Conclude with EXACTLY one of these formatted responses only:
    malnutrition=yes
    OR
    malnutrition=no
+
+The default assumption is that a patient does NOT have malnutrition unless there is clear evidence.
 
 CLINICAL NOTE FOR ANALYSIS:
 {note}"""
@@ -185,13 +199,13 @@ def parse_model_output(output_text):
         
     output_text = output_text.lower().strip()
     
-    # Direct format match
+    # Direct format match - most strict matching
     if "malnutrition=yes" in output_text:
         return 1
     if "malnutrition=no" in output_text:
         return 0
     
-    # Check for conclusion sections
+    # Check for conclusion sections with careful parsing
     conclusion_indicators = ["conclusion:", "assessment:", "impression:", "malnutrition:"]
     lines = output_text.split('\n')
     
@@ -200,25 +214,50 @@ def parse_model_output(output_text):
         line_lower = line.strip().lower()
         for indicator in conclusion_indicators:
             if indicator in line_lower:
-                words = line_lower.split()
-                if "yes" in words and "no" not in words:
-                    return 1
-                elif "no" in words and "not" not in words:
+                # More careful parsing to prevent false positives
+                if "no malnutrition" in line_lower or "not malnourished" in line_lower:
                     return 0
+                elif "yes malnutrition" in line_lower or "is malnourished" in line_lower:
+                    return 1
+                
+                # Parse individual words with context
+                words = line_lower.split()
+                word_idx = 0
+                while word_idx < len(words):
+                    if words[word_idx] == "no" and word_idx + 1 < len(words):
+                        # Check that "no" isn't part of "not" followed by negative
+                        if words[word_idx + 1] not in ["evidence", "signs", "indication", "malnutrition"]:
+                            word_idx += 1
+                            continue
+                        return 0
+                    elif words[word_idx] == "yes" and word_idx + 1 < len(words):
+                        if "not" not in words[max(0, word_idx-1):min(len(words), word_idx+2)]:
+                            return 1
+                    word_idx += 1
     
-    # Check for yes/no in the last few lines as last resort
-    for line in reversed(lines[-3:]):
-        line_lower = line.strip().lower()
-        if any(word in line_lower for word in ["malnutrition", "malnourished"]):
-            if "yes" in line_lower.split():
-                return 1
-            elif "no" in line_lower.split():
-                return 0
+    # Look for strongest indicators throughout the text
+    if "no evidence of malnutrition" in output_text or "does not have malnutrition" in output_text:
+        return 0
+    if "has malnutrition" in output_text or "patient is malnourished" in output_text:
+        return 1
+    
+    # Final check - if we made it here, be more cautious
+    yes_indicators = sum(1 for indicator in ["malnutrition=yes", "has malnutrition", "is malnourished"] 
+                        if indicator in output_text)
+    no_indicators = sum(1 for indicator in ["malnutrition=no", "no malnutrition", "not malnourished"]
+                       if indicator in output_text)
+    
+    if yes_indicators > no_indicators:
+        return 1
+    elif no_indicators > yes_indicators:
+        return 0
     
     # Unable to determine with confidence
+    print("WARNING: Could not determine prediction with confidence - Output text:")
+    print(output_text[:200] + "..." if len(output_text) > 200 else output_text)
     return -1
 
-def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir, temperature=0.0):
+def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir, temperature=0.0, max_new_tokens=120):
     """Generate predictions with optimized memory usage and error handling."""
     # Load and validate dataset
     df = pd.read_csv(data_path)
@@ -258,7 +297,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 model=model,
                 tokenizer=tokenizer,
                 prompt=prompt,
-                max_new_tokens=50,
+                max_new_tokens=max_new_tokens,
                 max_seq_length=max_seq_length,
                 temperature=temperature
             )
@@ -390,10 +429,38 @@ def main():
     parser.add_argument("--output_dir", type=str, default="./inference_results", help="Output directory")
     parser.add_argument("--load_in_4bit", action="store_true", help="Use 4-bit quantization")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for generation (0.0 for deterministic)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with more verbose output")
+    parser.add_argument("--max_new_tokens", type=int, default=120, help="Maximum new tokens for generation")
     args = parser.parse_args()
     
     print("\nLoading model...")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
+    
+    # Run a quick test case if in debug mode
+    if args.debug:
+        print("\nRunning test case for debugging...")
+        test_prompt = create_malnutrition_prompt("Patient is a 5-year-old male with height below the 3rd percentile and weight below the 5th percentile. Recent weight loss of 2kg in past 3 months. No other significant findings.")
+        test_output = generate_assessment(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=test_prompt,
+            max_new_tokens=args.max_new_tokens,
+            max_seq_length=max_seq_length,
+            temperature=args.temperature
+        )
+        print("\nTEST PROMPT:")
+        print(test_prompt)
+        print("\nTEST OUTPUT:")
+        print(test_output)
+        print("\nPARSED RESULT:")
+        test_result = parse_model_output(test_output)
+        print(f"malnutrition={'yes' if test_result == 1 else 'no' if test_result == 0 else 'indeterminate'}")
+        
+        # Ask user if they want to continue
+        response = input("\nContinue with full dataset? (y/n): ")
+        if response.lower() != 'y':
+            print("Exiting.")
+            return
     
     print("\nGenerating predictions...")
     metrics, predictions = generate_predictions(
@@ -402,7 +469,8 @@ def main():
         data_path=args.data_path,
         max_seq_length=max_seq_length,
         output_dir=args.output_dir,
-        temperature=args.temperature
+        temperature=args.temperature,
+        max_new_tokens=args.max_new_tokens
     )
 
 if __name__ == "__main__":
