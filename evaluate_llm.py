@@ -29,7 +29,7 @@ def parse_arguments():
                         help="Directory to save all results and metrics")
     parser.add_argument("--batch_size", type=int, default=8, 
                         help="Batch size for inference")
-    parser.add_argument("--max_new_tokens", type=int, default=512, 
+    parser.add_argument("--max_new_tokens", type=int, default=256, 
                         help="Maximum number of new tokens to generate")
     parser.add_argument("--load_in_4bit", action="store_true", 
                         help="Load model in 4-bit quantization")
