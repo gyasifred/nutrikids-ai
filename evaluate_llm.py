@@ -50,6 +50,8 @@ def parse_arguments():
                         help="Maximum number of new tokens to generate")
     parser.add_argument("--top_p", type=float, default=0.9, 
                         help="Top-p sampling value for generation")
+    parser.add_argument("--stream", action="store_true", 
+                        help="Enable text streaming during generation")
     return parser.parse_args()
 
 def preprocess_clinical_note(note_text):
@@ -66,12 +68,17 @@ def preprocess_clinical_note(note_text):
     
     return processed_text
 
-def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
+def create_improved_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """
     Create a specialized malnutrition assessment prompt with detailed clinical criteria.
+    IMPORTANT: Decision first, then explanation (reversed from original)
     """
     # Define a structured prompt with comprehensive malnutrition criteria
-    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
+    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on the following criteria.
+
+IMPORTANT: First provide your assessment as "malnutrition=yes" or "malnutrition=no", then provide your explanation.
+
+Malnutrition Criteria:
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
 You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
@@ -100,7 +107,7 @@ When the child has 2 or more data points (multiple z scores over time) use this 
 Table 2. Multiple data points available.
 Mild Malnutrition
 Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
-Weight loss (2–20 years of age): 5% usual body weigh
+Weight loss (2–20 years of age): 5% usual body weight
 Deceleration in weight for length/height: Decline of 1 z score
 Inadequate nutrient intake: 51%−75% estimated energy/protein need
 
@@ -111,14 +118,13 @@ Deceleration in weight for length/height: Decline of 2 z score
 Inadequate nutrient intake: 26%−50% estimated energy/protein need
 
 Severe Malnutrition
-Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
+Weight gain velocity (<2 years of age): Less than 25% of the norm for expected weight gain
 Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
 
-Follow this format:
-1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
-2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
+To be clear, your response should begin with either "malnutrition=yes" or "malnutrition=no" on the first line.
+Then provide your explanation, mentioning whether you used single or multiple data points, and list z scores you used.
 
 Clinical note for analysis:
 {note}"""
@@ -156,6 +162,103 @@ Clinical note for analysis:
     
     return formatted_prompt
 
+def extract_malnutrition_decision_improved(text):
+    """Extract the malnutrition classification from the model output with balanced yes/no detection."""
+    # First, check if the text is empty or None
+    if not text or len(text.strip()) == 0:
+        return None
+    
+    text_lower = text.lower().strip()
+    
+    # Look for the exact format we requested (this should be at the beginning of the response)
+    primary_pattern = r'(?:^|\n)\s*malnutrition\s*=\s*(yes|no)'
+    primary_match = re.search(primary_pattern, text_lower)
+    
+    if primary_match:
+        decision = primary_match.group(1)
+        return 1 if decision.lower() == 'yes' else 0
+    
+    # If the exact format isn't found, check for variations
+    # Make these patterns more explicit and strict
+    yes_patterns = [
+        r'\bmalnutrition\s*[:=]?\s*yes\b',
+        r'\bpatient has malnutrition\b',
+        r'\bdiagnosis:?\s*malnutrition\b',
+        r'\bmalnutrition is present\b',
+        r'\bclassified as malnourished\b',
+        r'\bmalnutrition is confirmed\b',
+        r'\bpatient is malnourished\b',
+        r'\bpatient does have malnutrition\b',
+        r'\bevidence of malnutrition\b'
+    ]
+    
+    no_patterns = [
+        r'\bmalnutrition\s*[:=]?\s*no\b',
+        r'\bno malnutrition\b',
+        r'\bpatient does not have malnutrition\b',
+        r'\bno evidence of malnutrition\b',
+        r'\bno indication of malnutrition\b',
+        r'\bpatient is not malnourished\b',
+        r'\bnot classified as malnourished\b',
+        r'\bmalnutrition is not present\b',
+        r'\babsence of malnutrition\b'
+    ]
+    
+    # Look for "yes" patterns in the first few lines (more weight on beginning of response)
+    first_chunk = '\n'.join(text_lower.split('\n')[:5])
+    for pattern in yes_patterns:
+        if re.search(pattern, first_chunk):
+            return 1
+    
+    for pattern in no_patterns:
+        if re.search(pattern, first_chunk):
+            return 0
+    
+    # If not found in the first few lines, search the entire text
+    for pattern in yes_patterns:
+        if re.search(pattern, text_lower):
+            return 1
+    
+    for pattern in no_patterns:
+        if re.search(pattern, text_lower):
+            return 0
+    
+    # Handle potential ambiguity with balanced approach
+    # Count positive vs negative indicators in text
+    positive_indicators = ["mild malnutrition", "moderate malnutrition", "severe malnutrition", 
+                           "meets criteria", "consistent with malnutrition", "z score below"]
+    negative_indicators = ["no malnutrition", "not malnourished", "doesn't meet criteria", 
+                           "normal nutritional", "z score within normal", "normal range"]
+    
+    pos_count = sum(1 for term in positive_indicators if term in text_lower)
+    neg_count = sum(1 for term in negative_indicators if term in text_lower)
+    
+    if pos_count > neg_count:
+        return 1
+    elif neg_count > pos_count:
+        return 0
+    
+    # Check for sentences ending with clear decisions (clinical assessment style)
+    sentence_patterns = [
+        (r'patient (has|shows|demonstrates|exhibits|presents with) malnutrition', 1),
+        (r'patient (does not have|does not show|does not demonstrate|does not exhibit|does not present with) malnutrition', 0),
+        (r'assessment[:]?\s*(mild|moderate|severe) malnutrition', 1),
+        (r'(mild|moderate|severe) malnutrition [a-z\s]+ (identified|diagnosed|present)', 1),
+        (r'no malnutrition [a-z\s]+ (identified|diagnosed|present)', 0),
+    ]
+    
+    for pattern, value in sentence_patterns:
+        if re.search(pattern, text_lower):
+            return value
+    
+    # If still unsure, look for some final keyword patterns
+    if any(kw in text_lower for kw in ["z score < -2", "z-score < -2", "z score less than -2"]):
+        return 1
+    
+    # If we still can't determine, default to None (undetermined)
+    # This is safer than defaulting to either yes or no
+    return None
+
 def get_model_max_length(model_path):
     """Get the model's maximum sequence length."""
     try:
@@ -180,70 +283,97 @@ def get_model_max_length(model_path):
         print(f"Failed to get model's max length: {e}")
         return 8192  # Increased default from 4096 to 8192
 
-def extract_malnutrition_decision(text):
-    """Extract the malnutrition classification from the model output."""
-    # Find the malnutrition=yes/no pattern (the most explicit format we requested)
-    pattern = r'malnutrition\s*=\s*(yes|no)'
-    match = re.search(pattern, text.lower())
+def evaluate_classification(true_labels, predictions, probabilities, output_dir="./metrics"):
+    """Evaluate classification performance with comprehensive metrics."""
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
     
-    if match:
-        decision = match.group(1)
-        return 1 if decision.lower() == 'yes' else 0
+    # Filter out None values
+    valid_indices = [i for i, pred in enumerate(predictions) if pred is not None]
+    if not valid_indices:
+        print("No valid predictions found.")
+        return {}
     
-    # Look for variations on the format that might appear
-    yes_pattern = r'malnutrition\s*[:=]?\s*yes'
-    no_pattern = r'malnutrition\s*[:=]?\s*no'
+    filtered_true = [true_labels[i] for i in valid_indices]
+    filtered_pred = [predictions[i] for i in valid_indices]
+    filtered_prob = [probabilities[i] for i in valid_indices]
     
-    if re.search(yes_pattern, text.lower()):
-        return 1
-    if re.search(no_pattern, text.lower()):
-        return 0
+    # Calculate basic classification metrics
+    accuracy = accuracy_score(filtered_true, filtered_pred)
+    precision = precision_score(filtered_true, filtered_pred, zero_division=0)
+    recall = recall_score(filtered_true, filtered_pred, zero_division=0)
+    f1 = f1_score(filtered_true, filtered_pred, zero_division=0)
     
-    # Fallback: Check for yes/no mentions near malnutrition
-    if 'malnutrition' in text.lower():
-        text_lower = text.lower()
-        # Check if "no malnutrition" or similar phrases appear
-        no_patterns = ['no malnutrition', 'not malnourished', 'does not have malnutrition',
-                      'unlikely to have malnutrition', 'no evidence of malnutrition',
-                      'without malnutrition', 'absence of malnutrition']
-        for pattern in no_patterns:
-            if pattern in text_lower:
-                return 0
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    
+    # Calculate confusion matrix
+    cm = confusion_matrix(filtered_true, filtered_pred)
+    
+    # Plot confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=['No Malnutrition', 'Malnutrition'],
+                yticklabels=['No Malnutrition', 'Malnutrition'])
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title('Confusion Matrix')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'))
+    plt.close()
+    
+    # Calculate and plot ROC curve if probability estimates are available
+    metrics = {
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1
+    }
+    
+    try:
+        # ROC curve and AUC
+        fpr, tpr, _ = roc_curve(filtered_true, filtered_prob)
+        roc_auc = roc_auc_score(filtered_true, filtered_prob)
+        metrics['roc_auc'] = roc_auc
         
-        # Check if "has malnutrition" or similar phrases appear
-        yes_patterns = ['has malnutrition', 'is malnourished', 'does have malnutrition',
-                       'likely to have malnutrition', 'evidence of malnutrition',
-                       'presence of malnutrition', 'diagnosed with malnutrition',
-                       'meets criteria for malnutrition']
-        for pattern in yes_patterns:
-            if pattern in text_lower:
-                return 1
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic')
+        plt.legend(loc="lower right")
+        plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
+        plt.close()
+        
+        # Precision-Recall curve
+        precision_curve, recall_curve, _ = precision_recall_curve(filtered_true, filtered_prob)
+        avg_precision = average_precision_score(filtered_true, filtered_prob)
+        metrics['average_precision'] = avg_precision
+        
+        plt.figure(figsize=(8, 6))
+        plt.plot(recall_curve, precision_curve, color='blue', lw=2, 
+                 label=f'Precision-Recall curve (AP = {avg_precision:.2f})')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve')
+        plt.legend(loc="lower left")
+        plt.savefig(os.path.join(output_dir, 'precision_recall_curve.png'))
+        plt.close()
+        
+    except Exception as e:
+        print(f"Warning: Could not calculate ROC/PR metrics: {e}")
     
-    # Check for sentences ending with clear decisions (clinical assessment style)
-    sentence_patterns = [
-        r'patient (has|shows|demonstrates|exhibits|presents with) malnutrition',
-        r'patient (does not have|does not show|does not demonstrate|does not exhibit|does not present with) malnutrition',
-        r'assessment[:]?\s*(mild|moderate|severe) malnutrition',
-        r'(mild|moderate|severe) malnutrition [a-z\s]+ (identified|diagnosed|present)',
-        r'no malnutrition [a-z\s]+ (identified|diagnosed|present)',
-    ]
+    # Generate classification report for more detailed metrics by class
+    report = classification_report(filtered_true, filtered_pred, output_dict=True)
+    report_df = pd.DataFrame(report).transpose()
+    report_df.to_csv(os.path.join(output_dir, 'classification_report.csv'))
     
-    for pattern in sentence_patterns:
-        match = re.search(pattern, text.lower())
-        if match:
-            if 'does not' in match.group(0) or 'no malnutrition' in match.group(0):
-                return 0
-            else:
-                return 1
-    
-    # If still unsure, check for simple yes/no at the end of the text
-    if text.lower().strip().endswith('yes'):
-        return 1
-    if text.lower().strip().endswith('no'):
-        return 0
-    
-    # If we can't determine, return None
-    return None
+    return metrics
 
 def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
     """Prepare dataset for inference with specialized malnutrition prompt structure"""
@@ -276,7 +406,7 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         # Reserve space for output tokens
         available_tokens = max_seq_length - 512  # Reserve space for output tokens
         
-        prompt = create_simplified_malnutrition_prompt(
+        prompt = create_improved_malnutrition_prompt(
             note=note_text,
             tokenizer=tokenizer,
             max_tokens=available_tokens
