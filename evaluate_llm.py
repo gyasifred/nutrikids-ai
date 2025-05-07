@@ -43,7 +43,7 @@ def parse_arguments():
                         help="Column name for patient IDs")
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
-    parser.add_argument("--temperature", type=float, default=0.3,
+    parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling during generation (default: 0.3)")
     parser.add_argument("--top_p", type=float, default=0.9,
                         help="Top-p (nucleus) sampling parameter (default: 0.9)")
