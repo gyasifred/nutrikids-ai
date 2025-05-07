@@ -25,6 +25,8 @@ from unsloth import FastLanguageModel
 def load_model(model_path, load_in_4bit):
     """Load model with proper device handling."""
     try:
+        # Try Unsloth first
+        print("Attempting to load model with Unsloth...")
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
             dtype=None,
@@ -34,6 +36,7 @@ def load_model(model_path, load_in_4bit):
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
     except Exception as e:
         print(f"Error loading with Unsloth: {e}")
+        print("Falling back to standard HuggingFace loading...")
         from peft import AutoPeftModelForCausalLM
         from transformers import AutoTokenizer
         
@@ -45,8 +48,12 @@ def load_model(model_path, load_in_4bit):
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
 
+    # Add safety margin for token length
+    effective_max_length = max_seq_length - 50  # Reserve 50 tokens for generation
     print(f"Model loaded with max sequence length: {max_seq_length}")
-    return model, tokenizer, max_seq_length
+    print(f"Using effective max input length: {effective_max_length} (reserving 50 tokens for generation)")
+    
+    return model, tokenizer, effective_max_length
 
 
 def preprocess_clinical_note(note_text):
@@ -117,24 +124,32 @@ REQUIRED OUTPUT FORMAT:
 CLINICAL NOTE FOR ANALYSIS:
 {note}"""
 
-    formatted_prompt = prompt.format(note=note)
+    # Safety buffer to allow for maximum new tokens and avoid context overflow
+    safe_max_tokens = max_tokens - 50 if max_tokens else None
     
-    if tokenizer and max_tokens:
-        tokens = tokenizer.encode(formatted_prompt)
-        if len(tokens) > max_tokens:
-            # Calculate available space for clinical note
-            template = prompt.format(note="")
-            template_tokens = tokenizer.encode(template)
-            available_tokens = max_tokens - len(template_tokens)
-            
-            if available_tokens <= 0:
-                available_tokens = max_tokens // 2
-            
-            # Tokenize and truncate note
-            note_tokens = tokenizer.encode(note)
+    if tokenizer and safe_max_tokens:
+        # Calculate available space for clinical note
+        template = prompt.format(note="")
+        template_tokens = tokenizer.encode(template)
+        
+        # Reserve space for the template plus a small buffer
+        available_tokens = safe_max_tokens - len(template_tokens)
+        
+        if available_tokens <= 0:
+            available_tokens = safe_max_tokens // 2
+        
+        # Check if the note needs truncation
+        note_tokens = tokenizer.encode(note)
+        if len(note_tokens) > available_tokens:
+            # Truncate note to fit within available tokens
             truncated_note_tokens = note_tokens[:available_tokens]
             truncated_note = tokenizer.decode(truncated_note_tokens, skip_special_tokens=True)
             formatted_prompt = prompt.format(note=truncated_note)
+            print(f"Note truncated from {len(note_tokens)} tokens to {len(truncated_note_tokens)} tokens")
+        else:
+            formatted_prompt = prompt.format(note=note)
+    else:
+        formatted_prompt = prompt.format(note=note)
     
     return formatted_prompt
 
@@ -189,18 +204,30 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     device = next(model.parameters()).device
     print(f"Using device: {device}")
     
+    # Calculate max tokens available for inputs (accounting for generation headroom)
+    max_input_length = max_seq_length - 50  # Reserve 50 tokens for generation
+    print(f"Using maximum input length of {max_input_length} tokens (from {max_seq_length} total)")
+    
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing cases"):
         try:
             # Preprocess identically to training
             note_text = preprocess_clinical_note(row["txt"])
+            
+            # Create prompt with explicit max tokens to ensure we don't exceed limits
             prompt = create_simplified_malnutrition_prompt(
                 note=note_text,
                 tokenizer=tokenizer,
-                max_tokens=max_seq_length - 20
+                max_tokens=max_input_length
             )
             
+            # Double-check length and truncate if necessary
+            if len(tokenizer.encode(prompt)) > max_input_length:
+                print(f"Warning: Prompt for case {row['DEID']} still exceeds max length. Applying hard truncation.")
+                tokens = tokenizer.encode(prompt)[:max_input_length]
+                prompt = tokenizer.decode(tokens, skip_special_tokens=True)
+            
             # Move inputs to model's device
-            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_seq_length).to(device)
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_input_length).to(device)
             
             with torch.no_grad():
                 outputs = model.generate(
