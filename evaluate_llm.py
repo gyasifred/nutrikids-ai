@@ -97,45 +97,15 @@ def preprocess_clinical_note(note_text):
 
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Complete malnutrition assessment prompt with all clinical criteria."""
-    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on these criteria:
-
-MALNUTRITION CLASSIFICATION CRITERIA:
-
-1. SINGLE DATA POINT ASSESSMENT (Use when only one z-score is available):
-   - Mild Malnutrition:
-     * Weight-for-height: −1 to −1.9 z score
-     * BMI-for-age: −1 to −1.9 z score
-     * Mid-upper arm circumference: ≥−1 to −1.9 z score
-   
-   - Moderate Malnutrition:
-     * Weight-for-height: −2 to −2.9 z score
-     * BMI-for-age: −2 to −2.9 z score
-     * Mid-upper arm circumference: ≥−2 to −2.9 z score
-   
-   - Severe Malnutrition:
-     * Weight-for-height: ≤−3 z score
-     * BMI-for-age: ≤−3 z score
-     * Length/height-for-age: ≤−3 z score
-     * Mid-upper arm circumference: ≤−3 z score
-
-2. MULTIPLE DATA POINTS ASSESSMENT (Use when tracking growth over time):
-   - Mild Malnutrition:
-     * Weight gain velocity (<2yo): <75% of expected
-     * Weight loss (2-20yo): 5% of usual body weight
-     * Weight-for-height decline: 1 z score decrease
-     * Nutrient intake: 51-75% of estimated needs
-   
-   - Moderate Malnutrition:
-     * Weight gain velocity (<2yo): <50% of expected
-     * Weight loss (2-20yo): 7.5% of usual body weight
-     * Weight-for-height decline: 2 z score decrease
-     * Nutrient intake: 26-50% of estimated needs
-   
-   - Severe Malnutrition:
-     * Weight gain velocity (<2yo): <25% of expected
-     * Weight loss (2-20yo): 10% of usual body weight
-     * Weight-for-height decline: 3 z score decrease
-     * Nutrient intake: <25% of estimated needs
+    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition:
+    Consider these factors when assessing malnutrition:
+    - Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC
+    - Growth trajectory and percentile changes
+    - Clinical signs like edema, muscle wasting, decreased energy
+    - Nutritional intake pattern and history
+    - Medical conditions affecting nutrition
+    - Social or environmental factors impacting food security
+    - Recent weight changes or growth concerns
 
 REQUIRED OUTPUT FORMAT:
 1. First analyze which criteria apply (single/multiple data points)
