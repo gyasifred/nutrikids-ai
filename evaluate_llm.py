@@ -213,6 +213,7 @@ def main():
     
     # Load components
     model, tokenizer = load_model(args)
+    FastLanguageModel.for_inference(model)
     dataset = prepare_dataset(args.data_path)
     
     # Run inference
