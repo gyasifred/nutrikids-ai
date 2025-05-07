@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Complete fixed inference script with proper parenthesis matching.
+Complete fixed inference script with proper JSON serialization and metric handling.
 """
 
 import os
@@ -55,6 +55,31 @@ def load_model(model_path, load_in_4bit):
     
     return model, tokenizer, effective_max_length
 
+def generate_assessment(model, tokenizer, prompt, max_new_tokens=50, 
+                      max_seq_length=None, temperature=0.1, top_p=0.9):
+    """Generate assessment from model using chat-style generation."""
+    inputs = tokenizer([prompt], return_tensors="pt")
+    
+    # Handle sequence length constraints
+    if max_seq_length and inputs.input_ids.shape[1] > max_seq_length - max_new_tokens:
+        inputs.input_ids = inputs.input_ids[:, -(max_seq_length - max_new_tokens):]
+        if hasattr(inputs, 'attention_mask'):
+            inputs.attention_mask = inputs.attention_mask[:, -(max_seq_length - max_new_tokens):]
+    
+    # Move to device
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
+    # Generate with conservative settings for reproducible outputs
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        pad_token_id=tokenizer.eos_token_id,
+        do_sample=False  # Disable sampling for deterministic outputs
+    )
+    
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def preprocess_clinical_note(note_text):
     """Preprocess clinical notes identically to training."""
@@ -69,7 +94,6 @@ def preprocess_clinical_note(note_text):
     processed_text = processed_text.replace('\r\n', '\n').replace('\r', '\n')
     processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
-
 
 def create_simplified_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Complete malnutrition assessment prompt with all clinical criteria."""
@@ -153,7 +177,6 @@ CLINICAL NOTE FOR ANALYSIS:
     
     return formatted_prompt
 
-
 def parse_model_output(output_text):
     """Robust output parsing with multiple fallbacks."""
     output_text = output_text.lower().strip()
@@ -182,7 +205,6 @@ def parse_model_output(output_text):
             return 0
     
     return -1  # Undetermined
-
 
 def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir):
     """Generate predictions with proper device handling."""
@@ -226,19 +248,16 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 tokens = tokenizer.encode(prompt)[:max_input_length]
                 prompt = tokenizer.decode(tokens, skip_special_tokens=True)
             
-            # Move inputs to model's device
-            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_input_length).to(device)
+            # Generate assessment using the chat-style generation function
+            output_text = generate_assessment(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=prompt,
+                max_new_tokens=50,
+                max_seq_length=max_seq_length,
+                temperature=0.0  # For deterministic outputs
+            )
             
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=50,
-                    pad_token_id=tokenizer.eos_token_id,
-                    do_sample=False,
-                    temperature=0.0
-                )
-            
-            output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
             pred = parse_model_output(output_text)
             true_label = int(row["label"])
             
@@ -275,23 +294,32 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 "PROMPT": prompt
             })
     
-    # Calculate metrics
+    # Calculate metrics with zero_division parameter to avoid warnings
     metrics = {}
     if true_labels:
+        # Convert to Python native types for JSON serialization
+        true_labels_native = [int(x) for x in true_labels]
+        pred_labels_native = [int(x) for x in pred_labels]
+        
         metrics = {
-            "accuracy": accuracy_score(true_labels, pred_labels),
-            "f1": f1_score(true_labels, pred_labels),
-            "recall": recall_score(true_labels, pred_labels),
-            "roc_auc": roc_auc_score(true_labels, pred_labels),
-            "classification_report": classification_report(true_labels, pred_labels, output_dict=True),
-            "confusion_matrix": confusion_matrix(true_labels, pred_labels).tolist(),
-            "n_samples": len(true_labels),
-            "n_indeterminate": len(df) - len(true_labels),
+            "accuracy": float(accuracy_score(true_labels_native, pred_labels_native)),
+            "f1": float(f1_score(true_labels_native, pred_labels_native, zero_division=0)),
+            "recall": float(recall_score(true_labels_native, pred_labels_native, zero_division=0)),
+            "roc_auc": float(roc_auc_score(true_labels_native, pred_labels_native)),
+            "classification_report": classification_report(
+                true_labels_native, 
+                pred_labels_native, 
+                output_dict=True,
+                zero_division=0
+            ),
+            "confusion_matrix": confusion_matrix(true_labels_native, pred_labels_native).tolist(),
+            "n_samples": len(true_labels_native),
+            "n_indeterminate": len(df) - len(true_labels_native),
             "class_distribution": {
-                "true_positives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 1)),
-                "true_negatives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 0)),
-                "false_positives": sum((np.array(true_labels) == 0) & (np.array(pred_labels) == 1)),
-                "false_negatives": sum((np.array(true_labels) == 1) & (np.array(pred_labels) == 0)),
+                "true_positives": int(sum((np.array(true_labels_native) == 1) & (np.array(pred_labels_native) == 1))),
+                "true_negatives": int(sum((np.array(true_labels_native) == 0) & (np.array(pred_labels_native) == 0))),
+                "false_positives": int(sum((np.array(true_labels_native) == 0) & (np.array(pred_labels_native) == 1))),
+                "false_negatives": int(sum((np.array(true_labels_native) == 1) & (np.array(pred_labels_native) == 0))),
             }
         }
     
@@ -335,7 +363,6 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     
     return metrics, results
 
-
 def main():
     parser = argparse.ArgumentParser(description="Run inference with proper device handling")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
@@ -355,7 +382,6 @@ def main():
         max_seq_length=max_seq_length,
         output_dir=args.output_dir
     )
-
 
 if __name__ == "__main__":
     main()
