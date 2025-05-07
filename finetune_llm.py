@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment
-with a simplified, more flexible prompt that allows better learning from data.
+with a detailed prompt for context-limited environments.
 """
 
 import os
@@ -38,22 +38,21 @@ def preprocess_clinical_note(note_text):
     """Preprocess clinical notes to handle special tokens."""
     if not note_text:
         return note_text
-    
+
     # Replace problematic tokens
     processed_text = note_text.replace('</s>', '\n\n')
     special_tokens = ['<s>', '<pad>', '</pad>', '<eos>', '<bos>']
     for token in special_tokens:
         if token in processed_text:
             processed_text = processed_text.replace(token, f"[{token}]")
-    
+
     return processed_text
 
-def create_simplified_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
-    """
-    Create a specialized malnutrition assessment prompt with detailed clinical criteria.
-    """
-    # Define a structured prompt with comprehensive malnutrition criteria
-    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition: Criteria list.
+def create_detailed_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
+    """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
+    base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
+
+<<CRITERIA FOR MALNUTRITION>>
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
 You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
@@ -63,22 +62,21 @@ Mild Malnutrition
 Weight-for-height: −1 to −1.9 z score
 BMI-for-age: −1 to −1.9 z score
 Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score
+Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score	
 
-Moderate Malnutrition
+Moderate Malnutrition	
 Weight-for-height: −2 to −2.9 z score
 BMI-for-age: −2 to −2.9 z score
 Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score
+Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score	
 
 Severe Malnutrition
-Weight-for-height:−3 or greater z score
+Weight-for-height:	−3 or greater z score
 BMI-for-age: −3 or greater z score
 Length/height-for-age: −3 z score
 Mid–upper arm circumference: Greater than or equal to −3 z score
 
 When the child has 2 or more data points (multiple z scores over time) use this table:
-
 Table 2. Multiple data points available.
 Mild Malnutrition
 Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
@@ -86,7 +84,7 @@ Weight loss (2–20 years of age): 5% usual body weigh
 Deceleration in weight for length/height: Decline of 1 z score
 Inadequate nutrient intake: 51%−75% estimated energy/protein need
 
-Moderate Malnutrition
+Moderate Malnutrition	
 Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
 Weight loss (2–20 years of age): 7.5% usual body weight
 Deceleration in weight for length/height: Decline of 2 z score
@@ -97,10 +95,42 @@ Weight gain velocity (<2 years of age): Less than 25% of the normb for expected 
 Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
+<</CRITERIA FOR MALNUTRITION>>
 
-Follow this format:
-1) First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
-2) Then format your output as follows, strictly follow this format: malnutrition=yes or malnutrition=no
+<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+1. **Normal Growth Parameters:**
+   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
+   - Height-for-age ≥ -2 SD z-score
+   - MUAC ≥ 115 mm (for children 6-59mo)
+2. **Normal Clinical Assessment:**
+   - No bilateral pitting edema
+   - No significant recent weight loss (<5% in 30 days)
+   - Adequate dietary intake
+   - Stable or appropriate growth trajectory
+3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
+<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+
+[Assessment Protocol]
+1. Primary reliance on anthropometrics and clinical data
+2. Differentiate acute vs chronic patterns when present
+3. Confirm with clinical correlates
+4. Determine "yes" ONLY when criteria for malnutrition are definitively met
+5. Determine "no" when criteria for normal nutritional status are met
+
+[Output Format]
+Strictly follow this structure:
+
+### Assessment:
+<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
+
+### Severity:
+<sam/mam/stunting/none>
+
+### Basis:
+- Maximum 3 bullet points
+- Cite specific z-scores or measurements when available
+- Note key clinical findings
+- For "no" assessments, document normal growth parameters
 
 Clinical note for analysis:
 {note}
@@ -111,44 +141,44 @@ Clinical note for analysis:
     if label:
         # Map numeric labels (1/0) to yes/no format
         if label in ["1", 1, "yes", "Yes", "YES"]:
-            formatted_label = "malnutrition=yes"
+            formatted_label = "### Assessment:\nyes"
         else:
-            formatted_label = "malnutrition=no"
+            formatted_label = "### Assessment:\nno"
         label_part = f"{formatted_label}"
     else:
-        label_part = ""
-    
+        label_part = "### Assessment:\n"
+
     # Apply token truncation if needed
-    formatted_prompt = prompt.format(note=note, label_part=label_part)
-    
+    formatted_prompt = base_prompt.format(note=note, label_part=label_part)
+
     if tokenizer and max_tokens:
         tokens = tokenizer.encode(formatted_prompt)
-        
+
         # Check if tokens is too long
         if len(tokens) > max_tokens:
             # Get template without the note to determine available tokens
-            template = prompt.format(note="", label_part=label_part)
+            template = base_prompt.format(note="", label_part=label_part)
             template_tokens = tokenizer.encode(template)
-            
+
             # Calculate available tokens for the note
             available_tokens = max_tokens - len(template_tokens)
-            
+
             # Ensure at least some tokens are available
             if available_tokens <= 0:
                 available_tokens = max_tokens // 2  # Fallback if template is too long
-            
+
             # Tokenize the note separately
             note_tokens = tokenizer.encode(note)
-            
+
             # Truncate the note tokens
             truncated_note_tokens = note_tokens[:available_tokens]
-            
+
             # Decode the truncated tokens back to text
             truncated_note = tokenizer.decode(truncated_note_tokens)
-            
+
             # Recreate the prompt with the truncated note
-            formatted_prompt = prompt.format(note=truncated_note, label_part=label_part)
-    
+            formatted_prompt = base_prompt.format(note=truncated_note, label_part=label_part)
+
     return formatted_prompt
 
 def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
@@ -160,11 +190,11 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
     prompts = []
     for _, row in df.iterrows():
         note_text = preprocess_clinical_note(row["txt"]) if preprocess_tokens else row["txt"]
-        
+
         # Convert label format (1/0 to yes/no)
         label_text = "yes" if str(row["label"]).lower() in {"1", "yes", "true"} else "no"
-        
-        prompt = create_simplified_malnutrition_prompt(
+
+        prompt = create_detailed_malnutrition_prompt(
             note=note_text, 
             label=label_text,
             tokenizer=tokenizer,
@@ -220,7 +250,12 @@ def main():
     )
 
     # Prepare dataset
-    dataset = prepare_dataset(args.data_path, tokenizer, max_seq_length, args.preprocess_tokens)
+    dataset = prepare_dataset(
+        args.data_path, 
+        tokenizer, 
+        max_seq_length, 
+        args.preprocess_tokens
+    )
 
     # Set up trainer
     def formatting_prompts_func(examples):
@@ -250,7 +285,7 @@ def main():
     )
 
     # Train the model
-    print("Starting training...")
+    print(f"Starting training with detailed prompt style...")
     trainer_stats = trainer.train()
 
     # Save the model
