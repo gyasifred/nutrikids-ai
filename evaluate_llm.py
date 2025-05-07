@@ -81,86 +81,56 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
     base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
 
-[WHO Diagnostic Framework]
-<<CRITERIA FOR MALNUTRITION>>
-Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
-
-You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
-
-Table 1. Single data point present.
-Mild Malnutrition
-Weight-for-height: −1 to −1.9 z score
-BMI-for-age: −1 to −1.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score	
-
-Moderate Malnutrition	
-Weight-for-height: −2 to −2.9 z score
-BMI-for-age: −2 to −2.9 z score
-Length/height-for-age: No Data
-Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score	
-
-Severe Malnutrition
-Weight-for-height:	−3 or greater z score
-BMI-for-age: −3 or greater z score
-Length/height-for-age: −3 z score
-Mid–upper arm circumference: Greater than or equal to −3 z score
-
-When the child has 2 or more data points (multiple z scores over time) use this table:
-Table 2. Multiple data points available.
-Mild Malnutrition
-Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
-Weight loss (2–20 years of age): 5% usual body weigh
-Deceleration in weight for length/height: Decline of 1 z score
-Inadequate nutrient intake: 51%−75% estimated energy/protein need
-
-Moderate Malnutrition	
-Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
-Weight loss (2–20 years of age): 7.5% usual body weight
-Deceleration in weight for length/height: Decline of 2 z score
-Inadequate nutrient intake: 26%−50% estimated energy/protein need
-
-Severe Malnutrition
-Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
-Weight loss (2–20 years of age): 10% usual body weight
-Deceleration in weight for length/height: Decline of 3 z score
-Inadequate nutrient intake: less than 25% estimated energy/protein need
-<</CRITERIA FOR MALNUTRITION>>
-
-<<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-1. **Normal Growth Parameters:**
-   - Weight-for-height/BMI-for-age ≥ -2 SD z-score
-   - Height-for-age ≥ -2 SD z-score
-   - MUAC ≥ 115 mm (for children 6-59mo)
-2. **Normal Clinical Assessment:**
-   - No bilateral pitting edema
-   - No significant recent weight loss (<5% in 30 days)
-   - Adequate dietary intake
-   - Stable or appropriate growth trajectory
-3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
-<</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-
-[Assessment Protocol]
-1. Primary reliance on anthropometrics and clinical data
-2. Differentiate acute vs chronic patterns when present
-3. Confirm with clinical correlates
-4. Determine "yes" ONLY when criteria for malnutrition are definitively met
-5. Determine "no" when criteria for normal nutritional status are met
-
-[Output Format]
-Strictly follow this structure:
-
-### Assessment:
-<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
-
-### Severity:
-<sam/mam/stunting/none>
-
-### Basis:
-- Maximum 3 bullet points
-- Cite specific z-scores or measurements when available
-- Note key clinical findings
-- For "no" assessments, document normal growth parameters
+    [WHO Diagnostic Framework]
+    <<CRITERIA FOR MALNUTRITION>>
+    1. **Severe Acute Malnutrition (SAM):**
+       - Weight-for-height/BMI-for-age < -3 SD z-score **OR**
+       - MUAC < 115 mm (6-59mo) **OR**
+       - Bilateral pitting edema
+    2. **Moderate Acute Malnutrition (MAM):**
+       - Weight-for-height/BMI-for-age -2 to -3 SD z-score
+    3. **Stunting (Chronic):**
+       - Height-for-age < -2 SD z-score
+    4. **Supportive Indicators:**
+       ▸ Weight loss >5% in 30 days
+       ▸ Inadequate intake >5 days
+       ▸ Documented growth decline >2 percentiles
+    <</CRITERIA FOR MALNUTRITION>>
+    
+    <<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+    1. **Normal Growth Parameters:**
+       - Weight-for-height/BMI-for-age ≥ -2 SD z-score
+       - Height-for-age ≥ -2 SD z-score
+       - MUAC ≥ 115 mm (for children 6-59mo)
+    2. **Normal Clinical Assessment:**
+       - No bilateral pitting edema
+       - No significant recent weight loss (<5% in 30 days)
+       - Adequate dietary intake
+       - Stable or appropriate growth trajectory
+    3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
+    <</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
+    
+    [Assessment Protocol]
+    1. Primary reliance on anthropometrics and clinical data
+    2. Differentiate acute vs chronic patterns when present
+    3. Confirm with clinical correlates
+    4. Determine "yes" ONLY when criteria for malnutrition are definitively met
+    5. Determine "no" when criteria for normal nutritional status are met
+    
+    [Output Format]
+    Strictly follow this structure:
+    
+    ### Assessment:
+    <yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
+    
+    ### Severity:
+    <sam/mam/stunting/none>
+    
+    ### Basis:
+    - Maximum 3 bullet points
+    - Cite specific z-scores or measurements when available
+    - Note key clinical findings
+    - For "no" assessments, document normal growth parameters
 
 Clinical note for analysis:
 """
