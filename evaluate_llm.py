@@ -83,65 +83,32 @@ def preprocess_clinical_note(note_text):
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
-    base_prompt = """[Role] Pediatric nutrition specialist analyzing growth charts and clinical documentation.
-    
-    <<CRITERIA FOR MALNUTRITION>>
+    base_prompt = """[Role] Read the patient's notes and determine if the patient is likely to have malnutrition: 
+    Criteria list.
+    Weight is primarily affected during periods of acute undernutrition, whereas chronic undernutrition typically manifests as stunting. Severe acute undernutrition, experienced by children ages 6–60 months of age, is defined as a very low weight-for-height (less than −3 standard deviations [SD] [z scores] of the median WHO growth standards), by visible
+    severe wasting (mid–upper arm circumference [MUAC] ≤115 mm), or by the presence of nutritional edema.
+    Chronic undernutrition or stunting is defined by WHO as having a height-forage
+    (or length-for-age) that is less than −2 SD (z score) of the median of the WHO international reference.
+    Growth is the primary outcome measure of nutritional status in children. Growth should be monitored at regular intervals throughout childhood and adolescence and should also be
+    measured every time a child presents, in any healthcare setting, for preventive, acute, or chronic care. In children less than 36 months of age, measures of growth include length-for-age, weight-for-age, head circumference-for-age, and weight-for-length. In children ages 2–20 years, standing height-for-age, weight-for-age, and body mass index (BMI)-for-age are typically collected.
     Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
-    
-    You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
-    
-    Table 1. Single data point present.
-    Mild Malnutrition
+    On initial presentation, a child may have only a single data point for use as a criterion for the identification and diagnosis of malnutrition related to undernutrition. When this is the case, the use of z scores for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria as stated in Table below:
+    ### Table.
+    ### Mild Malnutrition
     Weight-for-height: −1 to −1.9 z score
     BMI-for-age: −1 to −1.9 z score
     Length/height-for-age: No Data
     Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score	
-    
-    Moderate Malnutrition	
+    ### Moderate Malnutrition	
     Weight-for-height: −2 to −2.9 z score
     BMI-for-age: −2 to −2.9 z score
     Length/height-for-age: No Data
     Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score	
-    
-    Severe Malnutrition
+    ### Severe Malnutrition
     Weight-for-height:	−3 or greater z score
     BMI-for-age: −3 or greater z score
     Length/height-for-age: −3 z score
     Mid–upper arm circumference: Greater than or equal to −3 z score
-    
-    When the child has 2 or more data points (multiple z scores over time) use this table:
-    Table 2. Multiple data points available.
-    Mild Malnutrition
-    Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
-    Weight loss (2–20 years of age): 5% usual body weigh
-    Deceleration in weight for length/height: Decline of 1 z score
-    Inadequate nutrient intake: 51%−75% estimated energy/protein need
-    
-    Moderate Malnutrition	
-    Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
-    Weight loss (2–20 years of age): 7.5% usual body weight
-    Deceleration in weight for length/height: Decline of 2 z score
-    Inadequate nutrient intake: 26%−50% estimated energy/protein need
-    
-    Severe Malnutrition
-    Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
-    Weight loss (2–20 years of age): 10% usual body weight
-    Deceleration in weight for length/height: Decline of 3 z score
-    Inadequate nutrient intake: less than 25% estimated energy/protein need
-    <</CRITERIA FOR MALNUTRITION>>
-    
-    <<CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
-    1. **Normal Growth Parameters:**
-       - Weight-for-height/BMI-for-age ≥ -2 SD z-score
-       - Height-for-age ≥ -2 SD z-score
-       - MUAC ≥ 115 mm (for children 6-59mo)
-    2. **Normal Clinical Assessment:**
-       - No bilateral pitting edema
-       - No significant recent weight loss (<5% in 30 days)
-       - Adequate dietary intake
-       - Stable or appropriate growth trajectory
-    3. **Note:** Growth measurements should be evaluated in context of the child's overall clinical picture and medical history
-    <</CRITERIA FOR NORMAL NUTRITIONAL STATUS>>
     
     [Assessment Protocol]
     1. Primary reliance on anthropometrics and clinical data
@@ -168,7 +135,6 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     - For "no" assessments, document normal growth parameters
     
     Clinical note for analysis:
-
 """
 
     # Token-aware note truncation
