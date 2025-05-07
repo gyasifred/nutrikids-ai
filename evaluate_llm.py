@@ -74,7 +74,7 @@ def create_improved_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     Designed to force the model to provide prediction first, then explanation.
     """
     # Define a structured prompt with comprehensive malnutrition criteria
-    prompt = """Read the patient's notes and determine if the patient is likely to have malnutrition based on the following criteria.
+    prompt = """[Task] Read the patient's notes and determine if the patient is likely to have malnutrition based on the following criteria.
 
 YOUR RESPONSE MUST BEGIN WITH EITHER "malnutrition=yes" OR "malnutrition=no" ON THE FIRST LINE.
 
@@ -87,6 +87,7 @@ OR
 malnutrition=no
 Based on the patient's notes, there is no evidence of malnutrition because...
 
+[Assessment Guidelines]
 Malnutrition Criteria:
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
