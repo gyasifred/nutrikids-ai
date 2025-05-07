@@ -458,28 +458,26 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens, temperature=0.
         text_streamer = TextStreamer(tokenizer)
         
         # Generate text with streaming
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                pad_token_id=tokenizer.eos_token_id,
-                streamer=text_streamer,
-                use_cache=True
-            )
+         outputs = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        pad_token_id=tokenizer.eos_token_id,
+        streamer=text_streamer,
+        use_cache=True
+         )
     else:
         # Generate text without streaming
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                pad_token_id=tokenizer.eos_token_id,
-                use_cache=True
-            )
-    
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            pad_token_id=tokenizer.eos_token_id,
+            use_cache=True
+        )
+
     # Decode output
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     
