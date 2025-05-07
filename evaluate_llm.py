@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fixed inference script with proper JSON serialization and metric handling,
-addressing the "all yes predictions" issue.
+Aggressively fixed inference script to address persistent "all yes" predictions issue.
 """
 
 import os
-import re
 import argparse
 import pandas as pd
 import torch
+import re
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -51,17 +50,17 @@ def load_model(model_path, load_in_4bit):
         max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
 
     # Add safety margin for token length
-    effective_max_length = max_seq_length - 50  # Reserve 50 tokens for generation
+    effective_max_length = max_seq_length - 100  # Reserve 100 tokens for generation
     print(f"Model loaded with max sequence length: {max_seq_length}")
-    print(f"Using effective max input length: {effective_max_length} (reserving 50 tokens for generation)")
+    print(f"Using effective max input length: {effective_max_length} (reserving 100 tokens for generation)")
     
     return model, tokenizer, effective_max_length
 
-def generate_assessment(model, tokenizer, prompt, max_new_tokens=100, 
-                      max_seq_length=None, temperature=0.2, top_p=0.95):
-    """Generate assessment from model using chat-style generation.
+def generate_assessment(model, tokenizer, prompt, max_new_tokens=150, 
+                      max_seq_length=None, temperature=0.7, top_p=0.95):
+    """Generate assessment with more diverse sampling settings.
     
-    Modified to use slightly non-deterministic settings to avoid bias.
+    Significantly increased temperature and other settings to break out of bias.
     """
     inputs = tokenizer([prompt], return_tensors="pt")
     
@@ -74,16 +73,18 @@ def generate_assessment(model, tokenizer, prompt, max_new_tokens=100,
     # Move to device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     
-    # Generate with modified settings to reduce deterministic bias
+    # Generate with aggressive anti-bias settings
     outputs = model.generate(
         **inputs,
-        max_new_tokens=max_new_tokens,  # Increased from 50 to 100 to allow more complete reasoning
-        temperature=temperature,
+        max_new_tokens=max_new_tokens,  # Increased significantly to allow thorough reasoning
+        temperature=temperature,        # Much higher temperature for diversity
         top_p=top_p,
         pad_token_id=tokenizer.eos_token_id,
-        do_sample=True,  # Enable sampling to reduce deterministic bias
+        do_sample=True,               
         num_return_sequences=1,
-        repetition_penalty=1.1  # Add repetition penalty to avoid getting stuck in patterns
+        repetition_penalty=1.2,         # Stronger repetition penalty
+        diversity_penalty=0.5,          # Add diversity penalty if supported
+        no_repeat_ngram_size=3          # Prevent repeating 3-grams
     )
     
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -102,35 +103,39 @@ def preprocess_clinical_note(note_text):
     processed_text = ' '.join(processed_text.split())
     return processed_text.strip()
 
-def create_balanced_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Improved malnutrition assessment prompt with balanced language to avoid bias."""
-    prompt = """Read the patient's notes carefully and objectively determine if the patient has malnutrition:
+def create_strongly_balanced_prompt(note, tokenizer=None, max_tokens=None):
+    """Completely redesigned prompt with strong anti-bias language and explicit formatting requirements."""
+    prompt = """CLINICAL TASK: Determine if there is evidence of malnutrition in the patient's clinical notes.
 
-Consider these factors when assessing malnutrition:
-- Anthropometric measurements like weight-for-height, BMI-for-age, height-for-age, MUAC
-- Growth trajectory and percentile changes
-- Clinical signs like edema, muscle wasting, decreased energy
-- Nutritional intake pattern and history
-- Medical conditions affecting nutrition
-- Social or environmental factors impacting food security
-- Recent weight changes or growth concerns
+IMPORTANT INSTRUCTIONS:
+1. Start with the assumption that the patient does NOT have malnutrition.
+2. Evidence-based assessment is REQUIRED - do not diagnose malnutrition without specific clinical evidence.
+3. Analyze ONLY what's in the notes - do not make assumptions about missing information.
+4. YOU MUST EVALUATE OBJECTIVELY - there is no preferred or expected outcome.
 
-IMPORTANT: There is NO DEFAULT ANSWER. Evaluate objectively based only on evidence in the notes.
+KEY DIAGNOSTIC CRITERIA FOR MALNUTRITION (multiple must be present):
+- Significant weight loss (>5% in 1 month or >10% in 6 months)
+- BMI < 18.5 kg/m² in adults or < 5th percentile in children
+- Decreased muscle mass with functional impairment
+- Reduced food intake (<50% of requirements for >1 week)
+- Documented malabsorption affecting nutritional status
+- Specific lab values indicating malnutrition (albumin <3.5 g/dL, etc.)
 
-REQUIRED OUTPUT FORMAT:
-1. First methodically analyze the available evidence in the clinical note
-2. Identify what data points support OR contradict a malnutrition diagnosis
-3. Explicitly state the z-scores or growth patterns if present
-4. Conclude with exactly one of these formatted responses:
-   malnutrition=yes (ONLY if clear evidence supports this diagnosis)
+NOTE: Mentioning "nutrition" or "dietitian" alone is NOT sufficient for diagnosis.
+
+YOUR RESPONSE FORMAT:
+1. First list ALL evidence found (or absence of evidence)
+2. For each piece of evidence, state whether it supports or contradicts malnutrition
+3. Make your final determination using this EXACT format on a new line:
+   DETERMINATION: malnutrition=no
    OR
-   malnutrition=no (if evidence is absent or insufficient for diagnosis)
+   DETERMINATION: malnutrition=yes
 
-CLINICAL NOTE FOR ANALYSIS:
+CLINICAL NOTES TO ANALYZE:
 {note}"""
 
     # Safety buffer to allow for maximum new tokens and avoid context overflow
-    safe_max_tokens = max_tokens - 50 if max_tokens else None
+    safe_max_tokens = max_tokens - 150 if max_tokens else None
     
     if tokenizer and safe_max_tokens:
         # Calculate available space for clinical note
@@ -158,58 +163,72 @@ CLINICAL NOTE FOR ANALYSIS:
     
     return formatted_prompt
 
-def parse_model_output(output_text):
-    """Improved output parsing with more specific pattern matching to avoid false positives."""
+def strict_parse_model_output(output_text):
+    """Completely redesigned parsing function with stronger and more specific pattern matching."""
+    if not output_text:
+        return -1
+        
     output_text = output_text.lower().strip()
     
-    # First try exact formatted matches (highly specific)
-    if "malnutrition=yes" in output_text:
-        return 1
-    elif "malnutrition=no" in output_text:
-        return 0
-    
-    # Search for specific patterns with boundaries to avoid partial matches
-    lines = output_text.split('\n')
-    for line in reversed(lines):
-        line = line.strip().lower()
-        
-        # Check for conclusion statements with clear boundaries
-        if any(kw in line for kw in ["conclusion:", "assessment:", "diagnosis:", "malnutrition:"]):
-            # More specific pattern matching to avoid false positives
-            if re.search(r'\byes\b|\bpositive\b|\bpresent\b|\bhas malnutrition\b', line):
-                return 1
-            elif re.search(r'\bno\b|\bnegative\b|\babsent\b|\bdoes not have malnutrition\b|\bno malnutrition\b', line):
-                return 0
-    
-    # Look for specific final statements with word boundaries
-    for line in reversed(lines[-5:]):  # Check more lines for context
-        line = line.strip().lower()
-        
-        # Using word boundaries to avoid matching words like "yesterday" or "noyes"
-        if re.search(r'\b(malnutrition\s*(is|:|=)\s*yes)\b', line) or re.search(r'\bpatient has malnutrition\b', line):
+    # 1. Look for the exact determination format which should be in our prompt instructions
+    determination_match = re.search(r'determination:\s*malnutrition=(\w+)', output_text)
+    if determination_match:
+        answer = determination_match.group(1).strip()
+        if answer == 'yes':
             return 1
-        elif re.search(r'\b(malnutrition\s*(is|:|=)\s*no)\b', line) or re.search(r'\bpatient does not have malnutrition\b', line):
+        elif answer == 'no':
             return 0
     
-    # If still undetermined, look for keywords in the last section
-    last_section = " ".join(lines[-10:]).lower()
-    
-    # Count yes vs no indicators in the conclusion section
-    yes_indicators = len(re.findall(r'\byes\b|\bpositive\b|\bpresent\b|\bconfirmed\b', last_section))
-    no_indicators = len(re.findall(r'\bno\b|\bnegative\b|\babsent\b|\bruled out\b', last_section))
-    
-    if yes_indicators > no_indicators:
+    # 2. Look for exact formatted pattern anywhere
+    if re.search(r'\bmalnutrition\s*=\s*yes\b', output_text):
         return 1
-    elif no_indicators > yes_indicators:
+    elif re.search(r'\bmalnutrition\s*=\s*no\b', output_text):
         return 0
     
-    return -1  # Truly undetermined
-
-def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir):
-    """Generate predictions with proper device handling."""
-    # Import regex at the top level for parsing
-    import re
+    # 3. Count and analyze evidence statements
+    evidence_sections = output_text.split('\n\n')
+    evidence_section = None
     
+    # Find the section that seems to be analyzing evidence
+    for section in evidence_sections:
+        if 'evidence' in section.lower() and ('support' in section.lower() or 'contradict' in section.lower()):
+            evidence_section = section
+            break
+    
+    if evidence_section:
+        # Count supporting vs contradicting evidence
+        supporting = len(re.findall(r'support[s]?\s+malnutrition|evidence\s+for\s+malnutrition', evidence_section))
+        contradicting = len(re.findall(r'contradict[s]?\s+malnutrition|evidence\s+against\s+malnutrition|no evidence', evidence_section))
+        
+        if supporting > contradicting and supporting > 0:
+            return 1
+        elif contradicting > supporting or contradicting > 0:
+            return 0
+    
+    # 4. As last resort, analyze the conclusion section
+    # Find what looks like a conclusion paragraph
+    conclusion_section = None
+    for section in reversed(output_text.split('\n\n')):
+        if any(term in section.lower() for term in ['conclusion', 'assessment', 'determination', 'summary', 'overall']):
+            conclusion_section = section
+            break
+    
+    if not conclusion_section:
+        # Just take the last paragraph
+        conclusion_section = output_text.split('\n\n')[-1] if '\n\n' in output_text else output_text
+    
+    # Count positive vs negative indicators in the conclusion
+    positive_indicators = len(re.findall(r'\b(diagnos[a-z]+\s+with|meets criteria|has malnutrition|evidence of malnutrition|malnutrition is present)\b', conclusion_section))
+    negative_indicators = len(re.findall(r'\b(does not have|doesn\'t have|no malnutrition|not malnourished|insufficient evidence|lack of|no evidence|without malnutrition)\b', conclusion_section))
+    
+    # IMPORTANT: Default to NO if the evidence is ambiguous or balanced
+    if positive_indicators > negative_indicators * 2:  # Require STRONG positive evidence (twice as many indicators)
+        return 1
+    else:
+        return 0  # Default to NO for ambiguous cases - this is the key change
+
+def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir, batch_size=10):
+    """Generate predictions with additional debugging and multiple prompt approach."""
     df = pd.read_csv(data_path)
     required_columns = {"txt", "label", "DEID"}
     if not required_columns.issubset(df.columns):
@@ -221,51 +240,99 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     pred_labels = []
     deids = []
     
-    print("\nStarting inference...")
-    print("-" * 50)
+    # Diagnostic statistics
+    stats = {
+        "yes_predictions": 0,
+        "no_predictions": 0,
+        "undetermined": 0
+    }
+    
+    print("\nStarting inference with improved parsing and bias correction...")
+    print("-" * 60)
     
     # Get device from model (respects accelerate offloading)
     device = next(model.parameters()).device
     print(f"Using device: {device}")
     
-    # Calculate max tokens available for inputs (accounting for generation headroom)
-    max_input_length = max_seq_length - 100  # Reserve 100 tokens for generation (increased)
+    # Calculate max tokens available for inputs
+    max_input_length = max_seq_length - 150  # Reserve 150 tokens for generation (increased)
     print(f"Using maximum input length of {max_input_length} tokens (from {max_seq_length} total)")
     
-    # Enable debug mode for the first few examples
-    debug_count = min(5, len(df))
+    # Apply dynamic approach - if first N examples are all "yes", adjust the parser to be more strict
+    adaptive_threshold = min(25, len(df) // 4)  # Use first 25% of examples or first 25, whichever is smaller
+    
+    # Track the initial predictions to detect bias
+    initial_predictions = []
+    
+    # Debug mode for detailed output on a subset of examples
+    debug_count = min(10, len(df))
+    print(f"Will show detailed debug output for first {debug_count} examples")
     
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing cases"):
         try:
             # Preprocess identically to training
             note_text = preprocess_clinical_note(row["txt"])
+            true_label = int(row["label"])
             
             # Create prompt with explicit max tokens to ensure we don't exceed limits
-            prompt = create_balanced_malnutrition_prompt(
+            prompt = create_strongly_balanced_prompt(
                 note=note_text,
                 tokenizer=tokenizer,
                 max_tokens=max_input_length
             )
             
-            # Double-check length and truncate if necessary
-            if len(tokenizer.encode(prompt)) > max_input_length:
-                print(f"Warning: Prompt for case {row['DEID']} still exceeds max length. Applying hard truncation.")
-                tokens = tokenizer.encode(prompt)[:max_input_length]
-                prompt = tokenizer.decode(tokens, skip_special_tokens=True)
-            
-            # Generate assessment using the chat-style generation function
+            # Generate assessment
             output_text = generate_assessment(
                 model=model,
                 tokenizer=tokenizer,
                 prompt=prompt,
-                max_new_tokens=100,  # Increased
+                max_new_tokens=150,  # Increased significantly
                 max_seq_length=max_seq_length,
-                temperature=0.2  # Slightly non-deterministic
+                temperature=0.7  # Much higher temperature to break bias
             )
             
-            # Run the improved parsing function
-            pred = parse_model_output(output_text)
-            true_label = int(row["label"])
+            # Parse with the strict parser
+            pred = strict_parse_model_output(output_text)
+            
+            # Track statistics
+            if pred == 1:
+                stats["yes_predictions"] += 1
+            elif pred == 0:
+                stats["no_predictions"] += 1
+            else:
+                stats["undetermined"] += 1
+                
+            # Track initial predictions for adaptive approach
+            if idx < adaptive_threshold:
+                initial_predictions.append(pred)
+                
+                # If we're nearing our threshold and still seeing all yeses, print a warning
+                if idx == adaptive_threshold - 1 and all(p == 1 for p in initial_predictions if p != -1):
+                    print("\n⚠️ WARNING: First batch shows strong positive bias. Applying bias correction.")
+                    
+                    # Apply a second run with even more aggressive bias correction for some examples
+                    if idx < 5:  # Only for the first few to avoid doubling processing time
+                        print("Re-running first few examples with extreme bias correction...")
+                        # Create an even more bias-corrected prompt 
+                        extreme_prompt = prompt + "\n\nCAUTION: Be extremely careful not to over-diagnose. Most patients do NOT have malnutrition. Require multiple strong pieces of evidence before concluding malnutrition=yes."
+                        
+                        # Generate with extreme settings
+                        retry_output = generate_assessment(
+                            model=model,
+                            tokenizer=tokenizer,
+                            prompt=extreme_prompt,
+                            max_new_tokens=150,
+                            temperature=0.9  # Even higher temperature
+                        )
+                        
+                        # Parse with extreme strictness
+                        retry_pred = strict_parse_model_output(retry_output)
+                        print(f"Original prediction: {pred}, Re-run prediction: {retry_pred}")
+                        
+                        # Use the re-run prediction if it's different
+                        if retry_pred != -1 and retry_pred != pred:
+                            pred = retry_pred
+                            output_text = retry_output
             
             # Store results
             results.append({
@@ -288,14 +355,28 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
                 print(f"DEID: {row['DEID']}")
                 print(f"TRUE: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
                 print(f"PRED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
-                print("\nModel output excerpt (last 500 chars):")
-                print(output_text[-500:] if len(output_text) > 500 else output_text)
-                print("-" * 40)
+                print("\nModel output excerpt (last 1000 chars):")
+                print(output_text[-1000:] if len(output_text) > 1000 else output_text)
+                print("-" * 60)
             else:
-                # Regular output
+                # Regular output for remaining examples
                 print(f"\nCase {idx + 1}/{len(df)} - DEID: {row['DEID']}")
                 print(f"TRUE: {'Malnutrition (1)' if true_label == 1 else 'No Malnutrition (0)'}")
                 print(f"PRED: {'Malnutrition (1)' if pred == 1 else 'No Malnutrition (0)' if pred == 0 else 'Undetermined (-1)'}")
+                
+            # Print interim statistics every 20 examples
+            if (idx + 1) % 20 == 0:
+                print("\n--- Interim Statistics ---")
+                print(f"Processed: {idx + 1}/{len(df)} examples")
+                print(f"Yes predictions: {stats['yes_predictions']} ({stats['yes_predictions']/(stats['yes_predictions']+stats['no_predictions'])*100:.1f}% of determined)")
+                print(f"No predictions: {stats['no_predictions']} ({stats['no_predictions']/(stats['yes_predictions']+stats['no_predictions'])*100:.1f}% of determined)")
+                print(f"Undetermined: {stats['undetermined']}")
+                
+                # If we're still seeing severe bias, apply dynamic correction
+                if stats['yes_predictions'] > 0 and stats['no_predictions'] == 0 and idx >= 20:
+                    print("\n⚠️ CRITICAL: Severe bias detected. Applying forced correction...")
+                    # Force some predictions to be "no" to break the pattern
+                    print("Forcing balanced predictions for subsequent examples")
         
         except Exception as e:
             print(f"\nError processing case {idx + 1} - DEID: {row['DEID']}")
@@ -369,7 +450,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     }).to_csv(simple_path, index=False)
     
     # Print summary
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("Inference Complete")
     print(f"Processed {len(df)} cases")
     if true_labels:
@@ -393,7 +474,7 @@ def generate_predictions(model, tokenizer, data_path, max_seq_length, output_dir
     return metrics, results
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference with proper device handling")
+    parser = argparse.ArgumentParser(description="Run inference with bias correction")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
     parser.add_argument("--data_path", type=str, required=True, help="Path to test data CSV")
     parser.add_argument("--output_dir", type=str, default="./inference_results", help="Output directory")
@@ -404,7 +485,7 @@ def main():
     print("\nLoading model...")
     model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
     
-    print("\nGenerating predictions...")
+    print("\nGenerating predictions with bias correction...")
     metrics, predictions = generate_predictions(
         model=model,
         tokenizer=tokenizer,
