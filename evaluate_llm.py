@@ -17,6 +17,7 @@ from unsloth import FastLanguageModel
 from transformers import TextStreamer
 from sklearn.metrics import classification_report, confusion_matrix
 import json
+import re
 
 
 def parse_arguments():
@@ -45,11 +46,11 @@ def parse_arguments():
                         help="Column name for true labels (if available)")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Temperature for sampling during generation (default: 0.1)")
-    parser.add_argument("--top_p", type=float, default=0.9,
-                        help="Top-p (nucleus) sampling parameter (default: 0.9)")
-    parser.add_argument("--repetition_penalty", type=float, default=1.2,
-                        help="Penalty for token repetition (default: 1.2, higher = less repetition)")
-    parser.add_argument("--no_repeat_ngram_size", type=int, default=3,
+    parser.add_argument("--top_p", type=float, default=0.95,
+                        help="Top-p (nucleus) sampling parameter (default: 0.95)")
+    parser.add_argument("--repetition_penalty", type=float, default=1.0,
+                        help="Penalty for token repetition (default: 1.0, higher = less repetition)")
+    parser.add_argument("--no_repeat_ngram_size", type=int, default=2,
                         help="Size of n-grams that shouldn't be repeated (default: 3)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
@@ -110,29 +111,13 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     Length/height-for-age: −3 z score
     Mid–upper arm circumference: Greater than or equal to −3 z score
     
-    [Assessment Protocol]
-    1. Primary reliance on anthropometrics and clinical data
-    2. Differentiate acute vs chronic patterns when present
-    3. Confirm with clinical correlates
-    4. Determine "yes" ONLY when criteria for malnutrition are definitively met
-    5. Determine "no" when criteria for normal nutritional status are met
     
     [Output Format]
     Strictly follow this structure:
-    
     ### Assessment:
-    ### Assessment:
+    First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
+    Then format your output as follows, strictly follow this format:yes/no
     <yes/no>  # yes = patient IS malnourished, no = patient is NOT malnourished
-    # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
-    
-    ### Severity:
-    <sam/mam/stunting/none>
-    
-    ### Basis:
-    - Maximum 3 bullet points
-    - Cite specific z-scores or measurements when available
-    - Note key clinical findings
-    - For "no" assessments, document normal growth parameters
     
     Clinical note for analysis:
 """
@@ -243,6 +228,42 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     return prediction
 
 
+def extract_yes_no(assessment_text):
+    """
+    Extract the yes/no classification from the model's output using the specific format
+    where the answer is enclosed in <yes/no> tags.
+    
+    Args:
+        assessment_text: The model's assessment output
+        
+    Returns:
+        'yes', 'no', or 'error' if extraction fails
+    """
+    # Look for pattern <yes> or <no>
+    pattern = r'<(yes|no)>'
+    match = re.search(pattern, assessment_text.lower())
+    
+    if match:
+        return match.group(1)
+    
+    # Fallback: check if yes/no appears in the text
+    if "yes" in assessment_text.lower() and "no" not in assessment_text.lower():
+        return "yes"
+    elif "no" in assessment_text.lower() and "yes" not in assessment_text.lower():
+        return "no"
+    elif "yes" in assessment_text.lower() and "no" in assessment_text.lower():
+        # If both yes and no appear, try to find the one after the specific format marker
+        if "format:yes/no" in assessment_text.lower():
+            text_after_format = assessment_text.lower().split("format:yes/no", 1)[1]
+            if "yes" in text_after_format and "no" not in text_after_format:
+                return "yes"
+            elif "no" in text_after_format and "yes" not in text_after_format:
+                return "no"
+    
+    # Could not determine clearly
+    return "error"
+
+
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
     results = []
@@ -299,16 +320,16 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
 
             inference_time = time.time() - start_time
 
-            # Extract just the assessment (yes/no) from the prediction
+            # Extract the assessment part from the prediction
             try:
                 assessment_part = prediction.split("### Assessment:")[-1].strip()
-                # Clean up to get just yes or no
-                assessment = assessment_part.split()[0].lower()
-                if assessment not in ['yes', 'no']:
-                    # Handle case where model gives more than yes/no
-                    assessment = 'yes' if 'yes' in assessment_part.lower() else 'no'
+                # Extract yes/no using the new format with <yes/no> tags
+                assessment = extract_yes_no(assessment_part)
             except:
                 assessment = "error"
+
+            # Save the full assessment text for reference
+            full_assessment = prediction.split("### Assessment:")[-1].strip() if "### Assessment:" in prediction else prediction
 
             # Print the true label and predicted label to terminal
             true_label_str = str(true_label) if true_label is not None else "unknown"
@@ -318,6 +339,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 "DEID": patient_id,
                 "true_label": true_label if true_label is not None else "unknown",
                 "predicted_label": assessment,
+                "full_assessment": full_assessment,
                 "original_note": note,
                 "inference_time": inference_time
             }
@@ -364,6 +386,7 @@ def calculate_metrics(results, args):
         "DEID": [r["DEID"] for r in valid_results],
         "true_label": [r["true_label"] for r in valid_results],
         "predicted_label": [r["predicted_label"] for r in valid_results],
+        "full_assessment": [r["full_assessment"] for r in valid_results],
         "true_binary": y_true,
         "pred_binary": y_pred
     })
