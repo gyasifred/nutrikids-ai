@@ -83,7 +83,7 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
+    """Create balanced malnutrition assessment prompt with clear criteria and structured output format."""
     base_prompt = """[Role] Read the patient's notes and determine if the patient is likely to have malnutrition: 
     Criteria list.
     Weight is primarily affected during periods of acute undernutrition, whereas chronic undernutrition typically manifests as stunting. Severe acute undernutrition, experienced by children ages 6–60 months of age, is defined as a very low weight-for-height (less than −3 standard deviations [SD] [z scores] of the median WHO growth standards), by visible
@@ -113,11 +113,13 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     
     
     [Output Format]
-    Strictly follow this structure:
+    You must strictly follow this structure:
     ### Assessment:
-    First provide some explanations about your decision. In your explanation mention did you use single or multiple data points, and list z scores you used.
-    Then format your output as follows, strictly follow this format:yes/no
-    <yes/no>  # yes = patient IS malnourished, no = patient is NOT malnourished
+    First provide your analysis of the patient case, mentioning whether you used single or multiple data points, and listing any z-scores you used.
+    
+    ### Decision:
+    <DECISION>YES</DECISION> or <DECISION>NO</DECISION>
+    (YES = patient IS malnourished, NO = patient is NOT malnourished)
     
     Clinical note for analysis:
 """
@@ -137,6 +139,62 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
 
     return base_prompt + note + "\n\n### Assessment:\n"
 
+
+def extract_yes_no(assessment_text):
+    """
+    Extract the yes/no classification from the model's output using the new structured format
+    where the answer is enclosed in <DECISION> tags.
+    
+    Args:
+        assessment_text: The model's assessment output
+        
+    Returns:
+        'yes', 'no', or 'error' if extraction fails
+    """
+    # Look for pattern with <DECISION> tags
+    pattern = r'<DECISION>(YES|NO)</DECISION>'
+    match = re.search(pattern, assessment_text.upper())
+    
+    if match:
+        return match.group(1).lower()
+    
+    # Fallback: check for "### Decision:" section
+    if "### Decision:" in assessment_text:
+        decision_section = assessment_text.split("### Decision:", 1)[1].strip().lower()
+        if "yes" in decision_section[:20] and "no" not in decision_section[:20]:
+            return "yes"
+        elif "no" in decision_section[:20] and "yes" not in decision_section[:20]:
+            return "no"
+    
+    # Second fallback: check for clear yes/no statements in the assessment
+    assessment_lower = assessment_text.lower()
+    # Check for conclusive statements
+    conclusive_yes = [
+        "patient is malnourished",
+        "patient has malnutrition",
+        "diagnosis of malnutrition",
+        "meets criteria for malnutrition",
+        "indicates malnutrition"
+    ]
+    conclusive_no = [
+        "patient is not malnourished",
+        "no evidence of malnutrition",
+        "does not meet criteria for malnutrition",
+        "no signs of malnutrition",
+        "malnutrition is not present"
+    ]
+    
+    # Check for conclusive statements
+    for phrase in conclusive_yes:
+        if phrase in assessment_lower:
+            return "yes"
+    
+    for phrase in conclusive_no:
+        if phrase in assessment_lower:
+            return "no"
+    
+    # Could not determine clearly
+    return "error"
 
 def load_model(model_path, load_in_4bit):
     """Load the fine-tuned model with native sequence length."""
@@ -226,43 +284,6 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     return prediction
-
-
-def extract_yes_no(assessment_text):
-    """
-    Extract the yes/no classification from the model's output using the specific format
-    where the answer is enclosed in <yes/no> tags.
-    
-    Args:
-        assessment_text: The model's assessment output
-        
-    Returns:
-        'yes', 'no', or 'error' if extraction fails
-    """
-    # Look for pattern <yes> or <no>
-    pattern = r'<(yes|no)>'
-    match = re.search(pattern, assessment_text.lower())
-    
-    if match:
-        return match.group(1)
-    
-    # Fallback: check if yes/no appears in the text
-    if "yes" in assessment_text.lower() and "no" not in assessment_text.lower():
-        return "yes"
-    elif "no" in assessment_text.lower() and "yes" not in assessment_text.lower():
-        return "no"
-    elif "yes" in assessment_text.lower() and "no" in assessment_text.lower():
-        # If both yes and no appear, try to find the one after the specific format marker
-        if "format:yes/no" in assessment_text.lower():
-            text_after_format = assessment_text.lower().split("format:yes/no", 1)[1]
-            if "yes" in text_after_format and "no" not in text_after_format:
-                return "yes"
-            elif "no" in text_after_format and "yes" not in text_after_format:
-                return "no"
-    
-    # Could not determine clearly
-    return "error"
-
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
