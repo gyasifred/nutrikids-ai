@@ -120,6 +120,7 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     ### Decision:
     <DECISION>YES</DECISION> or <DECISION>NO</DECISION>
     (YES = patient IS malnourished, NO = patient is NOT malnourished)
+     Do not explain, just output <DECISION>YES</DECISION> or <DECISION>NO</DECISION>
     
     Clinical note for analysis:
 """
