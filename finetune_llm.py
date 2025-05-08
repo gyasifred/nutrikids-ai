@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Fine-tune LLaMA-style model using Unsloth + LoRA for malnutrition assessment
-with a detailed prompt for context-limited environments.
+with a simplified prompt for context-limited environments.
 """
 
 from unsloth import FastLanguageModel
@@ -62,57 +62,34 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 
-def create_detailed_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
-    """Create balanced malnutrition assessment prompt with clear criteria for both positive and negative determinations."""
-    base_prompt = """[Role] Read the patient's notes and determine if the patient is likely to have malnutrition: 
-    Criteria list.
-    Weight is primarily affected during periods of acute undernutrition, whereas chronic undernutrition typically manifests as stunting. Severe acute undernutrition, experienced by children ages 6–60 months of age, is defined as a very low weight-for-height (less than −3 standard deviations [SD] [z scores] of the median WHO growth standards), by visible
-    severe wasting (mid–upper arm circumference [MUAC] ≤115 mm), or by the presence of nutritional edema.
-    Chronic undernutrition or stunting is defined by WHO as having a height-forage
-    (or length-for-age) that is less than −2 SD (z score) of the median of the WHO international reference.
-    Growth is the primary outcome measure of nutritional status in children. Growth should be monitored at regular intervals throughout childhood and adolescence and should also be
-    measured every time a child presents, in any healthcare setting, for preventive, acute, or chronic care. In children less than 36 months of age, measures of growth include length-for-age, weight-for-age, head circumference-for-age, and weight-for-length. In children ages 2–20 years, standing height-for-age, weight-for-age, and body mass index (BMI)-for-age are typically collected.
-    Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
-    On initial presentation, a child may have only a single data point for use as a criterion for the identification and diagnosis of malnutrition related to undernutrition. When this is the case, the use of z scores for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria as stated in Table below:
-    ### Table.
-    ### Mild Malnutrition
-    Weight-for-height: −1 to −1.9 z score
-    BMI-for-age: −1 to −1.9 z score
-    Length/height-for-age: No Data
-    Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score	
-    ### Moderate Malnutrition	
-    Weight-for-height: −2 to −2.9 z score
-    BMI-for-age: −2 to −2.9 z score
-    Length/height-for-age: No Data
-    Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score	
-    ### Severe Malnutrition
-    Weight-for-height:	−3 or greater z score
-    BMI-for-age: −3 or greater z score
-    Length/height-for-age: −3 z score
-    Mid–upper arm circumference: Greater than or equal to −3 z score
-    
-    [Assessment Protocol]
-    1. Primary reliance on anthropometrics and clinical data
-    2. Differentiate acute vs chronic patterns when present
-    3. Confirm with clinical correlates
-    4. Determine "yes" ONLY when criteria for malnutrition are definitively met
-    5. Determine "no" when criteria for normal nutritional status are met
-
-[Output Format]
-Strictly follow this structure:
-
-### Assessment:
-<yes/no>  # FIRST TOKEN MUST BE yes/no, based ONLY on evidence meeting criteria
-
-### Severity:
-<sam/mam/stunting/none>
-
-### Basis:
-- Maximum 3 bullet points
-- Cite specific z-scores or measurements when available
-- Note key clinical findings
-- For "no" assessments, document normal growth parameters
-
+def create_malnutrition_prompt(note, label="", tokenizer=None, max_tokens=None):
+    """Create improved malnutrition assessment prompt with clearer output format and structured analysis."""
+    base_prompt = """[Role] Read the patient's clinical note and determine if the patient has malnutrition based on the criteria below.
+MALNUTRITION CRITERIA TABLE:
+### Mild Malnutrition
+- Weight-for-height: −1 to −1.9 z score
+- BMI-for-age: −1 to −1.9 z score
+- Length/height-for-age: No specific criteria
+- Mid–upper arm circumference (MUAC): Greater than or equal to −1 to −1.9 z score
+### Moderate Malnutrition
+- Weight-for-height: −2 to −2.9 z score
+- BMI-for-age: −2 to −2.9 z score
+- Length/height-for-age: No specific criteria
+- Mid–upper arm circumference (MUAC): Greater than or equal to −2 to −2.9 z score
+### Severe Malnutrition
+- Weight-for-height: −3 or lower z score
+- BMI-for-age: −3 or lower z score
+- Length/height-for-age: −3 or lower z score
+- Mid–upper arm circumference (MUAC): Greater than or equal to −3 z score
+[Instructions]
+1. Carefully analyze the clinical note to find ANY evidence of z-scores, BMI, weight-for-height, length/height-for-age, or MUAC measurements.
+2. Compare ANY found measurements directly against the criteria table above.
+3. A patient is malnourished if they meet ANY ONE of the criteria for mild, moderate, or severe malnutrition.
+4. If NO anthropometric measurements are found OR if measurements are all within normal range, the patient is NOT malnourished.
+5. Your response must be strictly "YES" or "NO" only, with no additional explanation.
+[Output]
+Is the patient malnourished? 
+Answer with ONLY "YES" or "NO". Do not provide any explanation.
 Clinical note for analysis:
 {note}
 
@@ -122,12 +99,12 @@ Clinical note for analysis:
     if label:
         # Map numeric labels (1/0) to yes/no format
         if label in ["1", 1, "yes", "Yes", "YES"]:
-            formatted_label = "### Assessment:\nyes"
+            formatted_label = "YES"
         else:
-            formatted_label = "### Assessment:\nno"
+            formatted_label = "NO"
         label_part = f"{formatted_label}"
     else:
-        label_part = "### Assessment:\n"
+        label_part = ""
 
     # Apply token truncation if needed
     formatted_prompt = base_prompt.format(note=note, label_part=label_part)
@@ -165,7 +142,7 @@ Clinical note for analysis:
 
 
 def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=False):
-    """Prepare dataset with specialized malnutrition prompt structure"""
+    """Prepare dataset with simplified malnutrition prompt structure"""
     df = pd.read_csv(data_path)
     if not {"txt", "label"}.issubset(df.columns):
         raise ValueError("CSV must include 'txt' and 'label' columns.")
@@ -175,11 +152,11 @@ def prepare_dataset(data_path, tokenizer, max_seq_length, preprocess_tokens=Fals
         note_text = preprocess_clinical_note(
             row["txt"]) if preprocess_tokens else row["txt"]
 
-        # Convert label format (1/0 to yes/no)
-        label_text = "yes" if str(row["label"]).lower() in {
-            "1", "yes", "true"} else "no"
+        # Convert label format (1/0 to yes/no format)
+        label_text = "YES" if str(row["label"]).lower() in {
+            "1", "yes", "true"} else "NO"
 
-        prompt = create_detailed_malnutrition_prompt(
+        prompt = create_malnutrition_prompt(
             note=note_text,
             label=label_text,
             tokenizer=tokenizer,
@@ -273,7 +250,7 @@ def main():
     )
 
     # Train the model
-    print(f"Starting training with detailed prompt style...")
+    print(f"Starting training with simplified prompt style...")
     trainer_stats = trainer.train()
 
     # Save the model
