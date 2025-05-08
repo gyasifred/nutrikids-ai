@@ -11,13 +11,13 @@ import numpy as np
 import torch
 import argparse
 import time
+import re
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from unsloth import FastLanguageModel
 from transformers import TextStreamer
 from sklearn.metrics import classification_report, confusion_matrix
 import json
-import re
 
 
 def parse_arguments():
@@ -131,21 +131,62 @@ Clinical note for analysis:
 
 def extract_yes_no(output_text):
     """
-    Extract the yes/no classification from the model's output with very simple logic.
+    Extract the yes/no classification from the model's output with improved pattern matching.
+    Prioritizes extracting the final YES/NO answer, which is what the prompt specifically asks for.
     """
-    # Convert to lowercase for case-insensitive matching
-    output_lower = output_text.lower()
+    if not output_text:
+        return "error"
     
-    # Look for exact matches of "yes" or "no"
+    # Convert to lowercase for case-insensitive matching
+    output_lower = output_text.lower().strip()
+    
+    # First, check if the text ends with a clear yes/no response (highest priority)
+    # This matches patterns like "Answer: YES" or just "YES" at the end
+    ending_match = re.search(r'(?:^|.*\W)(yes|no)[\s\.\,]*$', output_lower)
+    if ending_match:
+        return ending_match.group(1)
+    
+    # Look for standalone "yes" or "no" surrounded by whitespace or punctuation
+    standalone_pattern = r'(?:^|\W)(yes|no)(?:$|\W)'
+    standalone_matches = re.findall(standalone_pattern, output_lower)
+    
+    if standalone_matches:
+        # Get the last standalone match (most likely to be the final answer)
+        return standalone_matches[-1]
+    
+    # Context-specific phrases with more precise matching
+    yes_phrases = [
+        r"patient\s+is\s+malnourished", 
+        r"has\s+malnutrition",
+        r"malnutrition:\s*yes",
+        r"assessment:\s*yes",
+        r"conclusion:\s*yes"
+    ]
+    
+    no_phrases = [
+        r"patient\s+is\s+not\s+malnourished",
+        r"no\s+malnutrition",
+        r"does\s+not\s+have\s+malnutrition",
+        r"malnutrition:\s*no",
+        r"assessment:\s*no",
+        r"conclusion:\s*no"
+    ]
+    
+    # Check for precise yes phrases
+    for pattern in yes_phrases:
+        if re.search(pattern, output_lower):
+            return "yes"
+    
+    # Check for precise no phrases
+    for pattern in no_phrases:
+        if re.search(pattern, output_lower):
+            return "no"
+    
+    # If still undetermined, look for the basic "yes" or "no" as a last resort
+    # This is less reliable but better than returning "error" if nothing else works
     if "yes" in output_lower and "no" not in output_lower:
         return "yes"
     elif "no" in output_lower and "yes" not in output_lower:
-        return "no"
-    
-    # Look for more context-specific matches
-    if any(phrase in output_lower for phrase in ["patient is malnourished", "has malnutrition"]):
-        return "yes"
-    elif any(phrase in output_lower for phrase in ["patient is not malnourished", "no malnutrition"]):
         return "no"
     
     # If we can't determine clearly
@@ -285,7 +326,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             # Extract the output part from the prediction
             output_part = prediction.split("[Output]")[-1].strip() if "[Output]" in prediction else prediction
             
-            # Extract yes/no using simpler logic
+            # Extract yes/no using improved logic
             assessment = extract_yes_no(output_part)
 
             # Print the true label and predicted label to terminal
