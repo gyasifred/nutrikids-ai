@@ -44,7 +44,7 @@ def parse_arguments():
                         help="Column name for patient IDs")
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
-    parser.add_argument("--temperature", type=float, default=0.1,
+    parser.add_argument("--temperature", type=float, default=0,
                         help="Temperature for sampling during generation (default: 0.1)")
     parser.add_argument("--top_p", type=float, default=0.95,
                         help="Top-p (nucleus) sampling parameter (default: 0.95)")
@@ -60,18 +60,11 @@ def parse_arguments():
 def preprocess_clinical_note(note_text):
     """
     Preprocess clinical notes to handle special tokens like </s> that might interfere with model training.
-    
-    Args:
-        note_text (str): The raw clinical note text
-        
-    Returns:
-        str: Processed clinical note text with special tokens handled
     """
     if not note_text:
         return note_text
 
-    # Replace '</s>' tokens with a more appropriate separator that won't be interpreted as special
-    # Using double newlines to maintain document structure
+    # Replace '</s>' tokens with a more appropriate separator
     processed_text = note_text.replace('</s>', '\n\n')
 
     # Check for any remaining special tokens that might interfere
@@ -82,8 +75,9 @@ def preprocess_clinical_note(note_text):
 
     return processed_text
 
+
 def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create balanced malnutrition assessment prompt with clear criteria and structured output format."""
+    """Create simplified malnutrition assessment prompt with clearer output format."""
     base_prompt = """[Role] Read the patient's notes and determine if the patient is likely to have malnutrition: 
     Criteria list.
     Weight is primarily affected during periods of acute undernutrition, whereas chronic undernutrition typically manifests as stunting. Severe acute undernutrition, experienced by children ages 6–60 months of age, is defined as a very low weight-for-height (less than −3 standard deviations [SD] [z scores] of the median WHO growth standards), by visible
@@ -111,16 +105,9 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
     Length/height-for-age: −3 z score
     Mid–upper arm circumference: Greater than or equal to −3 z score
     
-    
-    [Output Format]
-    You must strictly follow this structure:
-    ### Assessment:
-    First provide your analysis of the patient case, mentioning whether you used single or multiple data points, and listing any z-scores you used.
-    
-    ### Decision:
-    <DECISION>YES</DECISION> or <DECISION>NO</DECISION>
-    (YES = patient IS malnourished, NO = patient is NOT malnourished)
-     Do not explain, just output <DECISION>YES</DECISION> or <DECISION>NO</DECISION>
+    [Output]
+    Is the patient malnourished? 
+    Answer with ONLY "YES" or "NO". Do not provide any explanation.
     
     Clinical note for analysis:
 """
@@ -138,69 +125,36 @@ def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
                 note = tokenizer.decode(note_tokens[:max_note_tokens])
                 print(f"Truncated note from {len(note_tokens)} to {max_note_tokens} tokens")
 
-    return base_prompt + note + "\n\n### Assessment:\n"
+    return base_prompt + note + "\n\n[Output]\nIs the patient malnourished? "
 
 
-def extract_yes_no(assessment_text):
+def extract_yes_no(output_text):
     """
-    Extract the yes/no classification from the model's output using the new structured format
-    where the answer is enclosed in <DECISION> tags.
-    
-    Args:
-        assessment_text: The model's assessment output
-        
-    Returns:
-        'yes', 'no', or 'error' if extraction fails
+    Extract the yes/no classification from the model's output with very simple logic.
     """
-    # Look for pattern with <DECISION> tags
-    pattern = r'<DECISION>(YES|NO)</DECISION>'
-    match = re.search(pattern, assessment_text.upper())
+    # Convert to lowercase for case-insensitive matching
+    output_lower = output_text.lower()
     
-    if match:
-        return match.group(1).lower()
+    # Look for exact matches of "yes" or "no"
+    if "yes" in output_lower and "no" not in output_lower:
+        return "yes"
+    elif "no" in output_lower and "yes" not in output_lower:
+        return "no"
     
-    # Fallback: check for "### Decision:" section
-    if "### Decision:" in assessment_text:
-        decision_section = assessment_text.split("### Decision:", 1)[1].strip().lower()
-        if "yes" in decision_section[:20] and "no" not in decision_section[:20]:
-            return "yes"
-        elif "no" in decision_section[:20] and "yes" not in decision_section[:20]:
-            return "no"
+    # Look for more context-specific matches
+    if any(phrase in output_lower for phrase in ["patient is malnourished", "has malnutrition"]):
+        return "yes"
+    elif any(phrase in output_lower for phrase in ["patient is not malnourished", "no malnutrition"]):
+        return "no"
     
-    # Second fallback: check for clear yes/no statements in the assessment
-    assessment_lower = assessment_text.lower()
-    # Check for conclusive statements
-    conclusive_yes = [
-        "patient is malnourished",
-        "patient has malnutrition",
-        "diagnosis of malnutrition",
-        "meets criteria for malnutrition",
-        "indicates malnutrition"
-    ]
-    conclusive_no = [
-        "patient is not malnourished",
-        "no evidence of malnutrition",
-        "does not meet criteria for malnutrition",
-        "no signs of malnutrition",
-        "malnutrition is not present"
-    ]
-    
-    # Check for conclusive statements
-    for phrase in conclusive_yes:
-        if phrase in assessment_lower:
-            return "yes"
-    
-    for phrase in conclusive_no:
-        if phrase in assessment_lower:
-            return "no"
-    
-    # Could not determine clearly
+    # If we can't determine clearly
     return "error"
+
 
 def load_model(model_path, load_in_4bit):
     """Load the fine-tuned model with native sequence length."""
     try:
-        # Try loading with Unsloth first - using model's native max_seq_length
+        # Try loading with Unsloth first
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
             dtype=None,  # Auto detect
@@ -233,24 +187,8 @@ def load_model(model_path, load_in_4bit):
     return model, tokenizer, max_seq_length
 
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.3, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=3):
-    """Generate text from the model with repetition control.
-    
-    Args:
-        model: The model to generate text with
-        tokenizer: The tokenizer to use
-        prompt: The input prompt
-        max_new_tokens: Maximum number of tokens to generate
-        streamer: Optional text streamer for streaming output
-        max_seq_length: Maximum sequence length for the model
-        temperature: Temperature for sampling (higher = more random)
-        top_p: Top-p (nucleus) sampling parameter
-        repetition_penalty: Penalty for repetition (higher = less repetition)
-        no_repeat_ngram_size: Size of n-grams that shouldn't be repeated
-        
-    Returns:
-        The generated text
-    """
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.1, top_p=0.95, repetition_penalty=1.0, no_repeat_ngram_size=2):
+    """Generate text from the model with simplified parameters."""
     # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
 
@@ -266,15 +204,15 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     # Move input to model device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-    # Generate output with temperature, top_p, and repetition control parameters
+    # Generate output with simplified parameters
     generation_kwargs = {
         **inputs,
         "max_new_tokens": max_new_tokens,
         "use_cache": True,
         "temperature": temperature,
         "top_p": top_p,
-        "repetition_penalty": repetition_penalty,        # Penalize repetition
-        "no_repeat_ngram_size": no_repeat_ngram_size,    # Avoid repeating n-grams
+        "repetition_penalty": repetition_penalty,
+        "no_repeat_ngram_size": no_repeat_ngram_size,
     }
 
     if streamer:
@@ -285,6 +223,7 @@ def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, m
     prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     return prediction
+
 
 def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length):
     """Run inference on the provided clinical notes."""
@@ -342,16 +281,11 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
 
             inference_time = time.time() - start_time
 
-            # Extract the assessment part from the prediction
-            try:
-                assessment_part = prediction.split("### Assessment:")[-1].strip()
-                # Extract yes/no using the new format with <yes/no> tags
-                assessment = extract_yes_no(assessment_part)
-            except:
-                assessment = "error"
-
-            # Save the full assessment text for reference
-            full_assessment = prediction.split("### Assessment:")[-1].strip() if "### Assessment:" in prediction else prediction
+            # Extract the output part from the prediction
+            output_part = prediction.split("[Output]")[-1].strip() if "[Output]" in prediction else prediction
+            
+            # Extract yes/no using simpler logic
+            assessment = extract_yes_no(output_part)
 
             # Print the true label and predicted label to terminal
             true_label_str = str(true_label) if true_label is not None else "unknown"
@@ -361,7 +295,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 "DEID": patient_id,
                 "true_label": true_label if true_label is not None else "unknown",
                 "predicted_label": assessment,
-                "full_assessment": full_assessment,
+                "full_output": output_part,
                 "original_note": note,
                 "inference_time": inference_time
             }
@@ -408,7 +342,7 @@ def calculate_metrics(results, args):
         "DEID": [r["DEID"] for r in valid_results],
         "true_label": [r["true_label"] for r in valid_results],
         "predicted_label": [r["predicted_label"] for r in valid_results],
-        "full_assessment": [r["full_assessment"] for r in valid_results],
+        "full_output": [r["full_output"] for r in valid_results],
         "true_binary": y_true,
         "pred_binary": y_pred
     })
@@ -543,11 +477,6 @@ def main():
     # Calculate average inference time
     avg_time = sum(r["inference_time"] for r in results) / len(results)
     print(f"Average inference time per note: {avg_time:.3f} seconds")
-    print(f"Generation parameters:")
-    print(f"  - Temperature: {args.temperature}")
-    print(f"  - Top_p: {args.top_p}")
-    print(f"  - Repetition penalty: {args.repetition_penalty}")
-    print(f"  - No repeat ngram size: {args.no_repeat_ngram_size}")
 
 
 if __name__ == "__main__":
