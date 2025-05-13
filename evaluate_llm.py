@@ -194,25 +194,22 @@ def extract_yes_no(output_text):
     return "error"
 
 
-def load_model(model_path, load_in_4bit):
-    """Load the fine-tuned model with native sequence length."""
+def load_model(model_path, load_in_4bit, max_seq_length=None):
+    """Load the fine-tuned model with optional sequence length override."""
     try:
-        # Try loading with Unsloth first
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_path,
-            dtype=None,  # Auto detect
+            dtype=None,
             load_in_4bit=load_in_4bit,
+            max_seq_length=max_seq_length,
         )
-        FastLanguageModel.for_inference(model)  # Enable faster inference
-
-        # Get model's native max sequence length
-        # max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
-        print(f"Using model's native max sequence length: {max_seq_length}")
-
+        FastLanguageModel.for_inference(model)
+        final_seq_length = max_seq_length if max_seq_length else getattr(model.config, "max_position_embeddings", 4096)
+        print(f"Using max sequence length: {final_seq_length}")
+    
     except Exception as e:
         print(f"Error loading with Unsloth: {e}")
         print("Trying to load with Hugging Face PEFT...")
-        # Fallback to Hugging Face PEFT
         from peft import AutoPeftModelForCausalLM
         from transformers import AutoTokenizer
 
@@ -222,13 +219,10 @@ def load_model(model_path, load_in_4bit):
             device_map="auto",
         )
         tokenizer = AutoTokenizer.from_pretrained(model_path)
+        final_seq_length = max_seq_length if max_seq_length else getattr(model.config, "max_position_embeddings", 4096)
+        print(f"Using max sequence length: {final_seq_length}")
 
-        # Get model's native max sequence length
-        max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
-        print(f"Using model's native max sequence length: {max_seq_length}")
-
-    return model, tokenizer, max_seq_length
-
+    return model, tokenizer, final_seq_length
 
 def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.1, top_p=0.95, repetition_penalty=1.0, no_repeat_ngram_size=2):
     """Generate text from the model with simplified parameters."""
@@ -472,8 +466,7 @@ def main():
             true_labels = true_labels[:test_size]
 
     print(f"Loading model from: {args.model_path}")
-    model, tokenizer, model_seq_length = load_model(args.model_path, args.load_in_4bit)
-    max_seq_length = args.max_seq_length if args.max_seq_length else model_seq_length
+    model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit, args.max_seq_length)
     print(f"Max sequence length used for inference: {max_seq_length}")
 
     print("Starting inference...")
