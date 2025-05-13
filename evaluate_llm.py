@@ -15,7 +15,7 @@ import re
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from unsloth import FastLanguageModel
-from transformers import TextStreamer
+from transformers import TextStreamer, AutoTokenizer
 from sklearn.metrics import classification_report, confusion_matrix
 import json
 
@@ -45,18 +45,19 @@ def parse_arguments():
     parser.add_argument("--label_column", type=str, default="label", 
                         help="Column name for true labels (if available)")
     parser.add_argument("--temperature", type=float, default=0,
-                        help="Temperature for sampling during generation (default: 0.1)")
+                        help="Temperature for sampling during generation (default: 0)")
     parser.add_argument("--top_p", type=float, default=0.95,
                         help="Top-p (nucleus) sampling parameter (default: 0.95)")
     parser.add_argument("--repetition_penalty", type=float, default=1.0,
                         help="Penalty for token repetition (default: 1.0, higher = less repetition)")
     parser.add_argument("--no_repeat_ngram_size", type=int, default=2,
-                        help="Size of n-grams that shouldn't be repeated (default: 3)")
+                        help="Size of n-grams that shouldn't be repeated (default: 2)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
     parser.add_argument("--max_seq_length", type=int, default=None,
                         help="Override model's native max sequence length")
     return parser.parse_args()
+
 
 def preprocess_clinical_note(note_text):
     """
@@ -77,63 +78,116 @@ def preprocess_clinical_note(note_text):
     return processed_text
 
 
-def create_malnutrition_prompt(note, tokenizer=None, max_tokens=None):
-    """Create improved malnutrition assessment prompt with clearer output format and structured analysis."""
-    base_prompt = """[Role] Read the patient's clinical note and determine if the patient has malnutrition based on the criteria below.
+def create_malnutrition_prompt_alpaca(note, label="", tokenizer=None, max_tokens=None):
+    """Create malnutrition assessment prompt using the Alpaca instruction/input/response format."""
+    
+    # For training mode (with label), format the output part
+    if label:
+        # Map numeric labels (1/0) to yes/no format
+        if label in ["1", 1, "yes", "Yes", "YES"]:
+            response = "YES"
+        else:
+            response = "NO"
+    else:
+        response = ""  # Empty for inference mode
+    
+    # Define the malnutrition prompt with comprehensive criteria
+    malnutrition_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
-MALNUTRITION CRITERIA TABLE:
-### Mild Malnutrition
-- Weight-for-height: −1 to −1.9 z score
-- BMI-for-age: −1 to −1.9 z score
-- Length/height-for-age: No specific criteria
-- Mid–upper arm circumference (MUAC): Greater than or equal to −1 to −1.9 z score
+### Instruction:
+Analyze the clinical note and determine if the patient has malnutrition based on these criteria:
 
-### Moderate Malnutrition
-- Weight-for-height: −2 to −2.9 z score
-- BMI-for-age: −2 to −2.9 z score
-- Length/height-for-age: No specific criteria
-- Mid–upper arm circumference (MUAC): Greater than or equal to −2 to −2.9 z score
+Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
-### Severe Malnutrition
-- Weight-for-height: −3 or lower z score
-- BMI-for-age: −3 or lower z score
-- Length/height-for-age: −3 or lower z score
-- Mid–upper arm circumference (MUAC): Greater than or equal to −3 z score
+You should use z scores (also called z for short) for weight-for-height/length, BMI-for-age, length/height-for-age or MUAC criteria. When a child has only one data point in the records (single z score present) use the table below:
 
-[Instructions]
-1. Carefully analyze the clinical note to find ANY evidence of z-scores, BMI, weight-for-height, length/height-for-age, or MUAC measurements.
-2. Compare ANY found measurements directly against the criteria table above.
-3. A patient is malnourished if they meet ANY ONE of the criteria for mild, moderate, or severe malnutrition.
-4. If NO anthropometric measurements are found OR if measurements are all within normal range, the patient is NOT malnourished.
-5. Your response must be strictly "YES" or "NO" only, with no additional explanation.
+Table 1. Single data point present.
+Mild Malnutrition
+Weight-for-height: −1 to −1.9 z score
+BMI-for-age: −1 to −1.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −1 to −1.9 z score	
 
-[Output]
-Is the patient malnourished? 
-Answer with ONLY "YES" or "NO". Do not provide any explanation.
+Moderate Malnutrition	
+Weight-for-height: −2 to −2.9 z score
+BMI-for-age: −2 to −2.9 z score
+Length/height-for-age: No Data
+Mid–upper arm circumference: Greater than or equal to −2 to −2.9 z score	
 
-Clinical note for analysis:
-"""
+Severe Malnutrition
+Weight-for-height:	−3 or greater z score
+BMI-for-age: −3 or greater z score
+Length/height-for-age: −3 z score
+Mid–upper arm circumference: Greater than or equal to −3 z score
 
-    # Token-aware note truncation
+When the child has 2 or more data points (multiple z scores over time) use this table:
+
+Table 2. Multiple data points available.
+Mild Malnutrition
+Weight gain velocity (<2 years of age): Less than 75% of the norm for expected weight gain
+Weight loss (2–20 years of age): 5% usual body weigh
+Deceleration in weight for length/height: Decline of 1 z score
+Inadequate nutrient intake: 51%−75% estimated energy/protein need
+
+Moderate Malnutrition	
+Weight gain velocity (<2 years of age): Less than 50% of the norm for expected weight gain
+Weight loss (2–20 years of age): 7.5% usual body weight
+Deceleration in weight for length/height: Decline of 2 z score
+Inadequate nutrient intake: 26%−50% estimated energy/protein need
+
+Severe Malnutrition
+Weight gain velocity (<2 years of age): Less than 25% of the normb for expected weight gain
+Weight loss (2–20 years of age): 10% usual body weight
+Deceleration in weight for length/height: Decline of 3 z score
+Inadequate nutrient intake: less than 25% estimated energy/protein need
+
+Respond with ONLY "YES" if malnourished or "NO" if not malnourished.
+
+### Input:
+{}
+
+### Response:
+{}"""
+
+    # Format the prompt with the note and response
+    formatted_prompt = malnutrition_prompt.format(note, response)
+
+    # Apply token truncation if needed
     if tokenizer and max_tokens:
-        # Calculate token budgets
-        base_tokens = len(tokenizer.encode(base_prompt))
-        safety_margin = 128  # For generation space
-        max_note_tokens = max_tokens - base_tokens - safety_margin
+        tokens = tokenizer.encode(formatted_prompt)
 
-        if max_note_tokens > 0:
+        # Check if tokens is too long
+        if len(tokens) > max_tokens:
+            # Get template without the note to determine available tokens
+            template = malnutrition_prompt.format("", response)
+            template_tokens = tokenizer.encode(template)
+
+            # Calculate available tokens for the note
+            available_tokens = max_tokens - len(template_tokens)
+
+            # Ensure at least some tokens are available
+            if available_tokens <= 0:
+                available_tokens = max_tokens // 2  
+
+            # Tokenize the note separately
             note_tokens = tokenizer.encode(note)
-            if len(note_tokens) > max_note_tokens:
-                note = tokenizer.decode(note_tokens[:max_note_tokens])
-                print(f"Truncated note from {len(note_tokens)} to {max_note_tokens} tokens")
 
-    return base_prompt + note + "\n\n[Output]\nIs the patient malnourished? "
+            # Truncate the note tokens
+            truncated_note_tokens = note_tokens[:available_tokens]
+
+            # Decode the truncated tokens back to text
+            truncated_note = tokenizer.decode(truncated_note_tokens)
+
+            # Recreate the prompt with the truncated note
+            formatted_prompt = malnutrition_prompt.format(truncated_note, response)
+
+    return formatted_prompt
 
 
 def extract_yes_no(output_text):
     """
     Extract the yes/no classification from the model's output with improved pattern matching.
-    Prioritizes extracting the final YES/NO answer, which is what the prompt specifically asks for.
+    Prioritizes extracting the final YES/NO answer.
     """
     if not output_text:
         return "error"
@@ -184,7 +238,6 @@ def extract_yes_no(output_text):
             return "no"
     
     # If still undetermined, look for the basic "yes" or "no" as a last resort
-    # This is less reliable but better than returning "error" if nothing else works
     if "yes" in output_lower and "no" not in output_lower:
         return "yes"
     elif "no" in output_lower and "yes" not in output_lower:
@@ -224,7 +277,8 @@ def load_model(model_path, load_in_4bit, max_seq_length=None):
 
     return model, tokenizer, final_seq_length
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.1, top_p=0.95, repetition_penalty=1.0, no_repeat_ngram_size=2):
+
+def generate_text(model, tokenizer, prompt, max_new_tokens=100, streamer=None, max_seq_length=None, temperature=0.0, top_p=0.95, repetition_penalty=1.0, no_repeat_ngram_size=2):
     """Generate text from the model with simplified parameters."""
     # Tokenize the prompt
     inputs = tokenizer([prompt], return_tensors="pt")
@@ -280,7 +334,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
                 note = preprocess_clinical_note(note)
 
             # Create prompt for the current note with length control
-            prompt = create_malnutrition_prompt(
+            prompt = create_malnutrition_prompt_alpaca(
                 note, 
                 tokenizer=tokenizer, 
                 max_tokens=max_seq_length - args.max_new_tokens
@@ -319,7 +373,7 @@ def run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_s
             inference_time = time.time() - start_time
 
             # Extract the output part from the prediction
-            output_part = prediction.split("[Output]")[-1].strip() if "[Output]" in prediction else prediction
+            output_part = prediction.split("### Response:")[-1].strip() if "### Response:" in prediction else prediction
             
             # Extract yes/no using improved logic
             assessment = extract_yes_no(output_part)
