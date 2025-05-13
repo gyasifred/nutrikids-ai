@@ -54,8 +54,9 @@ def parse_arguments():
                         help="Size of n-grams that shouldn't be repeated (default: 3)")
     parser.add_argument("--preprocess_tokens", action="store_true", 
                         help="Preprocess </s> tokens in clinical notes")
+    parser.add_argument("--max_seq_length", type=int, default=None,
+                        help="Override model's native max sequence length")
     return parser.parse_args()
-
 
 def preprocess_clinical_note(note_text):
     """
@@ -205,7 +206,7 @@ def load_model(model_path, load_in_4bit):
         FastLanguageModel.for_inference(model)  # Enable faster inference
 
         # Get model's native max sequence length
-        max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
+        # max_seq_length = getattr(model.config, "max_position_embeddings", 4096)
         print(f"Using model's native max sequence length: {max_seq_length}")
 
     except Exception as e:
@@ -440,35 +441,28 @@ def calculate_metrics(results, args):
 def main():
     args = parse_arguments()
 
-    # Create output directory and subdirectories
     os.makedirs(args.output_dir, exist_ok=True)
     output_file = os.path.join(args.output_dir, "inference_results.csv")
 
-    # Load the data
     print(f"Loading data from: {args.input_file}")
     df = pd.read_csv(args.input_file)
 
-    # Check for required columns
     if args.note_column not in df.columns:
         raise ValueError(f"Note column '{args.note_column}' not found in the input file")
     if args.id_column not in df.columns:
         raise ValueError(f"ID column '{args.id_column}' not found in the input file")
 
-    # Extract notes and patient IDs
     notes = df[args.note_column].tolist()
     patient_ids = df[args.id_column].tolist()
 
-    # Extract true labels if available
     true_labels = None
     if args.label_column and args.label_column in df.columns:
         print(f"Found label column '{args.label_column}' - metrics will be calculated")
         true_labels = df[args.label_column].tolist()
-        # Print the first few labels to debug type issues
         print(f"First 5 labels (type: {type(true_labels[0]).__name__}): {true_labels[:5]}")
     else:
         print("No label column specified or not found - metrics will not be calculated")
 
-    # For test mode, use only a small subset
     if args.test_mode:
         print("Running in test mode with 5 samples")
         test_size = min(5, len(notes))
@@ -477,23 +471,20 @@ def main():
         if true_labels:
             true_labels = true_labels[:test_size]
 
-    # Load the model with native sequence length
     print(f"Loading model from: {args.model_path}")
-    model, tokenizer, max_seq_length = load_model(args.model_path, args.load_in_4bit)
-    print(f"Model loaded with native max sequence length: {max_seq_length}")
+    model, tokenizer, model_seq_length = load_model(args.model_path, args.load_in_4bit)
+    max_seq_length = args.max_seq_length if args.max_seq_length else model_seq_length
+    print(f"Max sequence length used for inference: {max_seq_length}")
 
-    # Run inference
     print("Starting inference...")
     if args.preprocess_tokens:
         print("Note preprocessing enabled - </s> tokens will be handled appropriately")
     results = run_inference(model, tokenizer, notes, patient_ids, true_labels, args, max_seq_length)
 
-    # Save results to CSV
     results_df = pd.DataFrame(results)
     results_df.to_csv(output_file, index=False)
     print(f"Results saved to: {output_file}")
 
-    # Calculate and save metrics if true labels are available
     if true_labels:
         print("Calculating performance metrics...")
         metrics = calculate_metrics(results, args)
@@ -504,7 +495,6 @@ def main():
             print(f"Non-malnourished cases - Precision: {metrics['precision_nonmalnourished']:.4f}, Recall: {metrics['recall_nonmalnourished']:.4f}, F1: {metrics['f1_nonmalnourished']:.4f}")
             print(f"Metrics saved to: {args.metrics_dir}/")
 
-    # Show summary statistics
     yes_count = sum(1 for r in results if r["predicted_label"] == "yes")
     no_count = sum(1 for r in results if r["predicted_label"] == "no")
     error_count = sum(1 for r in results if r["predicted_label"] == "error")
@@ -516,7 +506,6 @@ def main():
     if error_count > 0:
         print(f"Error cases: {error_count} ({error_count/len(results)*100:.1f}%)")
 
-    # Calculate average inference time
     avg_time = sum(r["inference_time"] for r in results) / len(results)
     print(f"Average inference time per note: {avg_time:.3f} seconds")
 
