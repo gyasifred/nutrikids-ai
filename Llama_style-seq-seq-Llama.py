@@ -665,8 +665,8 @@ def train_malnutrition_model(data_path, model_name="unsloth/meta-llama-3.1-8b-un
 if __name__ == "__main__":
     # Configuration parameters
     data_path = "data/notes_train.csv"  # Path to your CSV dataset
-    model_name = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit" 
-    output_dir = "./mistral-7b-instruct-v0.3-malnutrition_model"
+    model_name = "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit" 
+    output_dir = "./Llama-3.1-8B-Instruct-malnutrition_model"
     max_length = 32000 
     num_epochs = 7  
     batch_size = 2 
