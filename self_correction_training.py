@@ -9,6 +9,7 @@ Original file is located at
 
 import re
 import os
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 import pandas as pd
 import torch
 import json
@@ -1016,7 +1017,7 @@ if __name__ == "__main__":
     # Enhanced self-correction parameters
     correction_ratio = 0.4  # Include 40% of correct predictions in correction training
     correction_weight = 0.5  # Correction examples make up 50% of combined dataset
-    self_correction_epochs = 3  # Additional epochs for self-correction
+    self_correction_epochs = 2  # Additional epochs for self-correction
 
     os.makedirs(output_dir, exist_ok=True)
 
