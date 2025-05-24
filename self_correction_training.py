@@ -372,20 +372,28 @@ class EnhancedSelfCorrectionTrainer:
 
     def generate_initial_predictions(self, notes: List[str], batch_size: int = 4) -> List[Dict]:
         """Generate initial predictions with enhanced error handling"""
+        # Check if model is properly loaded
+        if self.model is None:
+            raise ValueError("Model is not loaded. Call load_model() first or ensure model is properly initialized.")
+        
         FastLanguageModel.for_inference(self.model)
         predictions = []
-
+    
         for i in range(0, len(notes), batch_size):
             batch_notes = notes[i:i+batch_size]
             batch_predictions = []
-
+    
             for note in batch_notes:
                 try:
                     prompt = self.build_prompt(note)
-
+    
                     # Generate prediction with controlled parameters
                     inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
-
+                    
+                    # Move inputs to the same device as model
+                    if torch.cuda.is_available() and next(self.model.parameters()).is_cuda:
+                        inputs = {k: v.cuda() for k, v in inputs.items()}
+    
                     with torch.no_grad():
                         outputs = self.model.generate(
                             **inputs,
@@ -396,13 +404,13 @@ class EnhancedSelfCorrectionTrainer:
                             repetition_penalty=1.1,
                             top_p=0.9
                         )
-
+    
                     # Decode the generated response
                     generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
                     response = generated_text[len(prompt):].strip()
-
+    
                     classification = self.extract_classification(response)
-
+    
                     batch_predictions.append({
                         'note': note,
                         'prompt': prompt,
@@ -410,7 +418,7 @@ class EnhancedSelfCorrectionTrainer:
                         'initial_classification': classification,
                         'extraction_confidence': self.assess_extraction_confidence(response, classification)
                     })
-
+    
                 except Exception as e:
                     print(f"Error generating prediction: {e}")
                     batch_predictions.append({
@@ -420,9 +428,9 @@ class EnhancedSelfCorrectionTrainer:
                         'initial_classification': 'no',
                         'extraction_confidence': 'low'
                     })
-
+    
             predictions.extend(batch_predictions)
-
+    
         return predictions
 
     def extract_classification(self, response: str) -> str:
@@ -896,7 +904,7 @@ def train_malnutrition_model_with_enhanced_self_correction(
     print("=" * 60)
     print("PHASE 2: Generating Self-Correction Data")
     print("=" * 60)
-
+    
     # Load the saved Phase 1 model for inference
     print("Loading Phase 1 model for inference...")
     inference_model, inference_tokenizer = FastLanguageModel.from_pretrained(
@@ -910,11 +918,15 @@ def train_malnutrition_model_with_enhanced_self_correction(
     if torch.cuda.is_available():
         inference_model = inference_model.cuda()
     
-    # Create new trainer for inference
+    # Create new trainer for inference and properly assign the loaded model
     inference_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
     inference_trainer.model = inference_model
     inference_trainer.tokenizer = inference_tokenizer
-
+    
+    # Verify model is properly loaded before proceeding
+    if inference_trainer.model is None:
+        raise RuntimeError("Failed to load model for inference")
+    
     # Generate initial predictions on training data
     train_notes = [example['txt'] for example in train_dataset]
     print("Generating initial predictions...")
@@ -942,16 +954,16 @@ def train_malnutrition_model_with_enhanced_self_correction(
                     'initial_classification': 'no',
                     'extraction_confidence': 'low'
                 })
-
+    
     # Create self-correction examples
     print("Creating self-correction examples...")
     correction_examples = inference_trainer.create_self_correction_examples(
         df.head(len(initial_predictions)), initial_predictions, correction_ratio, prioritize_low_confidence=True
     )
-
+    
     print(f"Created {len(correction_examples)} self-correction examples")
     print(f"Extraction statistics: {inference_trainer.extraction_stats}")
-
+    
     # Clean up inference model
     del inference_model
     del inference_trainer
