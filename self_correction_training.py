@@ -376,7 +376,6 @@ class EnhancedSelfCorrectionTrainer:
         if self.model is None:
             raise ValueError("Model is not loaded. Call load_model() first or ensure model is properly initialized.")
         
-        FastLanguageModel.for_inference(self.model)
         predictions = []
     
         for i in range(0, len(notes), batch_size):
@@ -907,25 +906,33 @@ def train_malnutrition_model_with_enhanced_self_correction(
     
     # Load the saved Phase 1 model for inference
     print("Loading Phase 1 model for inference...")
-    inference_model, inference_tokenizer = FastLanguageModel.from_pretrained(
-        model_name=phase1_save_path,
-        max_seq_length=max_length,
-        dtype=None,
-        load_in_4bit=True
-    )
-    
-    # Ensure proper device placement
-    if torch.cuda.is_available():
-        inference_model = inference_model.cuda()
-    
-    # Create new trainer for inference and properly assign the loaded model
-    inference_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
-    inference_trainer.model = inference_model
-    inference_trainer.tokenizer = inference_tokenizer
-    
-    # Verify model is properly loaded before proceeding
-    if inference_trainer.model is None:
-        raise RuntimeError("Failed to load model for inference")
+    try:
+        inference_model, inference_tokenizer = FastLanguageModel.from_pretrained(
+            model_name=phase1_save_path,
+            max_seq_length=max_length,
+            dtype=None,
+            load_in_4bit=True
+        )
+        FastLanguageModel.for_inference(inference_model)
+        
+        # Ensure proper device placement
+        if torch.cuda.is_available():
+            inference_model = inference_model.cuda()
+        
+        # Create new trainer for inference and properly assign the loaded model
+        inference_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
+        inference_trainer.model = inference_model
+        inference_trainer.tokenizer = inference_tokenizer
+        
+        # Verify model and tokenizer are properly loaded
+        if inference_trainer.model is None or inference_trainer.tokenizer is None:
+            raise RuntimeError("Model or tokenizer failed to load properly")
+            
+        print("Model loaded successfully for inference")
+        
+    except Exception as e:
+        print(f"Error loading model for inference: {e}")
+        raise RuntimeError(f"Failed to load model for inference: {e}")
     
     # Generate initial predictions on training data
     train_notes = [example['txt'] for example in train_dataset]
