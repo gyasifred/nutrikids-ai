@@ -887,12 +887,12 @@ def train_malnutrition_model_with_enhanced_self_correction(
 if __name__ == "__main__":
     # Configuration parameters
     data_path = "data/notes_train.csv"
-    model_name = "unsloth/Phi-4-unsloth-bnb-4bit"
-    output_dir = "./Phi-4-malnutrition-self-correction"
-    max_length = 16384
-    num_epochs = 5
-    batch_size = 1
-    self_correction_epochs = 2
+    model_name = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit"
+    output_dir = "./mistral-7b-instruct-v0.3-self-correction"
+    max_length = 32000
+    num_epochs = 10
+    batch_size = 2
+    self_correction_epochs = 5
 
     os.makedirs(output_dir, exist_ok=True)
 
