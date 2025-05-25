@@ -882,8 +882,8 @@ def train_malnutrition_model_with_enhanced_self_correction(
         args=training_args,
     )
 
-    print("Starting initial training...")
-    trainer.train()
+    # print("Starting initial training...")
+    # trainer.train()
 
     # PHASE 2: Generate predictions for self-correction using trained model
     print("=" * 60)
