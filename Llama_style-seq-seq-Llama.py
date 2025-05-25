@@ -9,10 +9,31 @@ from trl import SFTTrainer
 from transformers import TrainingArguments
 
 
-# Full instruction used in prompt
-instruction = """Read the patient's notes and determine if the patient is likely to have malnutrition according to the criteria below. 
-    
-Malnutrition Classification Criteria:
+# Enhanced instruction for pediatric malnutrition diagnosis using small LLMs
+instruction = """Read the patient's notes and determine if the patient is likely to have malnutrition according to the criteria below.
+
+====== STEP-BY-STEP ANALYSIS PROCESS ======
+
+STEP 1: EXTRACT KEY DATA FROM NOTES
+Age: ___
+Weight-for-height z-score: ___
+BMI-for-age z-score: ___  
+Height-for-age z-score: ___
+MUAC z-score: ___
+Weight change: ___% over ___ timeframe
+Nutrient intake: ___% of estimated needs
+
+STEP 2: DETERMINE APPROACH
+□ Single data point available → Use Table 1
+□ Multiple data points available → Use Table 2  
+□ Both available → Use both, choose more severe classification
+
+STEP 3: APPLY QUICK SCREENING
+🔴 IMMEDIATE SEVERE: Any z-score ≤ -3.0 OR weight loss ≥10% OR intake <25%
+🟠 IMMEDIATE MODERATE: Any z-score -2.0 to -2.9 OR weight loss 7.5-10% OR intake 26-50%
+🟡 IMMEDIATE MILD: Any z-score -1.0 to -1.9 OR weight loss 5-7.5% OR intake 51-75%
+
+====== MALNUTRITION CLASSIFICATION CRITERIA ======
 
 Mild malnutrition related to undernutrition is usually the result of an acute event, either due to economic circumstances or acute illness, and presents with unintentional weight loss or weight gain velocity less than expected. Moderate malnutrition related to undernutrition occurs due to undernutrition of a significant duration that results in weight-for-length/height values or BMI-for-age values that are below the normal range. Severe malnutrition related to undernutrition occurs as a result of prolonged undernutrition and is most frequently quantified by declines in rates of linear growth that result in stunting.
 
@@ -57,15 +78,26 @@ Weight loss (2–20 years of age): 10% usual body weight
 Deceleration in weight for length/height: Decline of 3 z score
 Inadequate nutrient intake: less than 25% estimated energy/protein need
 
+====== CRITICAL DECISION RULES ======
+⚠️ When multiple criteria conflict, choose the MORE SEVERE classification
+⚠️ Height-for-age z-score indicates stunting but requires ≤-3.0 for severe malnutrition diagnosis
+⚠️ A single normal measurement does NOT rule out malnutrition if other criteria are abnormal
+⚠️ For infants <2 years, prioritize weight gain velocity over static measurements when both available
+⚠️ ANY z-score ≤ -3.0 automatically indicates severe malnutrition
+⚠️ Weight loss percentages: 5-7.5% = mild, 7.5-10% = moderate, ≥10% = severe
+
+====== Z-SCORE INTERPRETATION HELPER ======
+🟢 Normal: z-score > -1.0 (example: -0.5, -0.9)
+🟡 Mild: z-score -1.0 to -1.9 (example: -1.2, -1.8)
+🟠 Moderate: z-score -2.0 to -2.9 (example: -2.1, -2.7)
+🔴 Severe: z-score ≤ -3.0 (example: -3.0, -3.5)
+
 ====== OUTPUT FORMAT INSTRUCTIONS ======
 
 Provide your analysis in two parts:
 
 PART 1: ANALYSIS
-- State whether you used single or multiple data points criteria
-- Identify which specific z-scores or criteria you evaluated
-- Explain your reasoning for the malnutrition classification
-- Keep your explanation brief and focused on clinical findings
+Use this template: "I extracted the following data: [list key values found in notes]. I used [single/multiple] data point criteria from [Table 1/Table 2/both tables]. The key finding is [specific measurement that determines classification]. This indicates [mild/moderate/severe/no] malnutrition because [brief clinical reasoning]."
 
 PART 2: FINAL CLASSIFICATION
 - As the VERY LAST LINE of your response, provide EXACTLY one of these two classifications:
@@ -84,30 +116,40 @@ CRITICAL FORMATTING RULES:
 ====== EXAMPLE RESPONSES ======
 
 EXAMPLE 1:
-I used multiple data points for this assessment. The patient shows a weight loss of 6% over the past 3 months, which exceeds the 5% threshold for mild malnutrition. Additionally, the patient's nutrient intake is approximately 60% of estimated needs. Based on Table 2 criteria, these findings are consistent with mild malnutrition.
+I extracted the following data: weight loss 6% over 3 months, nutrient intake 60% of estimated needs. I used multiple data point criteria from Table 2. The key finding is weight loss of 6% which exceeds the 5% threshold for mild malnutrition. This indicates mild malnutrition because the patient meets both weight loss and inadequate intake criteria from Table 2.
 
 malnutrition=yes
 
 EXAMPLE 2: 
-I used a single data point approach. The patient's BMI-for-age z score is -0.8, which is within normal range (above -1.0). The weight-for-height z score is -0.5, also within normal limits. No other indicators of malnutrition are present in the notes.
+I extracted the following data: BMI-for-age z-score -0.8, weight-for-height z-score -0.5. I used single data point criteria from Table 1. The key finding is both z-scores are above -1.0 threshold. This indicates no malnutrition because all measurements are within normal range.
 
 malnutrition=no
 
-====== EXAMPLE DEMONSTRATIONS ======
-
-### Input:
-Patient is a 15-month-old male who presents for routine follow-up. Growth parameters show weight-for-height z-score of -2.3 and BMI-for-age z-score of -2.1. Patient has had poor weight gain over the past 4 months with intake reported as approximately 40% of estimated caloric needs. Physical exam reveals mild wasting and decreased subcutaneous fat. Laboratory values show albumin of 2.8 g/dL.
-
-### Response:
-I used a single data point approach combined with additional clinical indicators. The patient's weight-for-height z-score of -2.3 falls within the -2 to -2.9 range, indicating moderate malnutrition according to Table 1. The BMI-for-age z-score of -2.1 also supports this classification. Additionally, the inadequate nutrient intake at 40% of estimated needs (which falls in the 26%-50% range) further confirms moderate malnutrition based on Table 2 criteria.
+EXAMPLE 3:
+I extracted the following data: weight-for-height z-score -2.3, BMI-for-age z-score -2.1, nutrient intake 40% of needs. I used both single and multiple data point criteria from Tables 1 and 2. The key finding is z-scores in the -2.0 to -2.9 range indicating moderate malnutrition. This indicates moderate malnutrition because both anthropometric measurements and nutritional intake criteria are met.
 
 malnutrition=yes
 
-### Input:
-Patient is a 3-year-old female presenting for well-child visit. Growth parameters show weight-for-height z-score of -0.3 and BMI-for-age z-score of 0.1. Height-for-age z-score is -0.5. Patient has been gaining weight appropriately with no recent illnesses. Dietary intake appears adequate with patient eating a varied diet. Physical examination is normal with good muscle tone and appropriate subcutaneous fat distribution. Parents report no feeding concerns.
+====== EDGE CASE EXAMPLES ======
 
-### Response:
-I used a single data point approach. The patient's weight-for-height z-score of -0.3 and BMI-for-age z-score of 0.1 are both within normal range (above -1.0). The height-for-age z-score of -0.5 is also within normal limits. With appropriate weight gain, adequate dietary intake, and normal physical examination findings, there are no indicators suggesting malnutrition.
+EDGE CASE 1 - Conflicting Data:
+Input: 18-month-old with weight-for-height z-score -1.2 but weight gain velocity only 40% of expected over past 3 months.
+
+Response: I extracted the following data: weight-for-height z-score -1.2, weight gain velocity 40% of expected. I used both single and multiple data point criteria. The key finding is weight gain velocity <50% of expected, which indicates moderate malnutrition from Table 2, overriding the mild classification from the single z-score. This indicates moderate malnutrition because longitudinal growth failure takes precedence over single measurements in infants.
+
+malnutrition=yes
+
+EDGE CASE 2 - Borderline Values:
+Input: 5-year-old with BMI-for-age z-score exactly -2.0 and no other data available.
+
+Response: I extracted the following data: BMI-for-age z-score -2.0. I used single data point criteria from Table 1. The key finding is z-score of exactly -2.0 which falls at the threshold for moderate malnutrition. This indicates moderate malnutrition because -2.0 meets the criteria for the -2 to -2.9 range.
+
+malnutrition=yes
+
+EDGE CASE 3 - Height-for-age Only:
+Input: 3-year-old with height-for-age z-score -2.5, no weight data available.
+
+Response: I extracted the following data: height-for-age z-score -2.5. I used single data point criteria from Table 1. The key finding is height-for-age z-score does not indicate acute malnutrition unless ≤-3.0. This indicates no malnutrition because height-for-age z-score of -2.5 indicates stunting but does not meet criteria for malnutrition diagnosis by itself.
 
 malnutrition=no"""
 
