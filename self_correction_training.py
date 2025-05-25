@@ -23,199 +23,46 @@ import numpy as np
 
 
 def extract_malnutrition_result(text):
-    """Enhanced extraction of malnutrition=yes/no result with comprehensive pattern matching"""
+    """Simplified extraction focusing on the exact format required by the prompt"""
     if not text or not isinstance(text, str):
         return "no"
-
-    # Convert text to lowercase for case-insensitive matching
+    
+    # Convert to lowercase for matching
     text_lower = text.strip().lower()
-
-    ### PHASE 1: Direct exact format matches at the end
-
-    # Primary pattern: malnutrition=yes/no at end of text
-    pattern = r'malnutrition\s*=\s*(yes|no)\s*$'
-    match = re.search(pattern, text_lower.replace('\n', ' '))
-    if match:
-        return match.group(1)
-
-    # Check the last few lines for malnutrition status
+    
+    # Look for the exact format: malnutrition=yes/no at the end
     lines = text_lower.split('\n')
-    for line in reversed(lines[-7:]):  # Examine last 7 lines
+    
+    # Check the last few lines for the exact format
+    for line in reversed(lines[-5:]):
         line = line.strip()
-
-        # Exact format with possible whitespace variations
-        exact_patterns = [
-            r'^\s*malnutrition\s*=\s*(yes|no)\s*$',
-            r'^\s*mal[a-z]*nut[a-z]*\s*=\s*(yes|no)\s*$',
-            r'^\s*classification\s*[:=]\s*malnutrition\s*=\s*(yes|no)\s*$',
-            r'^\s*final\s*[:=]\s*malnutrition\s*=\s*(yes|no)\s*$'
-        ]
-
-        for pattern in exact_patterns:
-            match = re.search(pattern, line)
+        
+        # Exact format match
+        if re.match(r'^\s*malnutrition\s*=\s*(yes|no)\s*$', line):
+            match = re.search(r'malnutrition\s*=\s*(yes|no)', line)
             if match:
                 return match.group(1)
-
-    ### PHASE 2: Handle common misspellings and variations
-
-    misspelling_patterns = [
-        # Common OCR/typing errors
-        (r'mal[a-z]*nut[a-z]*\s*=\s*(yes|no)', 1),
-        (r'malnutri[ot]n?\s*=\s*(yes|no)', 1),
-        (r'malnourish[a-z]*\s*=\s*(yes|no)', 1),
-        (r'mali[a-z]*\s*=\s*(yes|no)', 1),
-        (r'malishment\s*=\s*(yes|no)', 1),
-        (r'malibration\s*=\s*(yes|no)', 1),
-        (r'mal\s*nutrition\s*=\s*(yes|no)', 1),
-        # Variations with classification/diagnosis
-        (r'(classification|diagnosis)[:\s=]*mal[a-z]*\s*=\s*(yes|no)', 2),
-        (r'mal[a-z]*[:\s=]*(yes|no)\s*$', 1),
-    ]
-
-    for line in reversed(lines[-10:]):
-        line = line.strip()
-        for pattern, group_idx in misspelling_patterns:
-            match = re.search(pattern, line)
-            if match:
-                return match.group(group_idx)
-
-    ### PHASE 3: Structured response patterns
-
-    # Look for structured conclusion patterns
-    conclusion_patterns = [
-        r'final\s+classification[:\s]*malnutrition\s*=\s*(yes|no)',
-        r'conclusion[:\s]*malnutrition\s*=\s*(yes|no)',
-        r'assessment[:\s]*malnutrition\s*=\s*(yes|no)',
-        r'diagnosis[:\s]*malnutrition\s*=\s*(yes|no)',
-        r'result[:\s]*malnutrition\s*=\s*(yes|no)'
-    ]
-
-    for pattern in conclusion_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            return match.group(1)
-
-    ### PHASE 4: Content-based clinical inference
-
-    # Strong positive indicators
-    strong_positive = [
-        "mild malnutrition", "moderate malnutrition", "severe malnutrition",
-        "patient has malnutrition", "diagnosed with malnutrition",
-        "evidence of malnutrition", "signs of malnutrition",
-        "criteria for malnutrition", "consistent with malnutrition",
-        "malnutrition is present", "meets malnutrition criteria",
-        "exhibits malnutrition", "indicates malnutrition",
-        "confirms malnutrition", "supports malnutrition diagnosis"
-    ]
-
-    # Strong negative indicators
-    strong_negative = [
+    
+    # Check the entire text for the pattern if not found at the end
+    pattern = r'malnutrition\s*=\s*(yes|no)'
+    match = re.search(pattern, text_lower)
+    if match:
+        return match.group(1)
+    
+    # If no clear format found, look for strong clinical conclusions
+    if any(phrase in text_lower for phrase in [
+        "malnutrition is present", "has malnutrition", "diagnosed with malnutrition",
+        "meets malnutrition criteria", "consistent with malnutrition"
+    ]):
+        return "yes"
+    
+    if any(phrase in text_lower for phrase in [
         "no malnutrition", "not malnourished", "does not have malnutrition",
-        "unlikely to have malnutrition", "no evidence of malnutrition",
-        "without malnutrition", "malnutrition is unlikely", "malnutrition is absent",
-        "does not meet criteria", "doesn't meet criteria", "not meeting criteria",
-        "no signs of malnutrition", "normal nutritional status", "adequate nutrition",
-        "rules out malnutrition", "excludes malnutrition"
-    ]
-
-    # Uncertainty indicators (default to no)
-    uncertainty_indicators = [
-        "insufficient evidence", "insufficient data", "insufficient information",
-        "can't diagnose", "cannot diagnose", "can not diagnose", "unable to diagnose",
-        "not enough evidence", "not enough information", "unclear", "uncertain",
-        "indeterminate", "inconclusive", "requires further", "need more"
-    ]
-
-    # Count indicators with weighted scoring
-    strong_pos_count = sum(2 for indicator in strong_positive if indicator in text_lower)
-    strong_neg_count = sum(2 for indicator in strong_negative if indicator in text_lower)
-    uncertainty_count = sum(1 for indicator in uncertainty_indicators if indicator in text_lower)
-
-    # Decision logic
-    if strong_pos_count > 0 and strong_neg_count == 0 and uncertainty_count == 0:
-        return "yes"
-    if strong_neg_count > 0 or uncertainty_count > 0:
+        "no evidence of malnutrition", "normal nutritional status"
+    ]):
         return "no"
-    if strong_pos_count > strong_neg_count:
-        return "yes"
-
-    ### PHASE 5: Clinical numerical indicators
-
-    # Look for Z-scores indicating malnutrition
-    z_score_pattern = r'z[-\s]?score[:\s]*[-+]?([0-9]+\.?[0-9]*)'
-    z_matches = re.findall(z_score_pattern, text_lower)
-
-    for z_str in z_matches:
-        try:
-            z_val = float(z_str)
-            if z_val <= -2.0:  # Moderate to severe malnutrition threshold
-                # Check if this z-score is being described as normal
-                if not re.search(r'normal.*z[-\s]?score.*' + z_str, text_lower):
-                    return "yes"
-        except ValueError:
-            continue
-
-    # Look for weight loss percentages
-    weight_loss_pattern = r'weight\s+loss[:\s]*([0-9]+\.?[0-9]*)%'
-    weight_matches = re.findall(weight_loss_pattern, text_lower)
-
-    for weight_str in weight_matches:
-        try:
-            weight_loss = float(weight_str)
-            if weight_loss >= 5.0:  # 5% weight loss threshold
-                return "yes"
-        except ValueError:
-            continue
-
-    # Look for intake percentages
-    intake_pattern = r'intake[:\s]*([0-9]+\.?[0-9]*)%'
-    intake_matches = re.findall(intake_pattern, text_lower)
-
-    for intake_str in intake_matches:
-        try:
-            intake_pct = float(intake_str)
-            if intake_pct <= 75.0:  # Less than 75% intake
-                return "yes"
-        except ValueError:
-            continue
-
-    ### PHASE 6: Contextual conclusion analysis
-
-    # Analyze the last 200 characters for final conclusions
-    conclusion_text = text_lower[-200:]
-
-    if re.search(r'conclude[ds]?.*malnutrition.*present', conclusion_text):
-        return "yes"
-    if re.search(r'conclude[ds]?.*no.*malnutrition', conclusion_text):
-        return "no"
-    if re.search(r'therefore.*malnutrition.*yes', conclusion_text):
-        return "yes"
-    if re.search(r'therefore.*malnutrition.*no', conclusion_text):
-        return "no"
-
-    # Look for definitive statements
-    if re.search(r'(diagnosis|assessment|conclusion)[:\s].*malnutrition', conclusion_text):
-        if re.search(r'positive|confirmed|present|yes', conclusion_text):
-            return "yes"
-        if re.search(r'negative|ruled out|absent|no', conclusion_text):
-            return "no"
-
-    ### PHASE 7: Fallback patterns
-
-    # Check for any yes/no at the end after malnutrition context
-    end_lines = ' '.join(lines[-3:])
-    if 'malnutrition' in end_lines:
-        if re.search(r'malnutrition.*yes\s*$', end_lines):
-            return "yes"
-        if re.search(r'malnutrition.*no\s*$', end_lines):
-            return "no"
-
-    # Final fallback: look for any clear yes/no statement
-    final_line = lines[-1] if lines else ""
-    if re.search(r'^\s*(yes|no)\s*$', final_line):
-        return final_line.strip()
-
-    # Default to "no" if no clear indication
+    
+    # Default to "no" if unclear
     return "no"
 
 
@@ -486,14 +333,12 @@ class EnhancedSelfCorrectionTrainer:
 ### Corrected Response:"""
         return correction_prompt
 
-    def create_self_correction_examples(self, data: pd.DataFrame,
-                                     initial_predictions: List[Dict],
-                                     correction_ratio: float = 0.3,
-                                     prioritize_low_confidence: bool = True) -> List[Dict]:
-        """Create enhanced self-correction training examples"""
+    def create_self_correction_examples(self, eval_data: pd.DataFrame,
+                                 initial_predictions: List[Dict]) -> List[Dict]:
+        """Create self-correction training examples using validation data"""
         correction_examples = []
 
-        for i, (_, row) in enumerate(data.iterrows()):
+        for i, (_, row) in enumerate(eval_data.iterrows()):
             if i >= len(initial_predictions):
                 break
 
@@ -502,50 +347,26 @@ class EnhancedSelfCorrectionTrainer:
             true_label = 'yes' if true_label in ['yes', '1', '1.0', 'true', 'positive'] else 'no'
 
             initial_pred = pred_data['initial_classification']
-            confidence = pred_data.get('extraction_confidence', 'medium')
 
-            # Enhanced correction logic
-            should_correct = False
-            correction_type = None
+            # Create correction for all examples (both correct and incorrect)
+            correction_type = 'error_correction' if initial_pred != true_label else 'reinforcement'
 
-            # Always correct wrong predictions
-            if initial_pred != true_label:
-                should_correct = True
-                correction_type = 'error_correction'
+            corrected_response = self.create_corrected_response(
+                pred_data['note'], pred_data['initial_response'], true_label, correction_type
+            )
 
-            # Prioritize low confidence correct predictions for reinforcement
-            elif confidence == 'low' and random.random() < correction_ratio * 2:
-                should_correct = True
-                correction_type = 'confidence_reinforcement'
+            correction_prompt = self.build_correction_prompt(
+                pred_data['note'], pred_data['initial_response']
+            )
 
-            # Include some high-confidence correct predictions for stability
-            elif confidence == 'high' and random.random() < correction_ratio * 0.5:
-                should_correct = True
-                correction_type = 'stability_reinforcement'
-
-            # Regular reinforcement for medium confidence
-            elif confidence == 'medium' and random.random() < correction_ratio:
-                should_correct = True
-                correction_type = 'standard_reinforcement'
-
-            if should_correct:
-                corrected_response = self.create_corrected_response(
-                    pred_data['note'], pred_data['initial_response'], true_label, correction_type
-                )
-
-                correction_prompt = self.build_correction_prompt(
-                    pred_data['note'], pred_data['initial_response']
-                )
-
-                correction_examples.append({
-                    'prompt': correction_prompt,
-                    'response': corrected_response,
-                    'note': pred_data['note'],
-                    'initial_pred': initial_pred,
-                    'true_label': true_label,
-                    'correction_type': correction_type,
-                    'confidence': confidence
-                })
+            correction_examples.append({
+                'prompt': correction_prompt,
+                'response': corrected_response,
+                'note': pred_data['note'],
+                'initial_pred': initial_pred,
+                'true_label': true_label,
+                'correction_type': correction_type
+            })
 
         return correction_examples
 
@@ -718,25 +539,21 @@ malnutrition={true_label}"""
             return False
 
     def create_combined_dataset(self, original_data: List[Dict],
-                              correction_data: List[Dict],
-                              correction_weight: float = 0.4) -> List[Dict]:
-        """Combine original and correction data with appropriate weighting"""
+                            correction_data: List[Dict]) -> List[Dict]:
+        """Combine original training data with correction examples"""
         combined_data = []
-
-        # Add original data
+        
+        # Add all original training data
         combined_data.extend(original_data)
-
-        # Add correction data (potentially multiple times for emphasis)
-        if correction_data:
-            correction_repeats = max(1, int(len(original_data) * correction_weight / len(correction_data)))
-
-            for _ in range(correction_repeats):
-                combined_data.extend(correction_data)
-
+        
+        # Add all correction examples
+        combined_data.extend(correction_data)
+        
         # Shuffle the combined dataset
         random.shuffle(combined_data)
-
+        
         return combined_data
+
 
 def preprocess_clinical_note(note_text):
     """Enhanced preprocessing that keeps clinical data intact while removing problematic patterns."""
@@ -763,33 +580,10 @@ def train_malnutrition_model_with_enhanced_self_correction(
     max_length: int = 32000,
     num_epochs: int = 3,
     batch_size: int = 4,
-    correction_ratio: float = 0.3,
-    correction_weight: float = 0.4,
     self_correction_epochs: int = 2
 ):
     """
     Train a malnutrition classification model with enhanced self-correction training
-
-    Parameters:
-    -----------
-    data_path : str
-        Path to the CSV file containing the training data
-    model_name : str
-        Name of the pretrained model to load
-    output_dir : str
-        Directory to save the trained model
-    max_length : int
-        Maximum sequence length for tokenization
-    num_epochs : int
-        Number of initial training epochs
-    batch_size : int
-        Batch size for training
-    correction_ratio : float
-        Ratio of correct predictions to include in correction training
-    correction_weight : float
-        Weight given to correction examples in the combined dataset
-    self_correction_epochs : int
-        Number of additional epochs for self-correction training
     """
 
     # Create output directory
@@ -882,10 +676,10 @@ def train_malnutrition_model_with_enhanced_self_correction(
         args=training_args,
     )
 
-    # print("Starting initial training...")
-    # trainer.train()
+    print("Starting initial training...")
+    trainer.train()
 
-    # PHASE 2: Generate predictions for self-correction using trained model
+    # PHASE 2: Generate predictions for self-correction using validation data
     print("=" * 60)
     print("PHASE 2: Generating Self-Correction Data")
     print("=" * 60)
@@ -897,33 +691,25 @@ def train_malnutrition_model_with_enhanced_self_correction(
     # Set model to inference mode
     FastLanguageModel.for_inference(inference_trainer.model)
     
-    # Select 500 longest training examples
-    print("Selecting 500 longest training examples...")
-    train_data_with_length = []
-    for example in train_dataset:
-        text_length = len(example['txt'])
-        train_data_with_length.append((example, text_length))
+    # Use validation data for predictions
+    print("Using validation data for self-correction...")
+    eval_notes = [example['txt'] for example in eval_dataset]
+    eval_df = pd.DataFrame(eval_dataset)
     
-    # Sort by length and take top 500
-    train_data_with_length.sort(key=lambda x: x[1], reverse=True)
-    longest_examples = [item[0] for item in train_data_with_length[:500]]
-    longest_notes = [example['txt'] for example in longest_examples]
+    print(f"Generating predictions on {len(eval_notes)} validation examples...")
     
-    print(f"Selected {len(longest_notes)} examples with lengths ranging from {train_data_with_length[499][1]} to {train_data_with_length[0][1]} characters")
-    
-    # Generate initial predictions on selected longest examples
-    print("Generating initial predictions...")
+    # Generate initial predictions on validation data
     initial_predictions = []
     batch_size_inference = 1  # Use smaller batch size for inference
     
-    for i in range(0, len(longest_notes), batch_size_inference):
-        batch_notes = longest_notes[i:i+batch_size_inference]
+    for i in range(0, len(eval_notes), batch_size_inference):
+        batch_notes = eval_notes[i:i+batch_size_inference]
         try:
             batch_predictions = inference_trainer.generate_initial_predictions(
                 batch_notes, batch_size=batch_size_inference
             )
             initial_predictions.extend(batch_predictions)
-            print(f"Processed {len(initial_predictions)}/{len(longest_notes)} predictions")
+            print(f"Processed {len(initial_predictions)}/{len(eval_notes)} predictions")
         except Exception as e:
             print(f"Error in batch {i//batch_size_inference}: {e}")
             # Add fallback predictions for failed batches
@@ -936,13 +722,10 @@ def train_malnutrition_model_with_enhanced_self_correction(
                     'extraction_confidence': 'low'
                 })
     
-    # Create DataFrame for longest examples to match with predictions
-    longest_df = pd.DataFrame(longest_examples)
-    
-    # Create self-correction examples
+    # Create self-correction examples using validation data
     print("Creating self-correction examples...")
     correction_examples = inference_trainer.create_self_correction_examples(
-        longest_df, initial_predictions, correction_ratio, prioritize_low_confidence=True
+        eval_df, initial_predictions
     )
     
     print(f"Created {len(correction_examples)} self-correction examples")
@@ -957,13 +740,13 @@ def train_malnutrition_model_with_enhanced_self_correction(
     del trainer
     torch.cuda.empty_cache()
 
-    # IMPORTANT FIX: Continue from Phase 1 trained model, not original model
+    # Continue from Phase 1 trained model
     print("Continuing training from Phase 1 trained model...")
     
-    # Set the Phase 1 model back to training mode (it was set to inference mode in Phase 2)
+    # Set the Phase 1 model back to training mode
     FastLanguageModel.for_training(phase1_model)
     
-    # Use the Phase 1 trained model for Phase 3 (this is the key fix!)
+    # Use the Phase 1 trained model for Phase 3
     correction_model = phase1_model
 
     # Format correction examples
@@ -976,32 +759,34 @@ def train_malnutrition_model_with_enhanced_self_correction(
     # Create dummy trainer instance to use the method
     dummy_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
     
-    # Combine original and correction data
+    # Combine original training data with correction data
     original_examples = [{"text": ex["text"]} for ex in train_formatted]
     correction_examples_formatted = [{"text": ex["text"]} for ex in correction_formatted]
 
     combined_examples = dummy_trainer.create_combined_dataset(
-        original_examples, correction_examples_formatted, correction_weight
+        original_examples, correction_examples_formatted
     )
 
     combined_dataset = Dataset.from_list(combined_examples)
 
     print(f"Combined dataset size: {len(combined_dataset)} examples")
+    print(f"Original training examples: {len(original_examples)}")
+    print(f"Correction examples: {len(correction_examples_formatted)}")
 
     # Self-correction training with adjusted parameters
     correction_training_args = TrainingArguments(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        gradient_accumulation_steps=2,  # Increase for stability
+        gradient_accumulation_steps=2,
         warmup_ratio=0.05,
         num_train_epochs=self_correction_epochs,
-        learning_rate=1e-5,  # Lower learning rate for fine-tuning
+        learning_rate=1e-5,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         logging_steps=5,
         optim="adamw_8bit",
-        weight_decay=0.01,  # Reduced weight decay
-        lr_scheduler_type="cosine",  # Changed to cosine schedule
+        weight_decay=0.01,
+        lr_scheduler_type="cosine",
         seed=3407,
         report_to="none",
         output_dir=os.path.join(output_dir, "phase3"),
@@ -1009,13 +794,13 @@ def train_malnutrition_model_with_enhanced_self_correction(
         remove_unused_columns=False,
         save_strategy="steps",
         save_steps=50,
-        eval_strategy="no"  # Fixed deprecation warning
+        eval_strategy="no"
     )
 
     correction_trainer = SFTTrainer(
-        model=correction_model,  # Now using the Phase 1 trained model!
+        model=correction_model,
         train_dataset=combined_dataset,
-        processing_class=sc_trainer.tokenizer,  # Using the same tokenizer
+        processing_class=sc_trainer.tokenizer,
         max_seq_length=max_length,
         dataset_text_field="text",
         packing=True,
@@ -1029,68 +814,43 @@ def train_malnutrition_model_with_enhanced_self_correction(
     save_path = f"{output_dir}/final_enhanced_model"
     correction_model.save_pretrained_merged(
         save_path,
-        sc_trainer.tokenizer,  # Using the same tokenizer
+        sc_trainer.tokenizer,
         save_method="merged_16bit"
     )
 
-    # Save enhanced configuration and metadata
+    # Save configuration and metadata
     config = {
         "model_name": model_name,
         "max_length": max_length,
         "instruction": instruction,
         "training_phases": {
             "phase1_epochs": num_epochs,
-            "phase2_epochs": self_correction_epochs,
-            "correction_ratio": correction_ratio,
-            "correction_weight": correction_weight,
-            "prioritize_low_confidence": True,
-            "longest_examples_used": 500
+            "phase3_epochs": self_correction_epochs,
+            "validation_examples_used": len(eval_dataset)
         },
         "correction_examples_created": len(correction_examples),
         "final_dataset_size": len(combined_dataset),
-        "extraction_statistics": inference_trainer.extraction_stats,
-        "correction_type_distribution": {
-            correction_type: sum(1 for ex in correction_examples if ex.get('correction_type') == correction_type)
-            for correction_type in ['error_correction', 'confidence_reinforcement', 'stability_reinforcement', 'standard_reinforcement']
-        }
+        "extraction_statistics": inference_trainer.extraction_stats
     }
 
     with open(os.path.join(output_dir, "enhanced_training_config.json"), "w") as f:
         json.dump(config, f, indent=2)
 
-    # Save correction examples for analysis
-    correction_sample = []
-    for correction_type in ['error_correction', 'confidence_reinforcement', 'stability_reinforcement']:
-        type_examples = [ex for ex in correction_examples if ex.get('correction_type') == correction_type]
-        correction_sample.extend(type_examples[:3])  # Save 3 examples of each type
-
-    with open(os.path.join(output_dir, "enhanced_correction_examples.json"), "w") as f:
-        json.dump(correction_sample, f, indent=2)
-
     print(f"Enhanced model successfully saved to {save_path}")
     print(f"Enhanced self-correction training completed!")
     
-    # Calculate final statistics
-    total_extractions = sum(inference_trainer.extraction_stats.values())
-    if total_extractions > 0:
-        success_rate = inference_trainer.extraction_stats['successful'] / total_extractions * 100
-        print(f"Final extraction success rate: {success_rate:.1f}%")
-
     return correction_model, sc_trainer.tokenizer
+
 
 if __name__ == "__main__":
     # Configuration parameters
     data_path = "data/notes_train.csv"
-    model_name = "./mistral-7b-malnutrition-self-correction/phase1/checkpoint-3555"
-    output_dir = "./mistral-7b-malnutrition-self-correction"
+    model_name = "unsloth/Phi-4-unsloth-bnb-4bit"
+    output_dir = "./Phi-4-malnutrition-self-correction"
     max_length = 32000
     num_epochs = 5
     batch_size = 1
-
-    # Enhanced self-correction parameters
-    correction_ratio = 0.4  # Include 40% of correct predictions in correction training
-    correction_weight = 0.5  # Correction examples make up 50% of combined dataset
-    self_correction_epochs = 2  # Additional epochs for self-correction
+    self_correction_epochs = 2
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1102,8 +862,6 @@ if __name__ == "__main__":
         max_length=max_length,
         num_epochs=num_epochs,
         batch_size=batch_size,
-        correction_ratio=correction_ratio,
-        correction_weight=correction_weight,
         self_correction_epochs=self_correction_epochs
     )
 
