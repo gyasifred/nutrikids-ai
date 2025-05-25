@@ -710,7 +710,7 @@ if __name__ == "__main__":
     model_name = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit" 
     output_dir = "./mistral-7b-instruct-v0.3-malnutrition_model"
     max_length = 32000
-    num_epochs = 7  
+    num_epochs = 15  
     batch_size = 2 
     
     # Create output directory if it doesn't exist
