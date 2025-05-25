@@ -847,7 +847,7 @@ if __name__ == "__main__":
     data_path = "data/notes_train.csv"
     model_name = "unsloth/Phi-4-unsloth-bnb-4bit"
     output_dir = "./Phi-4-malnutrition-self-correction"
-    max_length = 32000
+    max_length = 16384
     num_epochs = 5
     batch_size = 1
     self_correction_epochs = 2
