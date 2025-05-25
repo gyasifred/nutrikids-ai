@@ -755,11 +755,12 @@ def preprocess_clinical_note(note_text):
         note_text = note_text.replace(token, ' ')
 
     return note_text.strip()
+
 def train_malnutrition_model_with_enhanced_self_correction(
     data_path: str,
     model_name: str = "unsloth/meta-llama-3.1-8b-unsloth-bnb-4bit",
     output_dir: str = "./malnutrition_models",
-    max_length: int = 8192,
+    max_length: int = 32000,
     num_epochs: int = 3,
     batch_size: int = 4,
     correction_ratio: float = 0.3,
@@ -819,8 +820,8 @@ def train_malnutrition_model_with_enhanced_self_correction(
     sc_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
     sc_trainer.load_model()
 
-    # Prepare model for training
-    model = FastLanguageModel.get_peft_model(
+    # Prepare model for training (Phase 1)
+    phase1_model = FastLanguageModel.get_peft_model(
         sc_trainer.model,
         r=16,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -872,7 +873,7 @@ def train_malnutrition_model_with_enhanced_self_correction(
     )
 
     trainer = SFTTrainer(
-        model=model,
+        model=phase1_model,
         train_dataset=train_formatted,
         processing_class=sc_trainer.tokenizer,
         max_seq_length=max_length,
@@ -881,75 +882,48 @@ def train_malnutrition_model_with_enhanced_self_correction(
         args=training_args,
     )
 
-    # print("Starting initial training...")
-    # trainer.train()
+    print("Starting initial training...")
+    trainer.train()
 
-    # Save Phase 1 model
-    phase1_save_path = os.path.join(output_dir, "phase1_model")
-    print(f"Saving Phase 1 model to {phase1_save_path}...")
-    model.save_pretrained_merged(
-        phase1_save_path,
-        sc_trainer.tokenizer,
-        save_method="merged_16bit"
-    )
-    
-    # Clean up memory
-    del trainer
-    del model
-    del sc_trainer
-    torch.cuda.empty_cache()
-
-    # PHASE 2: Generate predictions for self-correction
+    # PHASE 2: Generate predictions for self-correction using trained model
     print("=" * 60)
     print("PHASE 2: Generating Self-Correction Data")
     print("=" * 60)
     
-    # Load the saved Phase 1 model for inference
-    print("Loading Phase 1 model for inference...")
-    try:
-        inference_model, inference_tokenizer = FastLanguageModel.from_pretrained(
-            model_name=phase1_save_path,
-            max_seq_length=max_length,
-            dtype=None,
-            load_in_4bit=True
-        )
-        FastLanguageModel.for_inference(inference_model)
-        
-        # Ensure proper device placement
-        if torch.cuda.is_available():
-            inference_model = inference_model.cuda()
-        
-        # Create new trainer for inference and properly assign the loaded model
-        inference_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
-        inference_trainer.model = inference_model
-        inference_trainer.tokenizer = inference_tokenizer
-        
-        # Verify model and tokenizer are properly loaded
-        if inference_trainer.model is None or inference_trainer.tokenizer is None:
-            raise RuntimeError("Model or tokenizer failed to load properly")
-            
-        print("Model loaded successfully for inference")
-        
-    except Exception as e:
-        print(f"Error loading model for inference: {e}")
-        raise RuntimeError(f"Failed to load model for inference: {e}")
+    # Create inference trainer with the Phase 1 trained model
+    inference_trainer = EnhancedSelfCorrectionTrainer(model_name, max_length)
+    inference_trainer.model = phase1_model
+    inference_trainer.tokenizer = sc_trainer.tokenizer
+    # Set model to inference mode
+    FastLanguageModel.for_inference(inference_trainer.model)
     
-    # Generate initial predictions on training data
-    train_notes = [example['txt'] for example in train_dataset]
+    # Select 500 longest training examples
+    print("Selecting 500 longest training examples...")
+    train_data_with_length = []
+    for example in train_dataset:
+        text_length = len(example['txt'])
+        train_data_with_length.append((example, text_length))
+    
+    # Sort by length and take top 500
+    train_data_with_length.sort(key=lambda x: x[1], reverse=True)
+    longest_examples = [item[0] for item in train_data_with_length[:500]]
+    longest_notes = [example['txt'] for example in longest_examples]
+    
+    print(f"Selected {len(longest_notes)} examples with lengths ranging from {train_data_with_length[499][1]} to {train_data_with_length[0][1]} characters")
+    
+    # Generate initial predictions on selected longest examples
     print("Generating initial predictions...")
-    
-    # Process in smaller batches to avoid memory issues
     initial_predictions = []
     batch_size_inference = 1  # Use smaller batch size for inference
     
-    for i in range(0, min(200, len(train_notes)), batch_size_inference):
-        batch_notes = train_notes[i:i+batch_size_inference]
+    for i in range(0, len(longest_notes), batch_size_inference):
+        batch_notes = longest_notes[i:i+batch_size_inference]
         try:
             batch_predictions = inference_trainer.generate_initial_predictions(
                 batch_notes, batch_size=batch_size_inference
             )
             initial_predictions.extend(batch_predictions)
-            print(f"Processed {len(initial_predictions)}/{min(200, len(train_notes))} predictions")
+            print(f"Processed {len(initial_predictions)}/{len(longest_notes)} predictions")
         except Exception as e:
             print(f"Error in batch {i//batch_size_inference}: {e}")
             # Add fallback predictions for failed batches
@@ -962,51 +936,39 @@ def train_malnutrition_model_with_enhanced_self_correction(
                     'extraction_confidence': 'low'
                 })
     
+    # Create DataFrame for longest examples to match with predictions
+    longest_df = pd.DataFrame(longest_examples)
+    
     # Create self-correction examples
     print("Creating self-correction examples...")
     correction_examples = inference_trainer.create_self_correction_examples(
-        df.head(len(initial_predictions)), initial_predictions, correction_ratio, prioritize_low_confidence=True
+        longest_df, initial_predictions, correction_ratio, prioritize_low_confidence=True
     )
     
     print(f"Created {len(correction_examples)} self-correction examples")
     print(f"Extraction statistics: {inference_trainer.extraction_stats}")
-    
-    # Clean up inference model
-    del inference_model
-    del inference_trainer
-    torch.cuda.empty_cache()
 
-    # PHASE 3: Self-correction training
+    # PHASE 3: Self-correction training continuing from Phase 1 model
     print("=" * 60)
     print("PHASE 3: Enhanced Self-Correction Training")
     print("=" * 60)
 
-    # Load fresh model for Phase 3 training
-    print("Loading fresh model for self-correction training...")
-    correction_model, correction_tokenizer = FastLanguageModel.from_pretrained(
-        model_name=phase1_save_path,
-        max_seq_length=max_length,
-        dtype=None,
-        load_in_4bit=True
-    )
+    # Clean up the trainer but keep the trained model
+    del trainer
+    torch.cuda.empty_cache()
 
-    # Apply LoRA for training
-    correction_model = FastLanguageModel.get_peft_model(
-        correction_model,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=32,
-        lora_dropout=0,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=3407,
-        use_rslora=False,
-        loftq_config=None,
-    )
+    # IMPORTANT FIX: Continue from Phase 1 trained model, not original model
+    print("Continuing training from Phase 1 trained model...")
+    
+    # Set the Phase 1 model back to training mode (it was set to inference mode in Phase 2)
+    FastLanguageModel.for_training(phase1_model)
+    
+    # Use the Phase 1 trained model for Phase 3 (this is the key fix!)
+    correction_model = phase1_model
 
     # Format correction examples
     def format_correction_example(example):
-        return {"text": f"{example['prompt']}\n{example['response']}{correction_tokenizer.eos_token}"}
+        return {"text": f"{example['prompt']}\n{example['response']}{sc_trainer.tokenizer.eos_token}"}
 
     correction_dataset = Dataset.from_list(correction_examples)
     correction_formatted = correction_dataset.map(format_correction_example)
@@ -1042,7 +1004,7 @@ def train_malnutrition_model_with_enhanced_self_correction(
         lr_scheduler_type="cosine",  # Changed to cosine schedule
         seed=3407,
         report_to="none",
-        output_dir=os.path.join(output_dir, "phase2"),
+        output_dir=os.path.join(output_dir, "phase3"),
         dataloader_drop_last=True,
         remove_unused_columns=False,
         save_strategy="steps",
@@ -1051,9 +1013,9 @@ def train_malnutrition_model_with_enhanced_self_correction(
     )
 
     correction_trainer = SFTTrainer(
-        model=correction_model,
+        model=correction_model,  # Now using the Phase 1 trained model!
         train_dataset=combined_dataset,
-        processing_class=correction_tokenizer,
+        processing_class=sc_trainer.tokenizer,  # Using the same tokenizer
         max_seq_length=max_length,
         dataset_text_field="text",
         packing=True,
@@ -1067,7 +1029,7 @@ def train_malnutrition_model_with_enhanced_self_correction(
     save_path = f"{output_dir}/final_enhanced_model"
     correction_model.save_pretrained_merged(
         save_path,
-        correction_tokenizer,
+        sc_trainer.tokenizer,  # Using the same tokenizer
         save_method="merged_16bit"
     )
 
@@ -1081,11 +1043,12 @@ def train_malnutrition_model_with_enhanced_self_correction(
             "phase2_epochs": self_correction_epochs,
             "correction_ratio": correction_ratio,
             "correction_weight": correction_weight,
-            "prioritize_low_confidence": True
+            "prioritize_low_confidence": True,
+            "longest_examples_used": 500
         },
         "correction_examples_created": len(correction_examples),
         "final_dataset_size": len(combined_dataset),
-        "extraction_statistics": inference_trainer.extraction_stats if 'inference_trainer' in locals() else {},
+        "extraction_statistics": inference_trainer.extraction_stats,
         "correction_type_distribution": {
             correction_type: sum(1 for ex in correction_examples if ex.get('correction_type') == correction_type)
             for correction_type in ['error_correction', 'confidence_reinforcement', 'stability_reinforcement', 'standard_reinforcement']
@@ -1107,14 +1070,14 @@ def train_malnutrition_model_with_enhanced_self_correction(
     print(f"Enhanced model successfully saved to {save_path}")
     print(f"Enhanced self-correction training completed!")
     
-    # Calculate final statistics if available
-    if 'inference_trainer' in locals() and inference_trainer.extraction_stats:
-        total_extractions = sum(inference_trainer.extraction_stats.values())
-        if total_extractions > 0:
-            success_rate = inference_trainer.extraction_stats['successful'] / total_extractions * 100
-            print(f"Final extraction success rate: {success_rate:.1f}%")
+    # Calculate final statistics
+    total_extractions = sum(inference_trainer.extraction_stats.values())
+    if total_extractions > 0:
+        success_rate = inference_trainer.extraction_stats['successful'] / total_extractions * 100
+        print(f"Final extraction success rate: {success_rate:.1f}%")
 
-    return correction_model, correction_tokenizer
+    return correction_model, sc_trainer.tokenizer
+
 if __name__ == "__main__":
     # Configuration parameters
     data_path = "data/notes_train.csv"
